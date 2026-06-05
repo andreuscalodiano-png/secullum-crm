@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  collection, doc, setDoc, getDocs, onSnapshot
+  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
@@ -56,7 +56,7 @@ function parseDate(s){
     if(ano>=2020&&ano<=2030&&mes>=0&&mes<=11&&dia>=1&&dia<=31)return new Date(ano,mes,dia);}
   return null;
 }
-function {if(!d)return'';return`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;}
+function fmtDate(d){if(!d)return'';return`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;}
 function parseValor(s){
   if(s===null||s===undefined)return 0;
   s=String(s).trim();
@@ -998,7 +998,7 @@ export default function App(){
   const porVend=[...new Set(todos.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].map(v=>{const cs=cl.filter(c=>c.vendedor===v);return{v,qtd:cs.length,total:cs.reduce((s,c)=>s+c.total,0),fat:cs.filter(c=>c.status==='Faturado').reduce((s,c)=>s+c.total,0)};}).filter(x=>x.qtd>0).sort((a,b)=>b.fat-a.fat);
   const porPlano=['Basic','Pro','Ultimate'].map(p=>{const cs=cl.filter(c=>c.plano===p);return{p,qtd:cs.length,total:cs.reduce((s,c)=>s+c.total,0)};});
   const maxVend=Math.max(...porVend.map(x=>x.fat),1);
- // const maxAno=Math.max(...[...new Set(todos.map(c=>c.ano).filter(Boolean))].map(a=>todos.filter(c=>c.ano===a).reduce((s,c)=>s+c.total,0)),1);
+  const maxAno=Math.max(...[...new Set(todos.map(c=>c.ano).filter(Boolean))].map(a=>todos.filter(c=>c.ano===a).reduce((s,c)=>s+c.total,0)),1);
 
   if(authLoading)return <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#2c3e50',color:'#fff',fontSize:16,fontFamily:'sans-serif'}}>Carregando...</div>;
   if(!authUser)return <LoginScreen/>;
