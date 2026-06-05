@@ -1,0 +1,16 @@
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAWpKBjJ48c5qAScrMBJ_rSI8UNhiBu7C8",
+  authDomain: "secullum-crm.firebaseapp.com",
+  projectId: "secullum-crm",
+  storageBucket: "secullum-crm.firebasestorage.app",
+  messagingSenderId: "948831138188",
+  appId: "1:948831138188:web:76f36726ebb18b93d4e6a9"
+};
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
+export const auth = getAuth(app);
