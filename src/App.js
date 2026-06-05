@@ -56,7 +56,7 @@ function parseDate(s){
     if(ano>=2020&&ano<=2030&&mes>=0&&mes<=11&&dia>=1&&dia<=31)return new Date(ano,mes,dia);}
   return null;
 }
-function {if(!d)return'';return`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;}
+function fmtDate(d){if(!d)return'';return`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;}
 function parseValor(s){
   if(s===null||s===undefined)return 0;
   s=String(s).trim();
