@@ -1131,7 +1131,7 @@ export default function App(){
                     {['Empresa','CNPJ','Plano','Vendedor','Status','Valor'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}
                   </tr></thead>
                   <tbody>
-                    {[...cl].sort((a,b)=>(b.data?.getTime&&b.data.getTime()||0)-(a.data?.getTime&&a.data.getTime()||0)).slice(0,10).map((c,i)=>(
+                    {[...cl].sort((a,b)=>((b.data?.getTime&&b.data.getTime())||0)-((a.data?.getTime&&a.data.getTime())||0)).slice(0,10).map((c,i)=>(
                       <tr key={c.id} onClick={()=>{setClienteSel(c);}} style={{borderTop:`1px solid ${C.border}`,cursor:'pointer',background:i%2===0?'#fff':'#fdfdfd'}}>
                         <td style={{padding:'8px 12px',fontSize:12,fontWeight:600,color:C.text,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
                         <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted}}>{c.cnpj}</td>
