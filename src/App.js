@@ -185,40 +185,53 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
 }
 
 // ─── META MENSAL ─────────────────────────────────────────────────────────────
-function MetaMensal({todos,meta,onSetMeta}){
-  const hoje=new Date();
-  const mesAtual=hoje.getMonth(),anoAtual=hoje.getFullYear();
-  const realizado=todos.filter(c=>c.mes===mesAtual&&c.ano===anoAtual&&c.status==='Faturado').reduce((s,c)=>s+c.total,0);
+function CardMeta({titulo,realizado,meta,onSetMeta,cor}){
   const pct=meta>0?Math.min(Math.round((realizado/meta)*100),100):0;
   const [editando,setEditando]=useState(false);
   const [val,setVal]=useState(String(meta||''));
   return(
-    <div style={{background:C.card,borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:14}}>
+    <div style={{background:C.card,borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',flex:1,minWidth:200,borderTop:`3px solid ${cor}`}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontWeight:700,fontSize:12,color:C.text,textTransform:'uppercase'}}>Meta — {MESES[mesAtual]}/{anoAtual}</div>
+        <div style={{fontWeight:700,fontSize:12,color:C.text,textTransform:'uppercase'}}>{titulo}</div>
         {!editando
-          ?<button onClick={()=>setEditando(true)} style={{background:'none',border:'none',color:C.blue,cursor:'pointer',fontSize:11,fontWeight:600}}>✏️ Definir meta</button>
-          :<div style={{display:'flex',gap:6,alignItems:'center'}}>
-            <input value={val} onChange={e=>setVal(e.target.value)} placeholder="Ex: 50000" style={{padding:'4px 8px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:110}}/>
-            <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}} style={{background:C.green,color:'#fff',border:'none',borderRadius:5,padding:'4px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
+          ?<button onClick={()=>setEditando(true)} style={{background:'none',border:'none',color:C.blue,cursor:'pointer',fontSize:11,fontWeight:600}}>✏️</button>
+          :<div style={{display:'flex',gap:4,alignItems:'center'}}>
+            <input value={val} onChange={e=>setVal(e.target.value)} placeholder="Ex: 50000" style={{padding:'3px 6px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:90}}/>
+            <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}} style={{background:C.green,color:'#fff',border:'none',borderRadius:5,padding:'3px 8px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
             <button onClick={()=>setEditando(false)} style={{background:'none',border:'none',color:C.textMuted,cursor:'pointer',fontSize:11}}>✕</button>
           </div>
         }
       </div>
       <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:6}}>
-        <span style={{color:C.textMuted}}>Realizado: <strong style={{color:C.green}}>{moeda(realizado)}</strong></span>
-        {meta>0&&<span style={{color:C.textMuted}}>Meta: <strong>{moeda(meta)}</strong></span>}
+        <span style={{color:C.textMuted}}>Realizado: <strong style={{color:cor}}>{moeda(realizado)}</strong></span>
+        {meta>0&&<span style={{color:C.textMuted}}>{moeda(meta)}</span>}
       </div>
       {meta>0&&<>
-        <div style={{height:10,borderRadius:5,background:'#ecf0f1',overflow:'hidden'}}>
-          <div style={{height:'100%',borderRadius:5,background:pct>=100?C.green:pct>=70?C.blue:C.orange,width:pct+'%',transition:'width .4s'}}/>
+        <div style={{height:8,borderRadius:4,background:'#ecf0f1',overflow:'hidden'}}>
+          <div style={{height:'100%',borderRadius:4,background:pct>=100?C.green:pct>=70?cor:C.orange,width:pct+'%',transition:'width .4s'}}/>
         </div>
         <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:10,color:C.textMuted}}>
           <span>{pct}% atingido</span>
           {pct<100?<span style={{color:C.orange}}>Faltam {moeda(meta-realizado)}</span>:<span style={{color:C.green}}>✓ Meta atingida!</span>}
         </div>
       </>}
-      {!meta&&<div style={{fontSize:11,color:C.textMuted,marginTop:4}}>Clique em "Definir meta" para acompanhar o progresso mensal.</div>}
+      {!meta&&<div style={{fontSize:10,color:C.textMuted,marginTop:4}}>Clique em ✏️ para definir a meta.</div>}
+    </div>
+  );
+}
+function DuplasMetas({todos,metaSistema,metaEquip,onSetMetaSistema,onSetMetaEquip}){
+  const hoje=new Date();
+  const mesAtual=hoje.getMonth(),anoAtual=hoje.getFullYear();
+  const csMes=todos.filter(c=>c.mes===mesAtual&&c.ano===anoAtual&&c.status==='Faturado');
+  const realSist=csMes.reduce((s,c)=>s+(c.vS||0),0);
+  const realEquip=csMes.reduce((s,c)=>s+(c.vE||0),0);
+  return(
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:11,color:C.textMuted,fontWeight:700,textTransform:'uppercase',marginBottom:8}}>Metas — {MESES[mesAtual]}/{anoAtual}</div>
+      <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+        <CardMeta titulo="Meta Sistema" realizado={realSist} meta={metaSistema} onSetMeta={onSetMetaSistema} cor={C.purple}/>
+        <CardMeta titulo="Meta Equipamentos" realizado={realEquip} meta={metaEquip} onSetMeta={onSetMetaEquip} cor={C.teal}/>
+      </div>
     </div>
   );
 }
@@ -947,20 +960,42 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
 }
 
 // ─── FORMULÁRIO NOVO CLIENTE ──────────────────────────────────────────────────
-function NovoForm({onSave,onCancel}){
+function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
   const hoje=new Date();
-  const [f,setF]=useState({data:`${(hoje.getMonth()+1).toString().padStart(2,'0')}/${hoje.getDate().toString().padStart(2,'0')}/${hoje.getFullYear()}`,nome:'',cnpj:'',contato:'',tel:'',func:'',equipTipo:'Evo40',vI:'',vE:'',vS:'',pagamento:'Boleto',dtBoleto:'',email:'',status:'Faturado',plano:'Basic',vendedor:'',nfe:'Não',renovacao:'',obs:''});
+  const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
+  const [f,setF]=useState({data:`${(hoje.getMonth()+1).toString().padStart(2,'0')}/${hoje.getDate().toString().padStart(2,'0')}/${hoje.getFullYear()}`,nome:'',cnpj:'',contato:'',tel:'',func:'',equipTipo:equipDefault,vI:'',vE:'',vS:'',pagamento:'Boleto',dtBoleto:'',email:'',status:'Faturado',plano:'Basic',vendedor:'',nfe:'Não',renovacao:'',obs:'',equipPago:'Não se aplica',equipRastreio:'',equipDataEnvio:''});
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
   const tot=(parseValor(f.vI)||0)+(parseValor(f.vE)||0)+(parseValor(f.vS)||0);
+  const equipSel=equipamentosCad.find(e=>e.nome===f.equipTipo);
+  const requerPag=equipSel?equipSel.requerPagamento:false;
+
+  const [erros,setErros]=useState({});
+  function validar(){
+    const e={};
+    if(!f.nome.trim())e.nome='Obrigatório';
+    if(!f.cnpj.trim())e.cnpj='Obrigatório';
+    if(!f.tel.trim())e.tel='Obrigatório';
+    if(!f.email.trim())e.email='Obrigatório';
+    if(!f.plano)e.plano='Obrigatório';
+    if(!f.equipTipo)e.equipTipo='Obrigatório';
+    if(!f.vS&&parseValor(f.vS)===0)e.vS='Informe o valor';
+    setErros(e);
+    return Object.keys(e).length===0;
+  }
   function salvar(){
-    if(!f.nome.trim()){alert('Nome obrigatório');return;}
+    if(!validar())return;
     const d=parseDate(f.data);
     const vI=parseValor(f.vI),vE=parseValor(f.vE),vS=parseValor(f.vS);
-    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,nome:f.nome.trim(),cnpj:f.cnpj.trim(),contato:f.contato.trim(),tel:f.tel.trim(),func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),status:f.status,plano:f.plano,vendedor:f.vendedor.trim()||'—',nfe:f.nfe,renovacao:f.renovacao,obs:f.obs});
+    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,nome:f.nome.trim(),cnpj:f.cnpj.trim(),contato:f.contato.trim(),tel:f.tel.trim(),func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,renovacao:f.renovacao,obs:f.obs,equipPago:requerPag?f.equipPago:'Não se aplica',equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio});
   }
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const fiErr=(k)=>({...fi,border:erros[k]?'1px solid #e74c3c':'1px solid #dde1e7',background:erros[k]?'#fff5f5':'#fff'});
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const lblReq=(k)=>(<label style={{...lbl,color:erros[k]?'#e74c3c':'#7f8c8d'}}>{erros[k]?'* '+erros[k]:lbl}</label>);
   const sec={background:C.card,borderRadius:8,padding:'16px',marginBottom:12,boxShadow:'0 1px 3px rgba(0,0,0,.06)'};
+  const listaVendedores=vendedoresCad.length>0?vendedoresCad.map(v=>v.nome):[...new Set(CLIENTES_BASE.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
+  const listaEquips=equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS;
+
   return(
     <div style={{fontFamily:'sans-serif'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
@@ -970,29 +1005,54 @@ function NovoForm({onSave,onCancel}){
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Nome *</label><input style={fi} value={f.nome} onChange={e=>up('nome',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={fiErr('nome')} value={f.nome} onChange={e=>up('nome',e.target.value)}/></div>
           <div><label style={lbl}>Data (MM/DD/AAAA)</label><input style={fi} value={f.data} onChange={e=>up('data',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>CNPJ/CPF</label><input style={fi} value={f.cnpj} onChange={e=>up('cnpj',e.target.value)}/></div>
-          <div><label style={lbl}>Email financeiro</label><input style={fi} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={fiErr('cnpj')} value={f.cnpj} onChange={e=>up('cnpj',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
           <div><label style={lbl}>Contato</label><input style={fi} value={f.contato} onChange={e=>up('contato',e.target.value)}/></div>
-          <div><label style={lbl}>Telefone</label><input style={fi} value={f.tel} onChange={e=>up('tel',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',e.target.value)}/></div>
           <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
         </div>
       </div>
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#e67e22',marginBottom:12,textTransform:'uppercase'}}>Produtos e valores</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Equipamento</label><select style={fi} value={f.equipTipo} onChange={e=>up('equipTipo',e.target.value)}>{EQUIPS.map(e=><option key={e}>{e}</option>)}</select></div>
-          <div><label style={lbl}>Implantação (R$)</label><input style={fi} type="number" value={f.vI} onChange={e=>up('vI',e.target.value)}/></div>
+          <div>
+            <label style={{...lbl,color:erros.equipTipo?'#e74c3c':'#7f8c8d'}}>{erros.equipTipo?'Equipamento — '+erros.equipTipo:'Equipamento *'}</label>
+            <select style={fiErr('equipTipo')} value={f.equipTipo} onChange={e=>up('equipTipo',e.target.value)}>
+              <option value="">— Selecione —</option>
+              {listaEquips.map(e=><option key={e}>{e}</option>)}
+            </select>
+          </div>
+          <div><label style={lbl}>Implantação (R$)</label><input style={fi} type="number" step="0.01" value={f.vI} onChange={e=>up('vI',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Equipamento (R$)</label><input style={fi} type="number" value={f.vE} onChange={e=>up('vE',e.target.value)}/></div>
-          <div><label style={lbl}>Sistema/mês (R$)</label><input style={fi} type="number" value={f.vS} onChange={e=>up('vS',e.target.value)}/></div>
+          <div><label style={lbl}>Equipamento (R$)</label><input style={fi} type="number" step="0.01" value={f.vE} onChange={e=>up('vE',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.vS?'#e74c3c':'#7f8c8d'}}>{erros.vS?'Sistema/mês — '+erros.vS:'Sistema/mês (R$) *'}</label><input style={fiErr('vS')} type="number" step="0.01" value={f.vS} onChange={e=>up('vS',e.target.value)}/></div>
         </div>
+        {/* Pagamento do equipamento */}
+        {requerPag&&(
+          <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:6,padding:'12px',marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:11,color:C.orange,marginBottom:8,textTransform:'uppercase'}}>📦 Pagamento do equipamento</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+              <div><label style={lbl}>Status do pagamento</label>
+                <select style={fi} value={f.equipPago} onChange={e=>up('equipPago',e.target.value)}>
+                  <option value="Não pago">❌ Não pago</option>
+                  <option value="Pago">✅ Pago</option>
+                  <option value="Não se aplica">— Não se aplica</option>
+                </select>
+              </div>
+              {f.equipPago==='Pago'&&<>
+                <div><label style={lbl}>Nº rastreio (Sedex)</label><input style={fi} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value)} placeholder="XX000000000BR"/></div>
+                <div><label style={lbl}>Data de envio</label><input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/></div>
+              </>}
+            </div>
+          </div>
+        )}
         <div style={{background:'#ebf5fb',borderRadius:6,padding:'10px 14px',display:'flex',justifyContent:'space-between'}}>
           <span style={{fontSize:13,color:C.textMuted,fontWeight:600}}>TOTAL</span>
           <span style={{fontSize:18,fontWeight:700,color:'#3498db'}}>{moeda(tot)}</span>
@@ -1005,8 +1065,14 @@ function NovoForm({onSave,onCancel}){
           <div><label style={lbl}>Data 1º boleto</label><input style={fi} value={f.dtBoleto} onChange={e=>up('dtBoleto',e.target.value)} placeholder="DD/MM/AAAA"/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Plano</label><select style={fi} value={f.plano} onChange={e=>up('plano',e.target.value)}>{PLANOS.map(p=><option key={p}>{p}</option>)}</select></div>
-          <div><label style={lbl}>Vendedor</label><input style={fi} value={f.vendedor} onChange={e=>up('vendedor',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.plano?'#e74c3c':'#7f8c8d'}}>{erros.plano?'Plano — '+erros.plano:'Plano *'}</label>
+            <select style={fiErr('plano')} value={f.plano} onChange={e=>up('plano',e.target.value)}>{PLANOS.map(p=><option key={p}>{p}</option>)}</select></div>
+          <div><label style={lbl}>Vendedor</label>
+            <select style={fi} value={f.vendedor} onChange={e=>up('vendedor',e.target.value)}>
+              <option value="">— Selecione —</option>
+              {listaVendedores.map(v=><option key={v}>{v}</option>)}
+            </select>
+          </div>
           <div><label style={lbl}>Status</label><select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}><option value="Faturado">Faturado</option><option value="Aguardando">Aguardando</option></select></div>
           <div><label style={lbl}>Emitir NFE</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
         </div>
@@ -1020,7 +1086,7 @@ function NovoForm({onSave,onCancel}){
 }
 
 // ─── DETALHE CLIENTE ──────────────────────────────────────────────────────────
-function DetalheCliente({c,onVoltar,onUpdate}){
+function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
   const [editMode,setEditMode]=useState(false);
   const [saved,setSaved]=useState(false);
   const [f,setF]=useState({
@@ -1042,6 +1108,9 @@ function DetalheCliente({c,onVoltar,onUpdate}){
     nfe:c.nfe||'Não',
     obs:c.obs||'',
     renovacao:c.renovacao||'',
+    equipPago:c.equipPago||'Não se aplica',
+    equipRastreio:c.equipRastreio||'',
+    equipDataEnvio:c.equipDataEnvio||'',
   });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -1057,7 +1126,10 @@ function DetalheCliente({c,onVoltar,onUpdate}){
       vI,vE,vS,
       total:vI+vE+vS,
       func:parseInt(f.func)||0,
-      vendedor:f.vendedor.trim()||'—'
+      vendedor:f.vendedor||'—',
+      equipPago:f.equipPago,
+      equipRastreio:f.equipRastreio.trim(),
+      equipDataEnvio:f.equipDataEnvio,
     };
     await onUpdate(upd);
     setSaved(true);setEditMode(false);
@@ -1151,7 +1223,7 @@ function DetalheCliente({c,onVoltar,onUpdate}){
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
           <Campo label="Funcionários" field="func" type="number"/>
-          <Campo label="Equipamento" field="equipTipo" opts={EQUIPS}/>
+          <Campo label="Equipamento" field="equipTipo" opts={equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS}/>
         </div>
       </div>
 
@@ -1160,7 +1232,7 @@ function DetalheCliente({c,onVoltar,onUpdate}){
         <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
           <Campo label="Plano" field="plano" opts={PLANOS}/>
-          <Campo label="Vendedor" field="vendedor"/>
+          <Campo label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
           <Campo label="Status" field="status" opts={[{v:'Faturado',l:'✓ Faturado'},{v:'Aguardando',l:'⏳ Aguardando'}]}/>
           <Campo label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
         </div>
@@ -1170,37 +1242,106 @@ function DetalheCliente({c,onVoltar,onUpdate}){
         </div>
         <Campo label="Observações" field="obs" type="textarea" span={2}/>
       </div>
+
+      {/* Pagamento do equipamento */}
+      {(()=>{
+        const equipSel=(equipamentosCad||[]).find(e=>e.nome===f.equipTipo);
+        const requerPag=equipSel?equipSel.requerPagamento:(f.equipPago&&f.equipPago!=='Não se aplica');
+        if(!requerPag&&f.equipPago==='Não se aplica')return null;
+        return(
+          <div style={{...sec,borderLeft:`4px solid ${C.orange}`}}>
+            <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Pagamento do equipamento</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+              <div>
+                <label style={lbl}>Status</label>
+                {editMode
+                  ?<select style={fi} value={f.equipPago} onChange={e=>up('equipPago',e.target.value)}>
+                    <option value="Não pago">❌ Não pago</option>
+                    <option value="Pago">✅ Pago</option>
+                    <option value="Não se aplica">— Não se aplica</option>
+                  </select>
+                  :<div style={{...fiView,fontWeight:700,color:f.equipPago==='Pago'?C.green:f.equipPago==='Não pago'?C.red:C.textMuted}}>
+                    {f.equipPago==='Pago'?'✅ Pago':f.equipPago==='Não pago'?'❌ Não pago':'— Não se aplica'}
+                  </div>
+                }
+              </div>
+              <div>
+                <label style={lbl}>Nº rastreio (Sedex)</label>
+                {editMode
+                  ?<input style={fi} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value)} placeholder="XX000000000BR"/>
+                  :<div style={{...fiView,fontFamily:'monospace',letterSpacing:1}}>{f.equipRastreio||'—'}</div>
+                }
+              </div>
+              <div>
+                <label style={lbl}>Data de envio</label>
+                {editMode
+                  ?<input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/>
+                  :<div style={fiView}>{f.equipDataEnvio?new Date(f.equipDataEnvio+'T12:00:00').toLocaleDateString('pt-BR'):'—'}</div>
+                }
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-function ConfigView({usuarios,setUsuarios,currentUser,perfisUsuarios,setPerfisUsuarios}){
+function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
   const [novoUser,setNovoUser]=useState({nome:'',email:'',senha:'',perfil:'colaborador'});
-  const [saved,setSaved]=useState(false);
-  const [erro,setErro]=useState('');
+  const [savedUser,setSavedUser]=useState(false);
+  const [erroUser,setErroUser]=useState('');
+  const [novoVend,setNovoVend]=useState('');
+  const [savedVend,setSavedVend]=useState(false);
+  const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true});
+  const [savedEquip,setSavedEquip]=useState(false);
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
 
   async function addUser(){
-    if(!novoUser.nome.trim()||!novoUser.email.trim()||!novoUser.senha.trim()){setErro('Preencha todos os campos');return;}
-    setErro('');
+    if(!novoUser.nome.trim()||!novoUser.email.trim()||!novoUser.senha.trim()){setErroUser('Preencha todos os campos');return;}
+    setErroUser('');
     try{
       const cred=await createUserWithEmailAndPassword(auth,novoUser.email,novoUser.senha);
       await setDoc(doc(db,'usuarios',cred.user.uid),{nome:novoUser.nome,email:novoUser.email,perfil:novoUser.perfil,criadoEm:new Date().toISOString()});
       setNovoUser({nome:'',email:'',senha:'',perfil:'colaborador'});
-      setSaved(true);setTimeout(()=>setSaved(false),2000);
-    }catch(e){
-      setErro(e.code==='auth/email-already-in-use'?'Email já cadastrado.':'Erro: '+e.message);
-    }
+      setSavedUser(true);setTimeout(()=>setSavedUser(false),2000);
+    }catch(e){setErroUser(e.code==='auth/email-already-in-use'?'Email já cadastrado.':'Erro: '+e.message);}
+  }
+
+  async function addVendedor(){
+    if(!novoVend.trim())return;
+    const id='vend_'+Date.now();
+    await setDoc(doc(db,'vendedores',id),{nome:novoVend.trim(),criadoEm:new Date().toISOString()});
+    setNovoVend('');setSavedVend(true);setTimeout(()=>setSavedVend(false),2000);
+  }
+  async function removeVendedor(id){
+    if(!window.confirm('Remover este vendedor?'))return;
+    const {deleteDoc}=await import('firebase/firestore');
+    await deleteDoc(doc(db,'vendedores',id));
+  }
+
+  async function addEquipamento(){
+    if(!novoEquip.nome.trim())return;
+    const id='equip_'+Date.now();
+    await setDoc(doc(db,'equipamentos',id),{nome:novoEquip.nome.trim(),requerPagamento:novoEquip.requerPagamento,criadoEm:new Date().toISOString()});
+    setNovoEquip({nome:'',requerPagamento:true});setSavedEquip(true);setTimeout(()=>setSavedEquip(false),2000);
+  }
+  async function removeEquipamento(id){
+    if(!window.confirm('Remover este equipamento?'))return;
+    const {deleteDoc}=await import('firebase/firestore');
+    await deleteDoc(doc(db,'equipamentos',id));
   }
 
   return(
     <div style={{fontFamily:'sans-serif'}}>
-      <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Sessão atual</div>
+      {/* Sessão atual */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Sessão atual</div>
         <div style={{display:'flex',gap:12,alignItems:'center'}}>
-          <div style={{width:44,height:44,borderRadius:'50%',background:'#3498db',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:16}}>{(currentUser?.email||'A')[0].toUpperCase()}</div>
+          <div style={{width:44,height:44,borderRadius:'50%',background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:16}}>{(currentUser?.email||'A')[0].toUpperCase()}</div>
           <div>
             <div style={{fontWeight:700,fontSize:14,color:'#2c3e50'}}>{currentUser?.nome||currentUser?.email}</div>
             <div style={{fontSize:12,color:'#7f8c8d'}}>{currentUser?.email}</div>
@@ -1208,47 +1349,86 @@ function ConfigView({usuarios,setUsuarios,currentUser,perfisUsuarios,setPerfisUs
           </div>
         </div>
       </div>
-      <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Níveis de acesso</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:10}}>
-          {Object.entries(PERFIS).map(([k,p])=>(
-            <div key={k} style={{borderRadius:8,padding:'12px',border:`2px solid ${p.color}`,background:`${p.color}11`}}>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                <div style={{width:32,height:32,borderRadius:8,background:p.color,display:'flex',alignItems:'center',justifyContent:'center'}}>
-                  <i className={`ti ${p.icon}`} style={{color:'#fff',fontSize:16}}/>
-                </div>
-                <span style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{p.label}</span>
-              </div>
-              <div style={{fontSize:11,color:'#7f8c8d'}}>{p.desc}</div>
+
+      {/* Vendedores */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Vendedores ({vendedoresCad.length})</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:12}}>
+          {vendedoresCad.map(v=>(
+            <div key={v.id} style={{display:'flex',alignItems:'center',gap:6,background:'#ebf5fb',borderRadius:20,padding:'4px 12px'}}>
+              <div style={{width:22,height:22,borderRadius:'50%',background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:700,flexShrink:0}}>{v.nome[0].toUpperCase()}</div>
+              <span style={{fontSize:12,fontWeight:600,color:C.text}}>{v.nome}</span>
+              <button onClick={()=>removeVendedor(v.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14,lineHeight:1,padding:'0 2px'}}>×</button>
             </div>
           ))}
+          {vendedoresCad.length===0&&<span style={{fontSize:12,color:C.textMuted}}>Nenhum vendedor cadastrado.</span>}
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <input style={{...fi,flex:1}} value={novoVend} onChange={e=>setNovoVend(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addVendedor()} placeholder="Nome do vendedor"/>
+          <button onClick={addVendedor} style={{padding:'7px 16px',borderRadius:5,border:'none',background:savedVend?C.green:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
+            {savedVend?'✓ Adicionado!':'+ Adicionar'}
+          </button>
         </div>
       </div>
-      <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16}}>
+
+      {/* Equipamentos */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:C.teal,marginBottom:12,textTransform:'uppercase'}}>Equipamentos ({equipamentosCad.length})</div>
+        <div style={{marginBottom:12}}>
+          {equipamentosCad.map(e=>(
+            <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
+              <i className="ti ti-device-laptop" style={{color:C.teal,fontSize:15}}/>
+              <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{e.nome}</span>
+              <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:e.requerPagamento?'#fef9e7':'#d5f5e3',color:e.requerPagamento?C.orange:C.green}}>
+                {e.requerPagamento?'Requer pagamento':'Sem custo'}
+              </span>
+              <button onClick={()=>removeEquipamento(e.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
+            </div>
+          ))}
+          {equipamentosCad.length===0&&<div style={{fontSize:12,color:C.textMuted,textAlign:'center',padding:'8px 0'}}>Nenhum equipamento cadastrado.</div>}
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+          <div style={{flex:1}}><label style={lbl}>Nome do equipamento</label><input style={fi} value={novoEquip.nome} onChange={e=>setNovoEquip(x=>({...x,nome:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addEquipamento()} placeholder="Ex: Evo40, Tablet..."/></div>
+          <div><label style={lbl}>Requer pagamento?</label>
+            <select style={fi} value={String(novoEquip.requerPagamento)} onChange={e=>setNovoEquip(x=>({...x,requerPagamento:e.target.value==='true'}))}>
+              <option value="true">Sim — cliente paga</option>
+              <option value="false">Não — sem custo</option>
+            </select>
+          </div>
+          <button onClick={addEquipamento} style={{padding:'7px 16px',borderRadius:5,border:'none',background:savedEquip?C.green:C.teal,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap',height:36}}>
+            {savedEquip?'✓ Adicionado!':'+ Adicionar'}
+          </button>
+        </div>
+      </div>
+
+      {/* Usuários */}
+      <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({usuarios.length})</div>
         {usuarios.map(u=>(
           <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
-            <div style={{width:36,height:36,borderRadius:'50%',background:PERFIS[u.perfil]?.color||'#3498db',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>{(u.nome||u.email||'?')[0].toUpperCase()}</div>
+            <div style={{width:36,height:36,borderRadius:'50%',background:PERFIS[u.perfil]?.color||C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>{(u.nome||u.email||'?')[0].toUpperCase()}</div>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{u.nome}</div>
               <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
             </div>
-            <span style={{background:PERFIS[u.perfil]?.color||'#3498db',color:'#fff',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700,flexShrink:0}}>{PERFIS[u.perfil]?.label||u.perfil}</span>
+            <span style={{background:PERFIS[u.perfil]?.color||C.blue,color:'#fff',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700,flexShrink:0}}>{PERFIS[u.perfil]?.label||u.perfil}</span>
           </div>
         ))}
         {usuarios.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário além do admin.</div>}
       </div>
-      <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase'}}>Criar novo usuário</div>
+
+      {/* Criar usuário */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Criar novo usuário</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={lbl}>Nome</label><input style={fi} value={novoUser.nome} onChange={e=>setNovoUser(x=>({...x,nome:e.target.value}))}/></div>
           <div><label style={lbl}>Email</label><input style={fi} type="email" value={novoUser.email} onChange={e=>setNovoUser(x=>({...x,email:e.target.value}))}/></div>
           <div><label style={lbl}>Senha</label><input style={fi} type="password" value={novoUser.senha} onChange={e=>setNovoUser(x=>({...x,senha:e.target.value}))}/></div>
           <div><label style={lbl}>Perfil</label><select style={fi} value={novoUser.perfil} onChange={e=>setNovoUser(x=>({...x,perfil:e.target.value}))}>{Object.entries(PERFIS).map(([k,p])=><option key={k} value={k}>{p.label}</option>)}</select></div>
         </div>
-        {erro&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>{erro}</div>}
-        <button onClick={addUser} style={{width:'100%',padding:'10px',borderRadius:6,border:'none',background:saved?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'background .3s'}}>
-          <i className={`ti ${saved?'ti-check':'ti-user-plus'}`}/>{saved?'Usuário criado!':'Criar usuário'}
+        {erroUser&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>{erroUser}</div>}
+        <button onClick={addUser} style={{width:'100%',padding:'10px',borderRadius:6,border:'none',background:savedUser?C.green:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'background .3s'}}>
+          <i className={`ti ${savedUser?'ti-check':'ti-user-plus'}`}/>{savedUser?'Usuário criado!':'Criar usuário'}
         </button>
       </div>
     </div>
@@ -1272,8 +1452,12 @@ export default function App(){
   const [filtroVendedor,setFiltroVendedor]=useState('Todos');
   const [filtroPlano,setFiltroPlano]=useState('Todos');
   const [filtroStatus,setFiltroStatus]=useState('Todos');
-  const [metaMensal,setMetaMensal]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_mensal'))||0;}catch(e){return 0;}});
-  function salvarMeta(v){setMetaMensal(v);try{localStorage.setItem('crm_meta_mensal',String(v));}catch(e){}}
+  const [vendedoresCad,setVendedoresCad]=useState([]);
+  const [equipamentosCad,setEquipamentosCad]=useState([]);
+  const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
+  const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
+  function salvarMetaSistema(v){setMetaSistema(v);try{localStorage.setItem('crm_meta_sistema',String(v));}catch(e){}}
+  function salvarMetaEquip(v){setMetaEquip(v);try{localStorage.setItem('crm_meta_equip',String(v));}catch(e){}}
 
   // Auth listener
   useEffect(()=>{
@@ -1308,6 +1492,12 @@ export default function App(){
     }));
     unsubs.push(onSnapshot(collection(db,'usuarios'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setUsuarios(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'vendedores'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setVendedoresCad(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'equipamentos'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setEquipamentosCad(arr);
     }));
     return()=>unsubs.forEach(u=>u());
   },[authUser]);
@@ -1443,22 +1633,36 @@ export default function App(){
           )}
 
           {/* NOVO */}
-          {page==='novo'&&<NovoForm onSave={async d=>{await salvarCliente(d);setPage('clientes');}} onCancel={()=>setPage('clientes')}/>}
+          {page==='novo'&&<NovoForm onSave={async d=>{await salvarCliente(d);setPage('clientes');}} onCancel={()=>setPage('clientes')} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
 
           {/* DETALHE */}
-          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);}}/>}
+          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
 
           {/* IMPLANTAÇÃO */}
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
 
           {/* CONFIGURAÇÕES */}
-          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} setUsuarios={setUsuarios} currentUser={userProfile} perfisUsuarios={{}} setPerfisUsuarios={()=>{}}/>}
+          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
 
           {/* DASHBOARD */}
           {!clienteSel&&page==='dashboard'&&(
             <div>
               <PainelAlertas todos={todos} implantacoes={implantacoes} onVerImplantacao={()=>{setPage('implantacao');setClienteSel(null);}}/>
-              <MetaMensal todos={todos} meta={metaMensal} onSetMeta={salvarMeta}/>
+              {(()=>{const nPagos=todos.filter(c=>c.equipPago==='Não pago');if(!nPagos.length)return null;return(
+                <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'10px 14px',marginBottom:8}}>
+                  <div style={{fontWeight:700,fontSize:12,color:C.red,marginBottom:8,display:'flex',alignItems:'center',gap:6}}><i className="ti ti-package" style={{fontSize:15}}/>{nPagos.length} equipamento(s) aguardando pagamento</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {nPagos.slice(0,8).map(c=>(
+                      <div key={c.id} onClick={()=>setClienteSel(c)} style={{background:'#fff',border:'1px solid #fecaca',borderRadius:5,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                        <span style={{fontWeight:600,color:C.text}}>{c.nome}</span>
+                        <span style={{color:C.textMuted,marginLeft:6}}>{c.equipTipo}</span>
+                      </div>
+                    ))}
+                    {nPagos.length>8&&<span style={{fontSize:11,color:C.textMuted,alignSelf:'center'}}>+{nPagos.length-8} mais</span>}
+                  </div>
+                </div>
+              );})()}
+              <DuplasMetas todos={todos} metaSistema={metaSistema} metaEquip={metaEquip} onSetMetaSistema={salvarMetaSistema} onSetMetaEquip={salvarMetaEquip}/>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:14}}>
                 <StatCard icon="ti-users" label="Total clientes" value={cl.length} sub={`${fat.length} fat. / ${agd.length} agd.`} color={C.blue}/>
                 <StatCard icon="ti-check" label="Faturados" value={fat.length} sub={moeda(totFat)} color={C.green} onClick={()=>setFiltroStatus('Faturado')}/>
