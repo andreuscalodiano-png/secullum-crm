@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import {
-  collection, doc, setDoc, getDocs, onSnapshot
+  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   onAuthStateChanged
 } from "firebase/auth";
@@ -30,7 +31,7 @@ const PERFIS={
   financeiro: {label:'Acesso financeiro', desc:'Dados financeiros, totais e pendentes', icon:'ti-currency-dollar', color:'#27ae60'},
   colaborador:{label:'Colaborador',       desc:'Cadastro de clientes e implantação', icon:'ti-user', color:'#3498db'},
 };
-const NAV_ITEMS=[
+const NAV_ITEMS_BASE=[
   {id:'dashboard',   icon:'ti-layout-dashboard', label:'Dashboard',    perfis:['admin','financeiro','colaborador']},
   {id:'vendas',      icon:'ti-chart-bar',         label:'Vendas',       perfis:['admin','financeiro']},
   {id:'financeiro',  icon:'ti-currency-dollar',   label:'Financeiro',   perfis:['admin','financeiro']},
@@ -38,8 +39,16 @@ const NAV_ITEMS=[
   {id:'novo',        icon:'ti-plus',              label:'Novo cliente', perfis:['admin','colaborador']},
   {id:'implantacao', icon:'ti-rocket',            label:'Implantação',  perfis:['admin','colaborador']},
   {id:'relatorios',  icon:'ti-file-spreadsheet',  label:'Relatórios',   perfis:['admin','financeiro']},
-  {id:'config',      icon:'ti-settings',          label:'Configurações',perfis:['admin']},
 ];
+// Config sempre fixo no final, só admin
+const NAV_CONFIG={id:'config',icon:'ti-settings',label:'Configurações',perfis:['admin']};
+function getNavItems(order){
+  const base=NAV_ITEMS_BASE.slice();
+  if(!order||!order.length)return[...base,NAV_CONFIG];
+  const sorted=[...order.map(id=>base.find(n=>n.id===id)).filter(Boolean),...base.filter(n=>!order.includes(n.id))];
+  return[...sorted,NAV_CONFIG];
+}
+const NAV_ITEMS=getNavItems(null);
 const C={
   sidebar:'#2c3e50',sidebarActive:'#3498db',
   header:'#34495e',
@@ -986,7 +995,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
     if(!validar())return;
     const d=parseDate(f.data);
     const vI=parseValor(f.vI),vE=parseValor(f.vE),vS=parseValor(f.vS);
-    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,nome:f.nome.trim(),cnpj:f.cnpj.trim(),contato:f.contato.trim(),tel:f.tel.trim(),func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,renovacao:f.renovacao,obs:f.obs,equipPago:requerPag?f.equipPago:'Não se aplica',equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio});
+    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,nome:f.nome.trim().toUpperCase(),cnpj:f.cnpj.trim().toUpperCase(),contato:f.contato.trim().toUpperCase(),tel:f.tel.trim().toUpperCase(),func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,renovacao:f.renovacao,obs:f.obs,equipPago:requerPag?f.equipPago:'Não se aplica',equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio});
   }
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const fiErr=(k)=>({...fi,border:erros[k]?'1px solid #e74c3c':'1px solid #dde1e7',background:erros[k]?'#fff5f5':'#fff'});
@@ -1005,16 +1014,16 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={fiErr('nome')} value={f.nome} onChange={e=>up('nome',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={fiErr('nome')} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
           <div><label style={lbl}>Data (MM/DD/AAAA)</label><input style={fi} value={f.data} onChange={e=>up('data',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={fiErr('cnpj')} value={f.cnpj} onChange={e=>up('cnpj',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={fiErr('cnpj')} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
           <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-          <div><label style={lbl}>Contato</label><input style={fi} value={f.contato} onChange={e=>up('contato',e.target.value)}/></div>
-          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',e.target.value)}/></div>
+          <div><label style={lbl}>Contato</label><input style={fi} value={f.contato} onChange={e=>up('contato',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
+          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
           <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
         </div>
       </div>
@@ -1076,7 +1085,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
           <div><label style={lbl}>Status</label><select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}><option value="Faturado">Faturado</option><option value="Aguardando">Aguardando</option></select></div>
           <div><label style={lbl}>Emitir NFE</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
         </div>
-        <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56}} value={f.obs} onChange={e=>up('obs',e.target.value)}/></div>
+        <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())} style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}}/></div>
       </div>
       <button onClick={salvar} style={{width:'100%',padding:'12px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
         <i className="ti ti-device-floppy"/> Salvar cliente
@@ -1138,6 +1147,8 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
 
   // Helper: renderiza campo como input/select (edit) ou div (view)
   function Campo({label,field,type='text',opts,span}){
+    const upperTypes=['text'];
+    const shouldUpper=upperTypes.includes(type)&&!opts&&field!=='email'&&field!=='equipRastreio';
     return(
       <div style={span?{gridColumn:`span ${span}`}:{}}>
         <label style={lbl}>{label}</label>
@@ -1149,8 +1160,8 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
                   :<option key={o}>{o}</option>)}
               </select>
             : type==='textarea'
-              ? <textarea style={{...fi,resize:'vertical',minHeight:60}} value={f[field]} onChange={e=>up(field,e.target.value)}/>
-              : <input style={fi} type={type} step={type==='number'?'0.01':undefined} value={f[field]} onChange={e=>up(field,e.target.value)}/>
+              ? <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f[field]} onChange={e=>up(field,e.target.value.toUpperCase())}/>
+              : <input style={{...fi,textTransform:shouldUpper?'uppercase':'none'}} type={type} step={type==='number'?'0.01':undefined} value={f[field]} onChange={e=>up(field,shouldUpper?e.target.value.toUpperCase():e.target.value)}/>
           : <div style={fiView}>{f[field]||'—'}</div>
         }
       </div>
@@ -1288,55 +1299,132 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
 }
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
-  const [novoUser,setNovoUser]=useState({nome:'',email:'',senha:'',perfil:'colaborador'});
-  const [savedUser,setSavedUser]=useState(false);
-  const [erroUser,setErroUser]=useState('');
+function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
   const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true});
   const [savedEquip,setSavedEquip]=useState(false);
+  // Convite
+  const [convite,setConvite]=useState({nome:'',email:'',perfil:'colaborador'});
+  const [conviteStatus,setConviteStatus]=useState(''); // ''|'enviando'|'ok'|'erro'
+  const [conviteErro,setConviteErro]=useState('');
+  // Mapeamento vendedores
+  const [mapa,setMapa]=useState({});
+  const [mapaStatus,setMapaStatus]=useState('');
+  // Ordenação do menu (drag)
+  const [dragMenuId,setDragMenuId]=useState(null);
+  const [dragOverId,setDragOverId]=useState(null);
+  const [localOrder,setLocalOrder]=useState(()=>menuOrder||NAV_ITEMS_BASE.map(n=>n.id));
+
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
   const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
 
-  async function addUser(){
-    if(!novoUser.nome.trim()||!novoUser.email.trim()||!novoUser.senha.trim()){setErroUser('Preencha todos os campos');return;}
-    setErroUser('');
-    try{
-      const cred=await createUserWithEmailAndPassword(auth,novoUser.email,novoUser.senha);
-      await setDoc(doc(db,'usuarios',cred.user.uid),{nome:novoUser.nome,email:novoUser.email,perfil:novoUser.perfil,criadoEm:new Date().toISOString()});
-      setNovoUser({nome:'',email:'',senha:'',perfil:'colaborador'});
-      setSavedUser(true);setTimeout(()=>setSavedUser(false),2000);
-    }catch(e){setErroUser(e.code==='auth/email-already-in-use'?'Email já cadastrado.':'Erro: '+e.message);}
-  }
+  // Nomes antigos nos dados históricos que não correspondem a nenhum vendedor cadastrado
+  const nomesAntigos=[...new Set(CLIENTES_BASE.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
+  const nomesCadastrados=vendedoresCad.map(v=>v.nome);
+  const nomesParaMapear=nomesAntigos.filter(n=>!nomesCadastrados.some(c=>c.toLowerCase()===n.toLowerCase()));
 
   async function addVendedor(){
     if(!novoVend.trim())return;
     const id='vend_'+Date.now();
-    await setDoc(doc(db,'vendedores',id),{nome:novoVend.trim(),criadoEm:new Date().toISOString()});
+    await setDoc(doc(db,'vendedores',id),{nome:novoVend.trim().toUpperCase(),criadoEm:new Date().toISOString()});
     setNovoVend('');setSavedVend(true);setTimeout(()=>setSavedVend(false),2000);
   }
   async function removeVendedor(id){
     if(!window.confirm('Remover este vendedor?'))return;
-    const {deleteDoc}=await import('firebase/firestore');
     await deleteDoc(doc(db,'vendedores',id));
   }
-
   async function addEquipamento(){
     if(!novoEquip.nome.trim())return;
     const id='equip_'+Date.now();
-    await setDoc(doc(db,'equipamentos',id),{nome:novoEquip.nome.trim(),requerPagamento:novoEquip.requerPagamento,criadoEm:new Date().toISOString()});
+    await setDoc(doc(db,'equipamentos',id),{nome:novoEquip.nome.trim().toUpperCase(),requerPagamento:novoEquip.requerPagamento,criadoEm:new Date().toISOString()});
     setNovoEquip({nome:'',requerPagamento:true});setSavedEquip(true);setTimeout(()=>setSavedEquip(false),2000);
   }
   async function removeEquipamento(id){
     if(!window.confirm('Remover este equipamento?'))return;
-    const {deleteDoc}=await import('firebase/firestore');
     await deleteDoc(doc(db,'equipamentos',id));
+  }
+
+  async function enviarConvite(){
+    if(!convite.nome.trim()||!convite.email.trim()){setConviteErro('Preencha nome e email.');return;}
+    setConviteStatus('enviando');setConviteErro('');
+    try{
+      // Salva o usuário no Firestore como pendente
+      const tempId='convite_'+Date.now();
+      await setDoc(doc(db,'usuarios',tempId),{
+        nome:convite.nome.trim().toUpperCase(),
+        email:convite.email.trim().toLowerCase(),
+        perfil:convite.perfil,
+        status:'pendente',
+        convidadoPor:currentUser?.email||'',
+        criadoEm:new Date().toISOString()
+      });
+      // Envia email de redefinição de senha (Firebase cria o link automaticamente)
+      // Precisamos criar o usuário primeiro com senha temporária
+      const senhaTmp='Secullum@'+Date.now();
+      const cred=await createUserWithEmailAndPassword(auth,convite.email.trim().toLowerCase(),senhaTmp);
+      // Atualiza o doc com o UID real
+      await setDoc(doc(db,'usuarios',cred.user.uid),{
+        nome:convite.nome.trim().toUpperCase(),
+        email:convite.email.trim().toLowerCase(),
+        perfil:convite.perfil,
+        status:'pendente',
+        convidadoPor:currentUser?.email||'',
+        criadoEm:new Date().toISOString()
+      });
+      // Remove o doc temporário
+      await deleteDoc(doc(db,'usuarios',tempId));
+      // Envia email para redefinir senha
+      await sendPasswordResetEmail(auth,convite.email.trim().toLowerCase());
+      // Volta a logar como o usuário admin atual
+      setConviteStatus('ok');
+      setConvite({nome:'',email:'',perfil:'colaborador'});
+      setTimeout(()=>setConviteStatus(''),3000);
+    }catch(e){
+      setConviteStatus('erro');
+      setConviteErro(e.code==='auth/email-already-in-use'?'Este email já está cadastrado.':'Erro: '+e.message);
+    }
+  }
+
+  async function salvarMapeamento(){
+    if(!Object.keys(mapa).length)return;
+    setMapaStatus('salvando');
+    try{
+      // Atualiza overrides dos clientes base
+      const lotes=Object.entries(mapa).filter(([,v])=>v);
+      for(const [nomeAntigo,nomeNovo] of lotes){
+        const clientes=CLIENTES_BASE.filter(c=>c.vendedor===nomeAntigo);
+        for(const c of clientes){
+          const atual={};
+          try{const snap=await getDocs(collection(db,'overrides'));snap.forEach(d=>{if(d.id===c.id)Object.assign(atual,d.data());});}catch(e){}
+          await setDoc(doc(db,'overrides',c.id),{...atual,vendedor:nomeNovo},{merge:true});
+        }
+      }
+      setMapa({});setMapaStatus('ok');
+      setTimeout(()=>setMapaStatus(''),2500);
+    }catch(e){setMapaStatus('erro');}
+  }
+
+  function salvarOrdemMenu(){
+    onMenuOrderChange(localOrder);
+    try{localStorage.setItem('crm_menu_order',JSON.stringify(localOrder));}catch(e){}
+  }
+
+  function onDragStart(id){setDragMenuId(id);}
+  function onDragOver(e,id){e.preventDefault();setDragOverId(id);}
+  function onDrop(id){
+    if(!dragMenuId||dragMenuId===id)return;
+    const arr=[...localOrder];
+    const from=arr.indexOf(dragMenuId),to=arr.indexOf(id);
+    if(from<0||to<0)return;
+    arr.splice(from,1);arr.splice(to,0,dragMenuId);
+    setLocalOrder(arr);setDragMenuId(null);setDragOverId(null);
   }
 
   return(
     <div style={{fontFamily:'sans-serif'}}>
+
       {/* Sessão atual */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Sessão atual</div>
@@ -1350,13 +1438,86 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
         </div>
       </div>
 
+      {/* Convidar usuário */}
+      <div style={{...sec,borderTop:`3px solid ${C.green}`}}>
+        <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:4,textTransform:'uppercase'}}>Convidar usuário</div>
+        <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>O usuário receberá um email para definir a própria senha. Sua sessão não será afetada.</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Nome completo</label><input style={fi} value={convite.nome} onChange={e=>setConvite(x=>({...x,nome:e.target.value.toUpperCase()}))} placeholder="NOME DO USUÁRIO"/></div>
+          <div><label style={lbl}>Email</label><input style={fi} type="email" value={convite.email} onChange={e=>setConvite(x=>({...x,email:e.target.value}))}/></div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Nível de acesso</label>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+            {Object.entries(PERFIS).map(([k,p])=>(
+              <div key={k} onClick={()=>setConvite(x=>({...x,perfil:k}))} style={{borderRadius:7,padding:'10px 12px',border:`2px solid ${convite.perfil===k?p.color:'#dde1e7'}`,background:convite.perfil===k?p.color+'11':'#fff',cursor:'pointer',transition:'all .15s'}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                  <div style={{width:26,height:26,borderRadius:6,background:convite.perfil===k?p.color:'#ecf0f1',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    <i className={`ti ${p.icon}`} style={{color:convite.perfil===k?'#fff':'#7f8c8d',fontSize:13}}/>
+                  </div>
+                  <span style={{fontWeight:700,fontSize:11,color:convite.perfil===k?p.color:'#2c3e50'}}>{p.label}</span>
+                </div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>{p.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {conviteErro&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>{conviteErro}</div>}
+        {conviteStatus==='ok'&&<div style={{background:'#d5f5e3',color:'#1e8449',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>✓ Convite enviado! O usuário receberá um email para definir a senha.</div>}
+        <button onClick={enviarConvite} disabled={conviteStatus==='enviando'} style={{width:'100%',padding:'10px',borderRadius:6,border:'none',background:conviteStatus==='ok'?C.green:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+          <i className={`ti ${conviteStatus==='enviando'?'ti-loader':'ti-send'}`}/>{conviteStatus==='enviando'?'Enviando...':'Enviar convite'}
+        </button>
+      </div>
+
+      {/* Usuários cadastrados */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({usuarios.length})</div>
+        {usuarios.map(u=>(
+          <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
+            <div style={{width:36,height:36,borderRadius:'50%',background:PERFIS[u.perfil]?.color||C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>{(u.nome||u.email||'?')[0].toUpperCase()}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{u.nome}</div>
+              <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
+            </div>
+            <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+              {u.status==='pendente'&&<span style={{background:'#fef9e7',color:C.orange,padding:'2px 8px',borderRadius:10,fontSize:9,fontWeight:700}}>CONVITE PENDENTE</span>}
+              <span style={{background:PERFIS[u.perfil]?.color||C.blue,color:'#fff',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{PERFIS[u.perfil]?.label||u.perfil}</span>
+            </div>
+          </div>
+        ))}
+        {usuarios.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário cadastrado.</div>}
+      </div>
+
+      {/* Mapeamento de vendedores antigos */}
+      {nomesParaMapear.length>0&&(
+        <div style={{...sec,borderTop:`3px solid ${C.orange}`}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:4,textTransform:'uppercase'}}>Vincular vendedores antigos</div>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>Esses nomes existem nos dados históricos mas não correspondem a nenhum vendedor cadastrado. Vincule cada um ao vendedor correto.</div>
+          {nomesParaMapear.map(n=>(
+            <div key={n} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <div style={{width:120,fontSize:12,fontWeight:700,color:C.text,background:'#f8f9fa',padding:'6px 10px',borderRadius:5,flexShrink:0}}>{n}</div>
+              <i className="ti ti-arrow-right" style={{color:C.textMuted,fontSize:14,flexShrink:0}}/>
+              <select style={{...fi}} value={mapa[n]||''} onChange={e=>setMapa(x=>({...x,[n]:e.target.value}))}>
+                <option value="">— Selecione o vendedor —</option>
+                {vendedoresCad.map(v=><option key={v.id} value={v.nome}>{v.nome}</option>)}
+              </select>
+            </div>
+          ))}
+          {mapaStatus==='ok'&&<div style={{background:'#d5f5e3',color:'#1e8449',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>✓ Clientes atualizados com sucesso!</div>}
+          {mapaStatus==='erro'&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>Erro ao salvar. Tente novamente.</div>}
+          <button onClick={salvarMapeamento} disabled={mapaStatus==='salvando'} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.orange,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+            <i className="ti ti-device-floppy"/>{mapaStatus==='salvando'?'Salvando...':'Salvar mapeamento'}
+          </button>
+        </div>
+      )}
+
       {/* Vendedores */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Vendedores ({vendedoresCad.length})</div>
         <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:12}}>
           {vendedoresCad.map(v=>(
             <div key={v.id} style={{display:'flex',alignItems:'center',gap:6,background:'#ebf5fb',borderRadius:20,padding:'4px 12px'}}>
-              <div style={{width:22,height:22,borderRadius:'50%',background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:700,flexShrink:0}}>{v.nome[0].toUpperCase()}</div>
+              <div style={{width:22,height:22,borderRadius:'50%',background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:700,flexShrink:0}}>{v.nome[0]}</div>
               <span style={{fontSize:12,fontWeight:600,color:C.text}}>{v.nome}</span>
               <button onClick={()=>removeVendedor(v.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14,lineHeight:1,padding:'0 2px'}}>×</button>
             </div>
@@ -1364,7 +1525,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
           {vendedoresCad.length===0&&<span style={{fontSize:12,color:C.textMuted}}>Nenhum vendedor cadastrado.</span>}
         </div>
         <div style={{display:'flex',gap:8}}>
-          <input style={{...fi,flex:1}} value={novoVend} onChange={e=>setNovoVend(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addVendedor()} placeholder="Nome do vendedor"/>
+          <input style={{...fi,flex:1,textTransform:'uppercase'}} value={novoVend} onChange={e=>setNovoVend(e.target.value.toUpperCase())} onKeyDown={e=>e.key==='Enter'&&addVendedor()} placeholder="NOME DO VENDEDOR"/>
           <button onClick={addVendedor} style={{padding:'7px 16px',borderRadius:5,border:'none',background:savedVend?C.green:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
             {savedVend?'✓ Adicionado!':'+ Adicionar'}
           </button>
@@ -1379,16 +1540,14 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
             <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
               <i className="ti ti-device-laptop" style={{color:C.teal,fontSize:15}}/>
               <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{e.nome}</span>
-              <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:e.requerPagamento?'#fef9e7':'#d5f5e3',color:e.requerPagamento?C.orange:C.green}}>
-                {e.requerPagamento?'Requer pagamento':'Sem custo'}
-              </span>
+              <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:e.requerPagamento?'#fef9e7':'#d5f5e3',color:e.requerPagamento?C.orange:C.green}}>{e.requerPagamento?'Requer pagamento':'Sem custo'}</span>
               <button onClick={()=>removeEquipamento(e.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
             </div>
           ))}
           {equipamentosCad.length===0&&<div style={{fontSize:12,color:C.textMuted,textAlign:'center',padding:'8px 0'}}>Nenhum equipamento cadastrado.</div>}
         </div>
         <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
-          <div style={{flex:1}}><label style={lbl}>Nome do equipamento</label><input style={fi} value={novoEquip.nome} onChange={e=>setNovoEquip(x=>({...x,nome:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addEquipamento()} placeholder="Ex: Evo40, Tablet..."/></div>
+          <div style={{flex:1}}><label style={lbl}>Nome do equipamento</label><input style={{...fi,textTransform:'uppercase'}} value={novoEquip.nome} onChange={e=>setNovoEquip(x=>({...x,nome:e.target.value.toUpperCase()}))} onKeyDown={e=>e.key==='Enter'&&addEquipamento()} placeholder="EX: EVO40, TABLET..."/></div>
           <div><label style={lbl}>Requer pagamento?</label>
             <select style={fi} value={String(novoEquip.requerPagamento)} onChange={e=>setNovoEquip(x=>({...x,requerPagamento:e.target.value==='true'}))}>
               <option value="true">Sim — cliente paga</option>
@@ -1401,36 +1560,35 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad}){
         </div>
       </div>
 
-      {/* Usuários */}
+      {/* Ordenação do menu */}
       <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({usuarios.length})</div>
-        {usuarios.map(u=>(
-          <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
-            <div style={{width:36,height:36,borderRadius:'50%',background:PERFIS[u.perfil]?.color||C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>{(u.nome||u.email||'?')[0].toUpperCase()}</div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{u.nome}</div>
-              <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
-            </div>
-            <span style={{background:PERFIS[u.perfil]?.color||C.blue,color:'#fff',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700,flexShrink:0}}>{PERFIS[u.perfil]?.label||u.perfil}</span>
+        <div style={{fontWeight:700,fontSize:12,color:C.purple,marginBottom:4,textTransform:'uppercase'}}>Ordem do menu</div>
+        <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>Arraste os itens para reordenar. Configurações é sempre o último item.</div>
+        <div style={{marginBottom:12}}>
+          {localOrder.map(id=>{
+            const item=NAV_ITEMS_BASE.find(n=>n.id===id);
+            if(!item)return null;
+            return(
+              <div key={id} draggable onDragStart={()=>onDragStart(id)} onDragOver={e=>onDragOver(e,id)} onDrop={()=>onDrop(id)} onDragEnd={()=>{setDragMenuId(null);setDragOverId(null);}}
+                style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:6,background:dragOverId===id?'#ebf5fb':'#f8f9fa',marginBottom:5,cursor:'grab',border:dragOverId===id?'1px dashed #3498db':'1px solid transparent',transition:'background .15s'}}>
+                <i className="ti ti-grip-vertical" style={{color:C.textMuted,fontSize:16}}/>
+                <i className={`ti ${item.icon}`} style={{color:C.blue,fontSize:15}}/>
+                <span style={{fontSize:12,fontWeight:600,color:C.text,flex:1}}>{item.label}</span>
+              </div>
+            );
+          })}
+          {/* Config sempre fixo */}
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:5,opacity:.5,border:'1px solid #dde1e7'}}>
+            <i className="ti ti-lock" style={{color:C.textMuted,fontSize:14}}/>
+            <i className="ti ti-settings" style={{color:C.textMuted,fontSize:15}}/>
+            <span style={{fontSize:12,fontWeight:600,color:C.textMuted,flex:1}}>Configurações — fixo</span>
           </div>
-        ))}
-        {usuarios.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário além do admin.</div>}
-      </div>
-
-      {/* Criar usuário */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Criar novo usuário</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Nome</label><input style={fi} value={novoUser.nome} onChange={e=>setNovoUser(x=>({...x,nome:e.target.value}))}/></div>
-          <div><label style={lbl}>Email</label><input style={fi} type="email" value={novoUser.email} onChange={e=>setNovoUser(x=>({...x,email:e.target.value}))}/></div>
-          <div><label style={lbl}>Senha</label><input style={fi} type="password" value={novoUser.senha} onChange={e=>setNovoUser(x=>({...x,senha:e.target.value}))}/></div>
-          <div><label style={lbl}>Perfil</label><select style={fi} value={novoUser.perfil} onChange={e=>setNovoUser(x=>({...x,perfil:e.target.value}))}>{Object.entries(PERFIS).map(([k,p])=><option key={k} value={k}>{p.label}</option>)}</select></div>
         </div>
-        {erroUser&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>{erroUser}</div>}
-        <button onClick={addUser} style={{width:'100%',padding:'10px',borderRadius:6,border:'none',background:savedUser?C.green:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'background .3s'}}>
-          <i className={`ti ${savedUser?'ti-check':'ti-user-plus'}`}/>{savedUser?'Usuário criado!':'Criar usuário'}
+        <button onClick={salvarOrdemMenu} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+          <i className="ti ti-device-floppy"/> Salvar ordem
         </button>
       </div>
+
     </div>
   );
 }
@@ -1454,6 +1612,7 @@ export default function App(){
   const [filtroStatus,setFiltroStatus]=useState('Todos');
   const [vendedoresCad,setVendedoresCad]=useState([]);
   const [equipamentosCad,setEquipamentosCad]=useState([]);
+  const [menuOrder,setMenuOrder]=useState(()=>{try{const s=localStorage.getItem('crm_menu_order');return s?JSON.parse(s):null;}catch(e){return null;}});
   const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
   const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
   function salvarMetaSistema(v){setMetaSistema(v);try{localStorage.setItem('crm_meta_sistema',String(v));}catch(e){}}
@@ -1525,6 +1684,7 @@ export default function App(){
   ],[clientes,overrides]);
 
   const perfil=userProfile?.perfil||'admin';
+  const navItemsOrdenados=getNavItems(menuOrder);
 
   const cl=useMemo(()=>todos.filter(c=>{
     if(filtroAno!=='Todos'&&c.ano!==+filtroAno)return false;
@@ -1556,7 +1716,7 @@ export default function App(){
   if(!authUser)return <LoginScreen/>;
 
   const fi={padding:'7px 10px',borderRadius:5,border:`1px solid ${C.border}`,fontSize:12,color:C.text,background:'#fff'};
-  const navItems=NAV_ITEMS.filter(n=>n.perfis.includes(perfil));
+  const navItems=navItemsOrdenados.filter(n=>n.perfis.includes(perfil));
   const filtroAtivo=busca||filtroAno!=='Todos'||filtroMes!=='Todos'||filtroVendedor!=='Todos'||filtroPlano!=='Todos'||filtroStatus!=='Todos';
 
   return(
@@ -1642,7 +1802,7 @@ export default function App(){
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
 
           {/* CONFIGURAÇÕES */}
-          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
+          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}}/>}
 
           {/* DASHBOARD */}
           {!clienteSel&&page==='dashboard'&&(
