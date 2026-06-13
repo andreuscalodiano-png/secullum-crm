@@ -1185,6 +1185,37 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
 }
 
 // ─── DETALHE CLIENTE ──────────────────────────────────────────────────────────
+// ─── CAMPO HELPER (fora de DetalheCliente para evitar perda de foco) ──────────
+function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
+  type=type||'text';
+  const upperTypes=['text'];
+  const shouldUpper=upperTypes.includes(type)&&!opts&&field!=='email'&&field!=='equipRastreio';
+  const viewVal=()=>{
+    if(!f[field]&&f[field]!==0)return'—';
+    if(type==='date'){try{return new Date(f[field]+'T12:00:00').toLocaleDateString('pt-BR');}catch(e){return f[field];}}
+    return f[field];
+  };
+  return(
+    <div style={span?{gridColumn:`span ${span}`}:{}}>
+      <label style={lbl}>{label}</label>
+      {editMode
+        ? opts
+          ? <select style={fi} value={f[field]||''} onChange={e=>up(field,e.target.value)}>
+              {opts.map(o=>typeof o==='object'
+                ?<option key={o.v} value={o.v}>{o.l}</option>
+                :<option key={o}>{o}</option>)}
+            </select>
+          : type==='textarea'
+            ? <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f[field]||''} onChange={e=>up(field,e.target.value.toUpperCase())}/>
+            : field==='tel'
+              ? <input style={{...fi}} type="tel" value={f[field]||''} onChange={e=>up(field,mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/>
+              : <input style={{...fi,textTransform:shouldUpper?'uppercase':'none'}} type={type} step={type==='number'?'0.01':undefined} value={f[field]||''} onChange={e=>up(field,shouldUpper?e.target.value.toUpperCase():e.target.value)}/>
+        : <div style={fiView}>{viewVal()}</div>
+      }
+    </div>
+  );
+}
+
 function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
   const [editMode,setEditMode]=useState(false);
   const [saved,setSaved]=useState(false);
@@ -1236,34 +1267,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
   }
 
   // Helper: renderiza campo como input/select (edit) ou div (view)
-  function Campo({label,field,type='text',opts,span}){
-    const upperTypes=['text'];
-    const shouldUpper=upperTypes.includes(type)&&!opts&&field!=='email'&&field!=='equipRastreio';
-    const viewVal=()=>{
-      if(!f[field])return'—';
-      if(type==='date'){try{return new Date(f[field]+'T12:00:00').toLocaleDateString('pt-BR');}catch(e){return f[field];}}
-      return f[field];
-    };
-    return(
-      <div style={span?{gridColumn:`span ${span}`}:{}}>
-        <label style={lbl}>{label}</label>
-        {editMode
-          ? opts
-            ? <select style={fi} value={f[field]} onChange={e=>up(field,e.target.value)}>
-                {opts.map(o=>typeof o==='object'
-                  ?<option key={o.v} value={o.v}>{o.l}</option>
-                  :<option key={o}>{o}</option>)}
-              </select>
-            : type==='textarea'
-              ? <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f[field]} onChange={e=>up(field,e.target.value.toUpperCase())}/>
-              : field==='tel'
-                ? <input style={{...fi}} type="tel" value={f[field]||''} onChange={e=>up(field,mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/>
-                : <input style={{...fi,textTransform:shouldUpper?'uppercase':'none'}} type={type} step={type==='number'?'0.01':undefined} value={f[field]||''} onChange={e=>up(field,shouldUpper?e.target.value.toUpperCase():e.target.value)}/>
-          : <div style={fiView}>{viewVal()}</div>
-        }
-      </div>
-    );
-  }
+  // Campo é definido fora deste componente para evitar recriação a cada render
 
   return(
     <div style={{fontFamily:'sans-serif'}}>
@@ -1321,17 +1325,17 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
-          <Campo label="Nome *" field="nome"/>
-          <Campo label="CNPJ/CPF" field="cnpj"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Nome *" field="nome"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="CNPJ/CPF" field="cnpj"/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          <Campo label="Contato" field="contato"/>
-          <Campo label="Telefone" field="tel"/>
-          <Campo label="Email financeiro" field="email" type="email"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Contato" field="contato"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Telefone" field="tel"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Email financeiro" field="email" type="email"/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-          <Campo label="Funcionários" field="func" type="number"/>
-          <Campo label="Equipamento" field="equipTipo" opts={equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Funcionários" field="func" type="number"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Equipamento" field="equipTipo" opts={equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS}/>
         </div>
       </div>
 
@@ -1339,16 +1343,16 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          <Campo label="Plano" field="plano" opts={PLANOS}/>
-          <Campo label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
-          <Campo label="Status" field="status" opts={[{v:'Faturado',l:'✓ Faturado'},{v:'Aguardando',l:'⏳ Aguardando'}]}/>
-          <Campo label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Plano" field="plano" opts={PLANOS}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Status" field="status" opts={[{v:'Faturado',l:'✓ Faturado'},{v:'Aguardando',l:'⏳ Aguardando'}]}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <Campo label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
-          <Campo label="Data 1º boleto" field="dtBoleto" type="date"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º boleto" field="dtBoleto" type="date"/>
         </div>
-        <Campo label="Observações" field="obs" type="textarea" span={2}/>
+        <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Observações" field="obs" type="textarea" span={2}/>
       </div>
 
       {/* Pagamento do equipamento */}
