@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   collection, doc, setDoc, getDocs, onSnapshot, deleteDoc
 } from "firebase/firestore";
@@ -101,12 +101,17 @@ function parseValor(s){
   return n;
 }
 function moeda(v){return(+v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});}
+function getDataTs(c){
+  if(!c.data)return 0;
+  if(c.data instanceof Date)return c.data.getTime()||0;
+  // Firebase Timestamp {seconds, nanoseconds}
+  if(c.data.seconds)return c.data.seconds*1000;
+  // ISO string ou outro formato
+  const d=new Date(c.data);
+  return isNaN(d.getTime())?0:d.getTime();
+}
 function sortRecente(arr){
-  return [...arr].sort((a,b)=>{
-    const ta=(a.data instanceof Date?a.data.getTime():(a.data?new Date(a.data).getTime():0))||0;
-    const tb=(b.data instanceof Date?b.data.getTime():(b.data?new Date(b.data).getTime():0))||0;
-    return tb-ta;
-  });
+  return [...arr].sort((a,b)=>getDataTs(b)-getDataTs(a));
 }
 
 
@@ -1316,14 +1321,17 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
                   :<div style={{display:'flex',alignItems:'center',gap:6}}>
                     <div style={{...fiView,fontFamily:'monospace',letterSpacing:1,flex:1}}>{f.equipRastreio||'—'}</div>
                     {f.equipRastreio&&<>
-                      <button title="Copiar código" onClick={()=>{navigator.clipboard.writeText(f.equipRastreio);}} style={{padding:'5px 8px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',color:C.blue,fontSize:13,flexShrink:0}}>
-                        <i className="ti ti-copy"/>
+                      <button title="Copiar código" onClick={()=>{navigator.clipboard.writeText(f.equipRastreio);}} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',color:C.blue,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        Copiar
                       </button>
-                      <a href={`https://rastreamento.correios.com.br/app/index.php?objetos=${f.equipRastreio}`} target="_blank" rel="noopener noreferrer" title="Rastrear nos Correios" style={{padding:'5px 8px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.teal,fontSize:13,flexShrink:0,display:'flex',alignItems:'center',textDecoration:'none'}}>
-                        <i className="ti ti-link"/>
+                      <a href={`https://rastreamento.correios.com.br/app/index.php?objetos=${f.equipRastreio}`} target="_blank" rel="noopener noreferrer" title="Rastrear nos Correios" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.teal,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none'}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        Correios
                       </a>
-                      <a href={`mailto:${c.email}?subject=${encodeURIComponent('Seu equipamento foi despachado! 📦 — Guion Informática')}&body=${encodeURIComponent('Olá, '+((c.contato||c.nome)||'')+'!\n\nSeu equipamento foi despachado e já está a caminho!\n\nCódigo de rastreio: '+f.equipRastreio+'\n\nAcompanhe a entrega clicando no link abaixo:\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\nQualquer dúvida, estamos à disposição.\n\nAtenciosamente,\nGuion Informática\nfinanceiro@guionstore.com.br')}`} title="Enviar por email ao cliente" style={{padding:'5px 8px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.orange,fontSize:13,flexShrink:0,display:'flex',alignItems:'center',textDecoration:'none'}}>
-                        <i className="ti ti-mail"/>
+                      <a href={`mailto:${c.email}?subject=${encodeURIComponent('Seu equipamento foi despachado! 📦 — Guion Informática')}&body=${encodeURIComponent('Olá, '+((c.contato||c.nome)||'')+'!\n\nSeu equipamento foi despachado e já está a caminho!\n\nCódigo de rastreio: '+f.equipRastreio+'\n\nAcompanhe a entrega clicando no link abaixo:\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\nQualquer dúvida, estamos à disposição.\n\nAtenciosamente,\nGuion Informática\nfinanceiro@guionstore.com.br')}`} title="Enviar por email ao cliente" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.orange,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none'}}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        Email
                       </a>
                     </>}
                   </div>
@@ -1677,7 +1685,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
   const [dragOverCol,setDragOverCol]=useState(null);
 
   // Form nova solicitação
-  const [form,setForm]=useState({titulo:'',nrBanco:'',clienteId:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
+  const [form,setForm]=useState({titulo:'',nrBanco:'',clienteNome:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
   const [salvando,setSalvando]=useState(false);
   const upF=(k,v)=>setForm(x=>({...x,[k]:v}));
 
@@ -1696,8 +1704,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       id:ref.id,
       titulo:form.titulo.trim().toUpperCase(),
       nrBanco:form.nrBanco.trim(),
-      clienteId:form.clienteId,
-      clienteNome:todos.find(c=>c.id===form.clienteId)?.nome||'',
+      clienteNome:form.clienteNome.trim().toUpperCase(),
       categoria:form.categoria,
       prioridade:form.prioridade,
       descricao:form.descricao.trim().toUpperCase(),
@@ -1709,11 +1716,14 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       criadoEm:new Date().toISOString(),
       comentarios:[],
     });
-    setForm({titulo:'',nrBanco:'',clienteId:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
-    setSalvando(false);setNovaForm(false);
+    setForm({titulo:'',nrBanco:'',clienteNome:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
+    setSalvando(false);setSubAba('kanban');
   }
 
   async function atualizarStatus(id,novoStatus){
+    if(novoStatus==='Resolvida'){
+      if(!window.confirm('Confirmar resolução desta solicitação? Ela será movida para a aba de Resolvidas.'))return;
+    }
     await setDoc(doc(db,'solicitacoes',id),{status:novoStatus},{merge:true});
     if(solSel?.id===id)setSolSel(s=>({...s,status:novoStatus}));
   }
@@ -1740,6 +1750,10 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
     if(!dragId)return;
     const sol=solicitacoes.find(s=>s.id===dragId);
     if(!sol)return;
+    if(novoStatus==='Resolvida'){
+      if(!window.confirm('Confirmar resolução desta solicitação? Ela será movida para a aba de Resolvidas.'))
+        {setDragId(null);setDragOverCol(null);return;}
+    }
     const updates={status:novoStatus};
     if(novoRespId&&novoRespId!==sol.responsavelId){
       updates.responsavelId=novoRespId;
@@ -1749,10 +1763,12 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
     setDragId(null);setDragOverCol(null);
   }
 
+  const solAtivas=solicitacoes.filter(s=>s.status!=='Resolvida'&&s.status!=='Cancelada');
+  const solResolvidas=solicitacoes.filter(s=>s.status==='Resolvida');
   const subAbas=[
-    {id:'kanban',icon:'ti-layout-kanban',l:'Kanban'},
-    {id:'lista', icon:'ti-list',         l:`Lista (${solicitacoes.length})`},
-    {id:'nova',  icon:'ti-plus',         l:'Nova solicitação'},
+    {id:'kanban',   l:`Kanban (${solAtivas.length})`},
+    {id:'lista',    l:`Lista (${solicitacoes.length})`},
+    {id:'resolvidas',l:`Resolvidas (${solResolvidas.length})`},
   ];
 
   if(solSel){
@@ -1817,32 +1833,40 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
 
   return(
     <div>
-      {/* Sub-abas */}
-      <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
-        {subAbas.map(s=>(
-          <button key={s.id} onClick={()=>{setSubAba(s.id);setNovaForm(s.id==='nova');}} style={{padding:'6px 14px',borderRadius:5,border:'none',background:subAba===s.id?C.blue:'#ecf0f1',color:subAba===s.id?'#fff':C.textMuted,cursor:'pointer',fontSize:12,fontWeight:subAba===s.id?700:400,display:'flex',alignItems:'center',gap:6}}>
-            <i className={`ti ${s.icon}`}/>{s.l}
-          </button>
-        ))}
-        <span style={{fontSize:11,color:C.textMuted,marginLeft:4}}>
-          {solicitacoes.filter(s=>s.status==='Aberta').length} abertas • {solicitacoes.filter(s=>s.status==='Em andamento').length} em andamento
-        </span>
+      {/* Header com botão Nova Solicitação destacado */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          {subAbas.map(s=>(
+            <button key={s.id} onClick={()=>setSubAba(s.id)} style={{padding:'7px 16px',borderRadius:6,border:'none',background:subAba===s.id?C.blue:'#ecf0f1',color:subAba===s.id?'#fff':C.textMuted,cursor:'pointer',fontSize:12,fontWeight:subAba===s.id?700:400}}>
+              {s.l}
+            </button>
+          ))}
+          <span style={{fontSize:11,color:C.textMuted,marginLeft:4}}>
+            {solicitacoes.filter(s=>s.status==='Aberta').length} abertas • {solicitacoes.filter(s=>s.status==='Em andamento').length} em andamento
+          </span>
+        </div>
+        <button onClick={()=>setSubAba('nova')} style={{padding:'10px 22px',borderRadius:7,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:8,boxShadow:'0 2px 8px rgba(39,174,96,.4)'}}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          Nova solicitação
+        </button>
       </div>
 
-      {/* NOVA SOLICITAÇÃO */}
+
+
+      {/* NOVA SOLICITAÇÃO (aba) */}
       {subAba==='nova'&&(
         <div style={sec}>
-          <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:16,textTransform:'uppercase'}}>Nova solicitação</div>
+          <div style={{fontWeight:700,fontSize:14,color:C.green,marginBottom:16,display:'flex',alignItems:'center',gap:8}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Nova solicitação
+          </div>
           <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
             <div><label style={lbl}>Título *</label><input style={{...fi,textTransform:'uppercase'}} value={form.titulo} onChange={e=>upF('titulo',e.target.value.toUpperCase())}/></div>
             <div><label style={lbl}>Nº Banco (Secullum)</label><input style={fi} value={form.nrBanco} onChange={e=>upF('nrBanco',e.target.value)}/></div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
             <div><label style={lbl}>Cliente</label>
-              <select style={fi} value={form.clienteId} onChange={e=>upF('clienteId',e.target.value)}>
-                <option value="">— Selecione o cliente —</option>
-                {sortRecente(todos).slice(0,200).map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}
-              </select>
+              <input style={{...fi,textTransform:'uppercase'}} value={form.clienteNome} onChange={e=>upF('clienteNome',e.target.value.toUpperCase())} placeholder="NOME DO CLIENTE"/>
             </div>
             <div><label style={lbl}>Responsável *</label>
               <select style={fi} value={form.responsavelId} onChange={e=>upF('responsavelId',e.target.value)}>
@@ -1868,11 +1892,29 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
             <textarea value={form.descricao} onChange={e=>upF('descricao',e.target.value.toUpperCase())} style={{...fi,resize:'vertical',minHeight:80,textTransform:'uppercase'}} placeholder="DESCREVA AQUI OS DETALHES DA SOLICITAÇÃO..."/>
           </div>
           <div style={{display:'flex',gap:8}}>
-            <button onClick={criarSolicitacao} disabled={salvando} style={{padding:'10px 20px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:6}}>
-              <i className="ti ti-send"/>{salvando?'Salvando...':'Abrir solicitação'}
+            <button onClick={criarSolicitacao} disabled={salvando} style={{padding:'10px 22px',borderRadius:7,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:6,boxShadow:'0 2px 8px rgba(39,174,96,.4)'}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              {salvando?'Salvando...':'Abrir solicitação'}
             </button>
-            <button onClick={()=>setSubAba('kanban')} style={{padding:'10px 16px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted}}>Cancelar</button>
+            <button onClick={()=>setSubAba('kanban')} style={{padding:'10px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted}}>Cancelar</button>
           </div>
+        </div>
+      )}
+
+      {/* RESOLVIDAS */}
+      {subAba==='resolvidas'&&(
+        <div>
+          {solResolvidas.length===0&&<div style={{background:C.card,borderRadius:8,padding:'30px',textAlign:'center',color:C.textMuted,fontSize:13,boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>Nenhuma solicitação resolvida ainda.</div>}
+          {[...solResolvidas].sort((a,b)=>new Date(b.criadoEm)-new Date(a.criadoEm)).map((s,i)=>(
+            <div key={s.id} onClick={()=>setSolSel(s)} style={{padding:'12px 16px',marginBottom:8,cursor:'pointer',background:C.card,borderRadius:8,boxShadow:'0 1px 3px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,opacity:.8}}>
+              <div style={{width:4,height:36,borderRadius:2,background:C.green,flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.titulo}</div>
+                <div style={{fontSize:11,color:C.textMuted}}>{s.categoria}{s.clienteNome?' • '+s.clienteNome:''}{s.responsavelNome?' • '+s.responsavelNome:''}</div>
+              </div>
+              <span style={{background:'#d5f5e3',color:C.green,padding:'2px 10px',borderRadius:10,fontSize:10,fontWeight:700,flexShrink:0}}>✓ Resolvida</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1903,11 +1945,11 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       {/* KANBAN */}
       {subAba==='kanban'&&(
         <div>
-          {/* Kanban por usuário */}
+          {/* Kanban por usuário - apenas ativas */}
           <div style={{overflowX:'auto',paddingBottom:8}}>
             <div style={{display:'flex',gap:12,minWidth:'max-content'}}>
               {usuarios.map(u=>{
-                const solUser=solicitacoes.filter(s=>s.responsavelId===u.id);
+                const solUser=solAtivas.filter(s=>s.responsavelId===u.id);
                 const isOver=dragOverCol===u.id;
                 return(
                   <div key={u.id} onDragOver={e=>onDragOver(e,u.id)} onDrop={()=>onDrop(solUser.find(s=>s.id===dragId)?.status||'Aberta',u.id)}
@@ -1955,23 +1997,31 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
             </div>
           </div>
 
-          {/* Separador */}
-          <div style={{margin:'20px 0 12px',borderTop:`1px solid ${C.border}`,paddingTop:16}}>
-            <div style={{fontSize:11,color:C.textMuted,fontWeight:700,textTransform:'uppercase',marginBottom:10}}>Canceladas ({solicitacoes.filter(s=>s.status==='Cancelada').length})</div>
-            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-              {solicitacoes.filter(s=>s.status==='Cancelada').map(s=>(
-                <div key={s.id} onClick={()=>setSolSel(s)} style={{background:'#f8f9fa',border:'1px solid #dde1e7',borderRadius:6,padding:'6px 12px',cursor:'pointer',opacity:.7}}>
-                  <div style={{fontSize:11,fontWeight:700,color:C.textMuted}}>{s.titulo}</div>
-                  {s.clienteNome&&<div style={{fontSize:10,color:C.textMuted}}>{s.clienteNome}</div>}
-                </div>
-              ))}
-              {solicitacoes.filter(s=>s.status==='Cancelada').length===0&&<div style={{fontSize:12,color:C.textMuted}}>Nenhuma cancelada.</div>}
-            </div>
-          </div>
+
         </div>
       )}
     </div>
   );
+}
+
+
+// ─── SOM DE SINO ─────────────────────────────────────────────────────────────
+function tocarSino(vezes=3){
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    let t=ctx.currentTime;
+    for(let i=0;i<vezes;i++){
+      const osc=ctx.createOscillator();
+      const gain=ctx.createGain();
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(880,t);
+      osc.frequency.exponentialRampToValueAtTime(440,t+0.3);
+      gain.gain.setValueAtTime(0.3,t);
+      gain.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+      osc.start(t);osc.stop(t+0.4);
+      t+=0.5;
+    }
+  }catch(e){}
 }
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
@@ -1999,6 +2049,25 @@ export default function App(){
   const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
   function salvarMetaSistema(v){setMetaSistema(v);try{localStorage.setItem('crm_meta_sistema',String(v));}catch(e){}}
   function salvarMetaEquip(v){setMetaEquip(v);try{localStorage.setItem('crm_meta_equip',String(v));}catch(e){}}
+
+  // Sino: refs para detectar novos itens
+  const prevSolIds=useRef(null);
+  const prevClienteIds=useRef(null);
+  const prevImplAtrasados=useRef(null);
+
+  useEffect(()=>{
+    if(prevSolIds.current===null){prevSolIds.current=new Set(solicitacoes.map(s=>s.id));return;}
+    const novos=solicitacoes.filter(s=>!prevSolIds.current.has(s.id)&&s.responsavelId===userProfile?.id);
+    if(novos.length>0)tocarSino(3);
+    prevSolIds.current=new Set(solicitacoes.map(s=>s.id));
+  },[solicitacoes]);
+
+  useEffect(()=>{
+    if(prevClienteIds.current===null){prevClienteIds.current=new Set(clientes.map(c=>c.id));return;}
+    const novos=clientes.filter(c=>!prevClienteIds.current.has(c.id));
+    if(novos.length>0)tocarSino(3);
+    prevClienteIds.current=new Set(clientes.map(c=>c.id));
+  },[clientes]);
 
   // Auth listener
   useEffect(()=>{
@@ -2120,15 +2189,48 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','clientes':'#9b59b6','novo':'#27ae60','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','config':'#7f8c8d'};
-            const cor=page===n.id?'#fff':(iconColors[n.id]||'#bdc3c7');
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','config':'#95a5a6'};
+            const svgIcons={
+              // Dashboard: monitor com gráfico
+              dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
+              // Vendas: aperto de mão
+              vendas:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 0C1.46 6.7 1.33 10.28 4 13l8 8 8-8c2.67-2.72 2.54-6.3.42-8.42z"/><path d="M12 5.36 8.87 8.5a2.13 2.13 0 0 0 0 3h0a2.13 2.13 0 0 0 3.02 0L12 11l.11.5a2.13 2.13 0 0 0 3.02 0h0a2.13 2.13 0 0 0 0-3z"/></svg>,
+              // Financeiro: carteira com dinheiro
+              financeiro:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><circle cx="16" cy="15" r="1" fill="currentColor"/></svg>,
+              // Clientes: grupo de pessoas
+              clientes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+              // Novo cliente: pessoa com sinal de +
+              novo:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>,
+              // Implantação: chave inglesa + parafuso
+              implantacao:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>,
+              // Relatórios: planilha com linhas e colunas
+              relatorios:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>,
+              // Solicitações: caixa de entrada / ticket
+              solicitacoes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>,
+              // Configurações: engrenagem
+              config:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+            };
+            const ativo=page===n.id;
+            const cor=iconColors[n.id]||'#3498db';
             return(
-              <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);}} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',borderRadius:6,cursor:'pointer',background:page===n.id?C.sidebarActive:'transparent',color:page===n.id?'#fff':'#bdc3c7',marginBottom:2,fontSize:13,fontWeight:page===n.id?600:400}}>
-                <div style={{width:26,height:26,borderRadius:5,background:page===n.id?'rgba(255,255,255,.2)':(iconColors[n.id]||'transparent')+'22',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-                  <i className={`ti ${n.icon}`} style={{fontSize:14,color:cor}}/>
-                </div>
-                <span>{n.label}</span>
-              </div>
+              {(()=>{
+                // Calcular badges
+                const hoje2=new Date();hoje2.setHours(0,0,0,0);
+                const badgeSol=solicitacoes.filter(s=>(s.status==='Aberta'||s.status==='Em andamento')&&s.responsavelId===userProfile?.id).length;
+                const badgeImpl=todos.filter(c=>{const impl=implantacoes[c.id]||{};if(impl.etapa==='processo_finalizado')return false;if(!impl.prazo)return true;return new Date(impl.prazo+'T12:00:00')<hoje2;}).length;
+                const hojeStr=hoje2.toISOString().split('T')[0];
+                const badgeNovo=clientes.filter(c=>{if(!c.criadoEm)return false;return c.criadoEm.startsWith(hojeStr);}).length;
+                const badge=n.id==='solicitacoes'?badgeSol:n.id==='implantacao'?badgeImpl:n.id==='novo'?badgeNovo:0;
+                return(
+                  <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:7,cursor:'pointer',background:ativo?cor:'transparent',marginBottom:3,transition:'background .15s',position:'relative'}}>
+                    <div style={{width:28,height:28,borderRadius:6,background:ativo?'rgba(255,255,255,.25)':cor,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:ativo?'none':'0 1px 3px rgba(0,0,0,.2)'}}>
+                      <span style={{color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>{svgIcons[n.id]||svgIcons.config}</span>
+                    </div>
+                    <span style={{fontSize:13,fontWeight:ativo?700:400,color:ativo?'#fff':'#bdc3c7',flex:1}}>{n.label}</span>
+                    {badge>0&&<span style={{background:'#e67e22',color:'#fff',borderRadius:10,fontSize:10,fontWeight:700,padding:'1px 6px',minWidth:18,textAlign:'center',flexShrink:0}}>{badge}</span>}
+                  </div>
+                );
+              })()}
             );
           })}
         </div>
@@ -2148,9 +2250,10 @@ export default function App(){
             {navItems.find(n=>n.id===page)?.label||'Dashboard'}
           </div>
           <div style={{display:'flex',alignItems:'center',gap:12}}>
-            <div style={{position:'relative'}}>
-              <i className="ti ti-search" style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',color:'#bdc3c7',fontSize:14}}/>
-              <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar cliente..." style={{...fi,paddingLeft:28,width:180,background:'rgba(255,255,255,.1)',border:'none',color:'#fff'}}/>
+            <div style={{position:'relative',display:'flex',alignItems:'center'}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#bdc3c7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{position:'absolute',left:10,pointerEvents:'none',zIndex:1}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input value={busca} onChange={e=>setBusca(e.target.value.toUpperCase())} placeholder="BUSCAR CLIENTE..." style={{paddingLeft:32,paddingRight:busca?28:10,height:34,borderRadius:7,border:'2px solid rgba(255,255,255,.25)',background:'rgba(255,255,255,.12)',color:'#fff',fontSize:12,width:200,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}/>
+              {busca&&<button onClick={()=>setBusca('')} style={{position:'absolute',right:6,background:'none',border:'none',cursor:'pointer',color:'#bdc3c7',fontSize:16,lineHeight:1,padding:0,display:'flex',alignItems:'center'}}>×</button>}
             </div>
             <div style={{width:32,height:32,borderRadius:'50%',background:C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:13}}>{(userProfile?.email||'A')[0].toUpperCase()}</div>
           </div>
