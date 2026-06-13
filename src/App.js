@@ -2399,7 +2399,7 @@ function OrcConfigServicos({servicos}){
         <div style={{marginBottom:8}}><label style={lbl}>Descrição</label><textarea style={{...fi,resize:'vertical',minHeight:50}} value={form.descricao} onChange={e=>setForm(x=>({...x,descricao:e.target.value}))}/></div>
         <div style={{display:'flex',gap:8}}>
           <button onClick={salvar} style={{padding:'8px 18px',borderRadius:6,border:'none',background:saved?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>{saved?'✓ Salvo!':(editId?'Salvar':'+ Adicionar')}</button>
-          {editId&&<button onClick={()=>{setEditId(null);setForm({nome:'',descricao:'',valor:'']);}} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
+          {editId&&<button onClick={()=>{setEditId(null);setForm({nome:'',descricao:'',valor:''});}} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
         </div>
       </div>
     </div>
