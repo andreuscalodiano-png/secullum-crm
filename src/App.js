@@ -2074,12 +2074,12 @@ const pctAgd=Math.round((agd.length/Math.max(cl.length,1))*100);
 
 // Card estilo Secullum
 const SCard=({label,value,sub,pct,cor,onClick})=>(
-  <div onClick={onClick} style={{background:'#fff',borderRadius:8,padding:'18px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:onClick?'pointer':'default',borderTop:`3px solid ${cor||'#f5a623'}`,transition:'box-shadow .15s'}}>
-    <div style={{fontSize:11,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.8,marginBottom:8}}>{label}</div>
-    <div style={{fontSize:32,fontWeight:700,color:'#4a4a4a',lineHeight:1,marginBottom:6}}>{value}</div>
-    {sub&&<div style={{fontSize:11,color:'#7f8c8d',marginBottom:pct!==undefined?8:0}}>{sub}</div>}
+  <div onClick={onClick} style={{background:'#fff',borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:onClick?'pointer':'default',borderTop:`3px solid ${cor||'#f5a623'}`,transition:'box-shadow .15s',minWidth:0}}>
+    <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.7,marginBottom:6,lineHeight:1.3}}>{label}</div>
+    <div style={{fontSize:20,fontWeight:700,color:'#4a4a4a',lineHeight:1,marginBottom:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{value}</div>
+    {sub&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:pct!==undefined?6:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sub}</div>}
     {pct!==undefined&&<>
-      <div style={{height:4,borderRadius:2,background:'#f0f0f0',overflow:'hidden'}}>
+      <div style={{height:3,borderRadius:2,background:'#f0f0f0',overflow:'hidden'}}>
         <div style={{height:'100%',borderRadius:2,background:cor||'#f5a623',width:Math.min(pct,100)+'%',transition:'width .4s'}}/>
       </div>
       <div style={{fontSize:10,color:'#7f8c8d',marginTop:3}}>{pct}%</div>
@@ -2127,7 +2127,7 @@ return(
     {/* ABA RESUMO */}
     {dashAba==='resumo'&&(
       <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:14,marginBottom:20}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:14}}>
           <SCard label="Total de Clientes" value={cl.length} sub={`${fat.length} fat. / ${agd.length} agd.`} pct={pctFat} cor="#f5a623"/>
           <SCard label="Clientes Faturados" value={fat.length} sub={moeda(totFat)} pct={pctFat} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
           <SCard label="Aguardando Faturar" value={agd.length} sub={moeda(totAgd)} pct={pctAgd} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
@@ -2238,7 +2238,7 @@ return(
     {/* ABA IMPLANTAÇÃO */}
     {dashAba==='implantacao'&&(
       <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:16}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:14}}>
           {ETAPAS.map(e=>{
             const qtd=todos.filter(c=>(implantacoes[c.id]||{}).etapa===e.id).length;
             return <div key={e.id} style={{background:'#fff',borderRadius:8,padding:'14px 16px',border:'1px solid #e8eaed',borderLeft:`3px solid ${e.color}`}}>
