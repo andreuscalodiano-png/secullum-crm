@@ -2061,6 +2061,201 @@ function tocarSino(vezes=3){
   }catch(e){}
 }
 
+
+// ─── DASHBOARD VIEW ───────────────────────────────────────────────────────────
+function DashboardView({todos,cl,fat,agd,totFat,totAgd,totGeral,totSist,totEquip,totImpl,porMes,porVend,porPlano,maxVend,solicitacoes,implantacoes,clientes,metaSistema,metaEquip,salvarMetaSistema,salvarMetaEquip,setPage,setClienteSel,setFiltroStatus,filtroVendedor,setFiltroVendedor}){
+const [dashAba,setDashAba]=useState('resumo');
+const hoje2=new Date();hoje2.setHours(0,0,0,0);
+const nPagos=todos.filter(c=>c.equipPago==='Não pago');
+const solAbertasQtd=solicitacoes.filter(s=>s.status==='Aberta'||s.status==='Em andamento').length;
+const implAtrasQtd=todos.filter(c=>{const impl=implantacoes[c.id]||{};if(impl.etapa==='processo_finalizado')return false;if(!impl.prazo)return false;return new Date(impl.prazo+'T12:00:00')<hoje2;}).length;
+const pctFat=Math.round((fat.length/Math.max(cl.length,1))*100);
+const pctAgd=Math.round((agd.length/Math.max(cl.length,1))*100);
+
+// Card estilo Secullum
+const SCard=({label,value,sub,pct,cor,onClick})=>(
+  <div onClick={onClick} style={{background:'#fff',borderRadius:8,padding:'18px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:onClick?'pointer':'default',borderTop:`3px solid ${cor||'#f5a623'}`,transition:'box-shadow .15s'}}>
+    <div style={{fontSize:11,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.8,marginBottom:8}}>{label}</div>
+    <div style={{fontSize:32,fontWeight:700,color:'#4a4a4a',lineHeight:1,marginBottom:6}}>{value}</div>
+    {sub&&<div style={{fontSize:11,color:'#7f8c8d',marginBottom:pct!==undefined?8:0}}>{sub}</div>}
+    {pct!==undefined&&<>
+      <div style={{height:4,borderRadius:2,background:'#f0f0f0',overflow:'hidden'}}>
+        <div style={{height:'100%',borderRadius:2,background:cor||'#f5a623',width:Math.min(pct,100)+'%',transition:'width .4s'}}/>
+      </div>
+      <div style={{fontSize:10,color:'#7f8c8d',marginTop:3}}>{pct}%</div>
+    </>}
+  </div>
+);
+
+return(
+  <div>
+    {/* Alertas e metas sempre visíveis */}
+    <PainelAlertas todos={todos} implantacoes={implantacoes} onVerImplantacao={()=>{setPage('implantacao');setClienteSel(null);}}/>
+    {nPagos.length>0&&(
+      <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:8}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#b45309',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" y1="22" x2="12" y2="12"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="M20.27 17.27 22 19"/></svg>
+          {nPagos.length} equipamento(s) aguardando pagamento
+        </div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+          {nPagos.slice(0,8).map(c=>(
+            <div key={c.id} onClick={()=>setClienteSel(c)} style={{background:'#fff',border:'1px solid #fde68a',borderRadius:5,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
+              <span style={{fontWeight:600,color:'#4a4a4a'}}>{c.nome}</span>
+              <span style={{color:'#7f8c8d',marginLeft:6}}>{c.equipTipo}</span>
+            </div>
+          ))}
+          {nPagos.length>8&&<span style={{fontSize:11,color:'#7f8c8d',alignSelf:'center'}}>+{nPagos.length-8} mais</span>}
+        </div>
+      </div>
+    )}
+    <DuplasMetas todos={todos} metaSistema={metaSistema} metaEquip={metaEquip} onSetMetaSistema={salvarMetaSistema} onSetMetaEquip={salvarMetaEquip}/>
+
+    {/* Abas estilo Secullum */}
+    <div style={{background:'#fff',borderRadius:'8px 8px 0 0',borderBottom:'2px solid #e8eaed',marginBottom:0,display:'flex',gap:0}}>
+      {[
+        {id:'resumo',    l:'RESUMO DIÁRIO'},
+        {id:'financeiro',l:'FINANCEIRO'},
+        {id:'clientes',  l:'CLIENTES'},
+        {id:'implantacao',l:'IMPLANTAÇÃO'},
+      ].map(a=>(
+        <button key={a.id} onClick={()=>setDashAba(a.id)} style={{padding:'12px 20px',border:'none',borderBottom:dashAba===a.id?'3px solid #f5a623':'3px solid transparent',background:'transparent',cursor:'pointer',fontSize:11,fontWeight:dashAba===a.id?700:500,color:dashAba===a.id?'#f5a623':'#7f8c8d',letterSpacing:.8,marginBottom:-2,transition:'all .15s'}}>
+          {a.l}
+        </button>
+      ))}
+    </div>
+
+    {/* ABA RESUMO */}
+    {dashAba==='resumo'&&(
+      <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:14,marginBottom:20}}>
+          <SCard label="Total de Clientes" value={cl.length} sub={`${fat.length} fat. / ${agd.length} agd.`} pct={pctFat} cor="#f5a623"/>
+          <SCard label="Clientes Faturados" value={fat.length} sub={moeda(totFat)} pct={pctFat} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
+          <SCard label="Aguardando Faturar" value={agd.length} sub={moeda(totAgd)} pct={pctAgd} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
+          <SCard label="Receita Total" value={moeda(totGeral)} cor="#3498db"/>
+          <SCard label="Receita Sistema" value={moeda(totSist)} cor="#9b59b6"/>
+          <SCard label="Receita Equipamentos" value={moeda(totEquip)} cor="#1abc9c"/>
+          <SCard label="Solicitações Abertas" value={solAbertasQtd} cor="#f5a623" onClick={()=>setPage('solicitacoes')}/>
+          <SCard label="Implantações Atrasadas" value={implAtrasQtd} cor="#e74c3c" onClick={()=>setPage('implantacao')}/>
+        </div>
+        <GraficoMRR todos={todos}/>
+        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:14,marginTop:14}}>
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:8,textTransform:'uppercase',letterSpacing:.8}}>Faturamento por mês</div>
+            <BarChart data={porMes.map(p=>({l:MESES[p.m].slice(0,3),v:p.fat}))} color="#f5a623" height={110}/>
+          </div>
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:10,textTransform:'uppercase',letterSpacing:.8}}>Por plano</div>
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <Donut vals={porPlano.map(p=>p.qtd)} colors={['#3498db','#9b59b6','#f5a623']} size={80} label={cl.length} sub="total"/>
+              <div>{porPlano.map(({p,qtd},i)=>{const cors=['#3498db','#9b59b6','#f5a623'];return <div key={p} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:8,height:8,borderRadius:2,background:cors[i]}}/><span style={{fontSize:11,color:'#7f8c8d',flex:1}}>{p}</span><span style={{fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{qtd}</span></div>;})}</div>
+            </div>
+          </div>
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:10,textTransform:'uppercase',letterSpacing:.8}}>Status</div>
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <Donut vals={[fat.length,agd.length]} colors={['#27ae60','#f5a623']} size={80} label={`${pctFat}%`} sub="fat."/>
+              <div>{[{l:'Faturado',v:fat.length,c:'#27ae60'},{l:'Aguardando',v:agd.length,c:'#f5a623'}].map(x=><div key={x.l} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:8,height:8,borderRadius:2,background:x.c}}/><span style={{fontSize:11,color:'#7f8c8d',flex:1}}>{x.l}</span><span style={{fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{x.v}</span></div>)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ABA FINANCEIRO */}
+    {dashAba==='financeiro'&&(
+      <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:12,marginBottom:16}}>
+          <SCard label="Total Geral" value={moeda(totGeral)} cor="#f5a623"/>
+          <SCard label="Faturado" value={moeda(totFat)} sub={fat.length+' clientes'} pct={Math.round((totFat/Math.max(totGeral,1))*100)} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
+          <SCard label="A Faturar" value={moeda(totAgd)} sub={agd.length+' pendentes'} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
+          <SCard label="Sistema/Mês" value={moeda(totSist)} cor="#9b59b6"/>
+          <SCard label="Equipamentos" value={moeda(totEquip)} cor="#1abc9c"/>
+          <SCard label="Implantações" value={moeda(totImpl)} cor="#3498db"/>
+        </div>
+        <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed',marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:12,textTransform:'uppercase',letterSpacing:.8}}>Ranking financeiro — vendedores</div>
+          {porVend.map(({v,qtd,total,fat:fatV},rank)=>{const medals=['🥇','🥈','🥉'];const pctV=Math.round((fatV/Math.max(maxVend,1))*100);
+            return <div key={v} onClick={()=>setFiltroVendedor(filtroVendedor===v?'Todos':v)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px',borderRadius:6,marginBottom:4,cursor:'pointer',background:filtroVendedor===v?'#fff8ee':'transparent'}}>
+              <span style={{fontSize:16,width:22}}>{medals[rank]||'🎖'}</span>
+              <div style={{width:30,height:30,borderRadius:'50%',background:'#f5a623',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:11,fontWeight:700,flexShrink:0}}>{v[0]}</div>
+              <div style={{flex:1}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontWeight:600,color:'#4a4a4a'}}>{v}</span><span style={{fontWeight:700,color:'#27ae60'}}>{moeda(fatV)}</span></div>
+                <div style={{height:4,borderRadius:2,background:'#f0f0f0',marginTop:4}}><div style={{height:'100%',borderRadius:2,background:'#f5a623',width:pctV+'%'}}/></div>
+                <div style={{fontSize:10,color:'#7f8c8d',marginTop:1}}>{qtd} clientes</div>
+              </div>
+            </div>;
+          })}
+        </div>
+        {agd.length>0&&(
+          <div style={{background:'#fff',borderRadius:8,border:'2px solid #fde68a',overflow:'hidden'}}>
+            <div style={{background:'#fff8ee',padding:'10px 16px',borderBottom:'1px solid #fde68a',display:'flex',justifyContent:'space-between'}}>
+              <span style={{fontWeight:700,fontSize:11,color:'#b45309',textTransform:'uppercase',letterSpacing:.8}}>⏳ Aguardando faturamento</span>
+              <span style={{fontWeight:700,color:'#b45309'}}>{moeda(totAgd)}</span>
+            </div>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'#f5f6fa'}}>{['Empresa','Vendedor','Plano','Valor'].map(h=><th key={h} style={{padding:'7px 14px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.6}}>{h}</th>)}</tr></thead>
+              <tbody>{sortRecente(agd).map((c,i)=>(
+                <tr key={c.id} onClick={()=>setClienteSel(c)} style={{borderTop:'1px solid #e8eaed',cursor:'pointer',background:i%2===0?'#fff':'#fffef5'}}>
+                  <td style={{padding:'8px 14px',fontSize:12,fontWeight:600,color:'#4a4a4a',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
+                  <td style={{padding:'8px 14px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
+                  <td style={{padding:'8px 14px'}}><span style={{background:'#fff8ee',color:'#f5a623',padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
+                  <td style={{padding:'8px 14px',fontSize:12,fontWeight:700,color:'#f5a623'}}>{moeda(c.total)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ABA CLIENTES */}
+    {dashAba==='clientes'&&(
+      <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'0',boxShadow:'0 1px 4px rgba(0,0,0,.07)',overflow:'hidden'}}>
+        <div style={{padding:'12px 16px',borderBottom:'1px solid #e8eaed',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontWeight:700,fontSize:13,color:'#4a4a4a'}}>{cl.length} clientes</span>
+          <button onClick={()=>setPage('clientes')} style={{background:'#f5a623',color:'#fff',border:'none',borderRadius:5,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver todos →</button>
+        </div>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr style={{background:'#f5f6fa'}}>
+            {['Empresa','CNPJ','Plano','Vendedor','Status','Valor'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.6}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {sortRecente(cl).slice(0,15).map((c,i)=>(
+              <tr key={c.id} onClick={()=>{setClienteSel(c);}} style={{borderTop:'1px solid #e8eaed',cursor:'pointer',background:i%2===0?'#fff':'#fafafa'}}>
+                <td style={{padding:'9px 12px',fontSize:12,fontWeight:600,color:'#4a4a4a',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
+                <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.cnpj}</td>
+                <td style={{padding:'9px 12px'}}><span style={{background:'#fff8ee',color:'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
+                <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
+                <td style={{padding:'9px 12px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fff8ee',color:c.status==='Faturado'?'#27ae60':'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
+                <td style={{padding:'9px 12px',fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{moeda(c.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {/* ABA IMPLANTAÇÃO */}
+    {dashAba==='implantacao'&&(
+      <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:16}}>
+          {ETAPAS.map(e=>{
+            const qtd=todos.filter(c=>(implantacoes[c.id]||{}).etapa===e.id).length;
+            return <div key={e.id} style={{background:'#fff',borderRadius:8,padding:'14px 16px',border:'1px solid #e8eaed',borderLeft:`3px solid ${e.color}`}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.6,marginBottom:6}}>{e.label}</div>
+              <div style={{fontSize:26,fontWeight:700,color:'#4a4a4a'}}>{qtd}</div>
+            </div>;
+          })}
+        </div>
+        <button onClick={()=>setPage('implantacao')} style={{background:'#f5a623',color:'#fff',border:'none',borderRadius:6,padding:'9px 20px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+          Abrir Kanban completo →
+        </button>
+      </div>
+    )}
+  </div>
+);
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
   const [authUser,setAuthUser]=useState(null);
@@ -2248,25 +2443,20 @@ export default function App(){
             const ativo=page===n.id;
             const cor=iconColors[n.id]||'#3498db';
             const corAtivo='#f5a623';
+            const hoje2=new Date();hoje2.setHours(0,0,0,0);
+            const badgeSol=solicitacoes.filter(s=>(s.status==='Aberta'||s.status==='Em andamento')&&s.responsavelId===userProfile?.id).length;
+            const badgeImpl=todos.filter(c=>{const impl=implantacoes[c.id]||{};if(impl.etapa==='processo_finalizado')return false;if(!impl.prazo)return true;return new Date(impl.prazo+'T12:00:00')<hoje2;}).length;
+            const hojeStr=hoje2.toISOString().split('T')[0];
+            const badgeNovo=clientes.filter(c=>{if(!c.criadoEm)return false;return c.criadoEm.startsWith(hojeStr);}).length;
+            const badge=n.id==='solicitacoes'?badgeSol:n.id==='implantacao'?badgeImpl:n.id==='novo'?badgeNovo:0;
             return(
-              {(()=>{
-                // Calcular badges
-                const hoje2=new Date();hoje2.setHours(0,0,0,0);
-                const badgeSol=solicitacoes.filter(s=>(s.status==='Aberta'||s.status==='Em andamento')&&s.responsavelId===userProfile?.id).length;
-                const badgeImpl=todos.filter(c=>{const impl=implantacoes[c.id]||{};if(impl.etapa==='processo_finalizado')return false;if(!impl.prazo)return true;return new Date(impl.prazo+'T12:00:00')<hoje2;}).length;
-                const hojeStr=hoje2.toISOString().split('T')[0];
-                const badgeNovo=clientes.filter(c=>{if(!c.criadoEm)return false;return c.criadoEm.startsWith(hojeStr);}).length;
-                const badge=n.id==='solicitacoes'?badgeSol:n.id==='implantacao'?badgeImpl:n.id==='novo'?badgeNovo:0;
-                return(
-                  <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:7,cursor:'pointer',background:ativo?corAtivo:'transparent',marginBottom:3,transition:'background .15s',position:'relative'}}>
-                    <div style={{width:28,height:28,borderRadius:6,background:ativo?'rgba(255,255,255,.25)':cor,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:ativo?'none':'0 1px 3px rgba(0,0,0,.2)'}}>
-                      <span style={{color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>{svgIcons[n.id]||svgIcons.config}</span>
-                    </div>
-                    <span style={{fontSize:13,fontWeight:ativo?700:400,color:ativo?'#fff':'#bdc3c7',flex:1}}>{n.label}</span>
-                    {badge>0&&<span style={{background:'#e67e22',color:'#fff',borderRadius:10,fontSize:10,fontWeight:700,padding:'1px 6px',minWidth:18,textAlign:'center',flexShrink:0}}>{badge}</span>}
-                  </div>
-                );
-              })()}
+              <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:7,cursor:'pointer',background:ativo?corAtivo:'transparent',marginBottom:3,transition:'background .15s',position:'relative'}}>
+                <div style={{width:28,height:28,borderRadius:6,background:ativo?'rgba(255,255,255,.25)':cor,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:ativo?'none':'0 1px 3px rgba(0,0,0,.2)'}}>
+                  <span style={{color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>{svgIcons[n.id]||svgIcons.config}</span>
+                </div>
+                <span style={{fontSize:13,fontWeight:ativo?700:400,color:ativo?'#fff':'#bdc3c7',flex:1}}>{n.label}</span>
+                {badge>0&&<span style={{background:'#e67e22',color:'#fff',borderRadius:10,fontSize:10,fontWeight:700,padding:'1px 6px',minWidth:18,textAlign:'center',flexShrink:0}}>{badge}</span>}
+              </div>
             );
           })}
         </div>
@@ -2349,198 +2539,18 @@ export default function App(){
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}}/>}
 
           {/* DASHBOARD */}
-          {!clienteSel&&page==='dashboard'&&(()=>{
-            const [dashAba,setDashAba]=React.useState('resumo');
-            const hoje2=new Date();hoje2.setHours(0,0,0,0);
-            const nPagos=todos.filter(c=>c.equipPago==='Não pago');
-            const solAbertasQtd=solicitacoes.filter(s=>s.status==='Aberta'||s.status==='Em andamento').length;
-            const implAtrasQtd=todos.filter(c=>{const impl=implantacoes[c.id]||{};if(impl.etapa==='processo_finalizado')return false;if(!impl.prazo)return false;return new Date(impl.prazo+'T12:00:00')<hoje2;}).length;
-            const pctFat=Math.round((fat.length/Math.max(cl.length,1))*100);
-            const pctAgd=Math.round((agd.length/Math.max(cl.length,1))*100);
-
-            // Card estilo Secullum
-            const SCard=({label,value,sub,pct,cor,onClick})=>(
-              <div onClick={onClick} style={{background:'#fff',borderRadius:8,padding:'18px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:onClick?'pointer':'default',borderTop:`3px solid ${cor||'#f5a623'}`,transition:'box-shadow .15s'}}>
-                <div style={{fontSize:11,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.8,marginBottom:8}}>{label}</div>
-                <div style={{fontSize:32,fontWeight:700,color:'#4a4a4a',lineHeight:1,marginBottom:6}}>{value}</div>
-                {sub&&<div style={{fontSize:11,color:'#7f8c8d',marginBottom:pct!==undefined?8:0}}>{sub}</div>}
-                {pct!==undefined&&<>
-                  <div style={{height:4,borderRadius:2,background:'#f0f0f0',overflow:'hidden'}}>
-                    <div style={{height:'100%',borderRadius:2,background:cor||'#f5a623',width:Math.min(pct,100)+'%',transition:'width .4s'}}/>
-                  </div>
-                  <div style={{fontSize:10,color:'#7f8c8d',marginTop:3}}>{pct}%</div>
-                </>}
-              </div>
-            );
-
-            return(
-              <div>
-                {/* Alertas e metas sempre visíveis */}
-                <PainelAlertas todos={todos} implantacoes={implantacoes} onVerImplantacao={()=>{setPage('implantacao');setClienteSel(null);}}/>
-                {nPagos.length>0&&(
-                  <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:8}}>
-                    <div style={{fontWeight:700,fontSize:12,color:'#b45309',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2-1.14"/><path d="m7.5 4.27 9 5.15"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" y1="22" x2="12" y2="12"/><circle cx="18.5" cy="15.5" r="2.5"/><path d="M20.27 17.27 22 19"/></svg>
-                      {nPagos.length} equipamento(s) aguardando pagamento
-                    </div>
-                    <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                      {nPagos.slice(0,8).map(c=>(
-                        <div key={c.id} onClick={()=>setClienteSel(c)} style={{background:'#fff',border:'1px solid #fde68a',borderRadius:5,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
-                          <span style={{fontWeight:600,color:'#4a4a4a'}}>{c.nome}</span>
-                          <span style={{color:'#7f8c8d',marginLeft:6}}>{c.equipTipo}</span>
-                        </div>
-                      ))}
-                      {nPagos.length>8&&<span style={{fontSize:11,color:'#7f8c8d',alignSelf:'center'}}>+{nPagos.length-8} mais</span>}
-                    </div>
-                  </div>
-                )}
-                <DuplasMetas todos={todos} metaSistema={metaSistema} metaEquip={metaEquip} onSetMetaSistema={salvarMetaSistema} onSetMetaEquip={salvarMetaEquip}/>
-
-                {/* Abas estilo Secullum */}
-                <div style={{background:'#fff',borderRadius:'8px 8px 0 0',borderBottom:'2px solid #e8eaed',marginBottom:0,display:'flex',gap:0}}>
-                  {[
-                    {id:'resumo',    l:'RESUMO DIÁRIO'},
-                    {id:'financeiro',l:'FINANCEIRO'},
-                    {id:'clientes',  l:'CLIENTES'},
-                    {id:'implantacao',l:'IMPLANTAÇÃO'},
-                  ].map(a=>(
-                    <button key={a.id} onClick={()=>setDashAba(a.id)} style={{padding:'12px 20px',border:'none',borderBottom:dashAba===a.id?'3px solid #f5a623':'3px solid transparent',background:'transparent',cursor:'pointer',fontSize:11,fontWeight:dashAba===a.id?700:500,color:dashAba===a.id?'#f5a623':'#7f8c8d',letterSpacing:.8,marginBottom:-2,transition:'all .15s'}}>
-                      {a.l}
-                    </button>
-                  ))}
-                </div>
-
-                {/* ABA RESUMO */}
-                {dashAba==='resumo'&&(
-                  <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:14,marginBottom:20}}>
-                      <SCard label="Total de Clientes" value={cl.length} sub={`${fat.length} fat. / ${agd.length} agd.`} pct={pctFat} cor="#f5a623"/>
-                      <SCard label="Clientes Faturados" value={fat.length} sub={moeda(totFat)} pct={pctFat} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
-                      <SCard label="Aguardando Faturar" value={agd.length} sub={moeda(totAgd)} pct={pctAgd} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
-                      <SCard label="Receita Total" value={moeda(totGeral)} cor="#3498db"/>
-                      <SCard label="Receita Sistema" value={moeda(totSist)} cor="#9b59b6"/>
-                      <SCard label="Receita Equipamentos" value={moeda(totEquip)} cor="#1abc9c"/>
-                      <SCard label="Solicitações Abertas" value={solAbertasQtd} cor="#f5a623" onClick={()=>setPage('solicitacoes')}/>
-                      <SCard label="Implantações Atrasadas" value={implAtrasQtd} cor="#e74c3c" onClick={()=>setPage('implantacao')}/>
-                    </div>
-                    <GraficoMRR todos={todos}/>
-                    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:14,marginTop:14}}>
-                      <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
-                        <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:8,textTransform:'uppercase',letterSpacing:.8}}>Faturamento por mês</div>
-                        <BarChart data={porMes.map(p=>({l:MESES[p.m].slice(0,3),v:p.fat}))} color="#f5a623" height={110}/>
-                      </div>
-                      <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
-                        <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:10,textTransform:'uppercase',letterSpacing:.8}}>Por plano</div>
-                        <div style={{display:'flex',alignItems:'center',gap:12}}>
-                          <Donut vals={porPlano.map(p=>p.qtd)} colors={['#3498db','#9b59b6','#f5a623']} size={80} label={cl.length} sub="total"/>
-                          <div>{porPlano.map(({p,qtd},i)=>{const cors=['#3498db','#9b59b6','#f5a623'];return <div key={p} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:8,height:8,borderRadius:2,background:cors[i]}}/><span style={{fontSize:11,color:'#7f8c8d',flex:1}}>{p}</span><span style={{fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{qtd}</span></div>;})}</div>
-                        </div>
-                      </div>
-                      <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed'}}>
-                        <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:10,textTransform:'uppercase',letterSpacing:.8}}>Status</div>
-                        <div style={{display:'flex',alignItems:'center',gap:12}}>
-                          <Donut vals={[fat.length,agd.length]} colors={['#27ae60','#f5a623']} size={80} label={`${pctFat}%`} sub="fat."/>
-                          <div>{[{l:'Faturado',v:fat.length,c:'#27ae60'},{l:'Aguardando',v:agd.length,c:'#f5a623'}].map(x=><div key={x.l} style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><div style={{width:8,height:8,borderRadius:2,background:x.c}}/><span style={{fontSize:11,color:'#7f8c8d',flex:1}}>{x.l}</span><span style={{fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{x.v}</span></div>)}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* ABA FINANCEIRO */}
-                {dashAba==='financeiro'&&(
-                  <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:12,marginBottom:16}}>
-                      <SCard label="Total Geral" value={moeda(totGeral)} cor="#f5a623"/>
-                      <SCard label="Faturado" value={moeda(totFat)} sub={fat.length+' clientes'} pct={Math.round((totFat/Math.max(totGeral,1))*100)} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
-                      <SCard label="A Faturar" value={moeda(totAgd)} sub={agd.length+' pendentes'} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
-                      <SCard label="Sistema/Mês" value={moeda(totSist)} cor="#9b59b6"/>
-                      <SCard label="Equipamentos" value={moeda(totEquip)} cor="#1abc9c"/>
-                      <SCard label="Implantações" value={moeda(totImpl)} cor="#3498db"/>
-                    </div>
-                    <div style={{background:'#fff',borderRadius:8,padding:'16px',border:'1px solid #e8eaed',marginBottom:14}}>
-                      <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:12,textTransform:'uppercase',letterSpacing:.8}}>Ranking financeiro — vendedores</div>
-                      {porVend.map(({v,qtd,total,fat:fatV},rank)=>{const medals=['🥇','🥈','🥉'];const pctV=Math.round((fatV/Math.max(maxVend,1))*100);
-                        return <div key={v} onClick={()=>setFiltroVendedor(filtroVendedor===v?'Todos':v)} style={{display:'flex',alignItems:'center',gap:10,padding:'8px',borderRadius:6,marginBottom:4,cursor:'pointer',background:filtroVendedor===v?'#fff8ee':'transparent'}}>
-                          <span style={{fontSize:16,width:22}}>{medals[rank]||'🎖'}</span>
-                          <div style={{width:30,height:30,borderRadius:'50%',background:'#f5a623',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:11,fontWeight:700,flexShrink:0}}>{v[0]}</div>
-                          <div style={{flex:1}}>
-                            <div style={{display:'flex',justifyContent:'space-between',fontSize:12}}><span style={{fontWeight:600,color:'#4a4a4a'}}>{v}</span><span style={{fontWeight:700,color:'#27ae60'}}>{moeda(fatV)}</span></div>
-                            <div style={{height:4,borderRadius:2,background:'#f0f0f0',marginTop:4}}><div style={{height:'100%',borderRadius:2,background:'#f5a623',width:pctV+'%'}}/></div>
-                            <div style={{fontSize:10,color:'#7f8c8d',marginTop:1}}>{qtd} clientes</div>
-                          </div>
-                        </div>;
-                      })}
-                    </div>
-                    {agd.length>0&&(
-                      <div style={{background:'#fff',borderRadius:8,border:'2px solid #fde68a',overflow:'hidden'}}>
-                        <div style={{background:'#fff8ee',padding:'10px 16px',borderBottom:'1px solid #fde68a',display:'flex',justifyContent:'space-between'}}>
-                          <span style={{fontWeight:700,fontSize:11,color:'#b45309',textTransform:'uppercase',letterSpacing:.8}}>⏳ Aguardando faturamento</span>
-                          <span style={{fontWeight:700,color:'#b45309'}}>{moeda(totAgd)}</span>
-                        </div>
-                        <table style={{width:'100%',borderCollapse:'collapse'}}>
-                          <thead><tr style={{background:'#f5f6fa'}}>{['Empresa','Vendedor','Plano','Valor'].map(h=><th key={h} style={{padding:'7px 14px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.6}}>{h}</th>)}</tr></thead>
-                          <tbody>{sortRecente(agd).map((c,i)=>(
-                            <tr key={c.id} onClick={()=>setClienteSel(c)} style={{borderTop:'1px solid #e8eaed',cursor:'pointer',background:i%2===0?'#fff':'#fffef5'}}>
-                              <td style={{padding:'8px 14px',fontSize:12,fontWeight:600,color:'#4a4a4a',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
-                              <td style={{padding:'8px 14px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
-                              <td style={{padding:'8px 14px'}}><span style={{background:'#fff8ee',color:'#f5a623',padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
-                              <td style={{padding:'8px 14px',fontSize:12,fontWeight:700,color:'#f5a623'}}>{moeda(c.total)}</td>
-                            </tr>
-                          ))}</tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* ABA CLIENTES */}
-                {dashAba==='clientes'&&(
-                  <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'0',boxShadow:'0 1px 4px rgba(0,0,0,.07)',overflow:'hidden'}}>
-                    <div style={{padding:'12px 16px',borderBottom:'1px solid #e8eaed',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                      <span style={{fontWeight:700,fontSize:13,color:'#4a4a4a'}}>{cl.length} clientes</span>
-                      <button onClick={()=>setPage('clientes')} style={{background:'#f5a623',color:'#fff',border:'none',borderRadius:5,padding:'6px 14px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver todos →</button>
-                    </div>
-                    <table style={{width:'100%',borderCollapse:'collapse'}}>
-                      <thead><tr style={{background:'#f5f6fa'}}>
-                        {['Empresa','CNPJ','Plano','Vendedor','Status','Valor'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.6}}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {sortRecente(cl).slice(0,15).map((c,i)=>(
-                          <tr key={c.id} onClick={()=>{setClienteSel(c);}} style={{borderTop:'1px solid #e8eaed',cursor:'pointer',background:i%2===0?'#fff':'#fafafa'}}>
-                            <td style={{padding:'9px 12px',fontSize:12,fontWeight:600,color:'#4a4a4a',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
-                            <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.cnpj}</td>
-                            <td style={{padding:'9px 12px'}}><span style={{background:'#fff8ee',color:'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
-                            <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
-                            <td style={{padding:'9px 12px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fff8ee',color:c.status==='Faturado'?'#27ae60':'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
-                            <td style={{padding:'9px 12px',fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{moeda(c.total)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* ABA IMPLANTAÇÃO */}
-                {dashAba==='implantacao'&&(
-                  <div style={{background:'#fff',borderRadius:'0 0 8px 8px',padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:16}}>
-                      {ETAPAS.map(e=>{
-                        const qtd=todos.filter(c=>(implantacoes[c.id]||{}).etapa===e.id).length;
-                        return <div key={e.id} style={{background:'#fff',borderRadius:8,padding:'14px 16px',border:'1px solid #e8eaed',borderLeft:`3px solid ${e.color}`}}>
-                          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.6,marginBottom:6}}>{e.label}</div>
-                          <div style={{fontSize:26,fontWeight:700,color:'#4a4a4a'}}>{qtd}</div>
-                        </div>;
-                      })}
-                    </div>
-                    <button onClick={()=>setPage('implantacao')} style={{background:'#f5a623',color:'#fff',border:'none',borderRadius:6,padding:'9px 20px',cursor:'pointer',fontSize:12,fontWeight:700}}>
-                      Abrir Kanban completo →
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+          {!clienteSel&&page==='dashboard'&&<DashboardView
+            todos={todos} cl={cl} fat={fat} agd={agd}
+            totFat={totFat} totAgd={totAgd} totGeral={totGeral}
+            totSist={totSist} totEquip={totEquip} totImpl={totImpl}
+            porMes={porMes} porVend={porVend} porPlano={porPlano} maxVend={maxVend}
+            solicitacoes={solicitacoes} implantacoes={implantacoes} clientes={clientes}
+            metaSistema={metaSistema} metaEquip={metaEquip}
+            salvarMetaSistema={salvarMetaSistema} salvarMetaEquip={salvarMetaEquip}
+            setPage={setPage} setClienteSel={setClienteSel}
+            setFiltroStatus={setFiltroStatus}
+            filtroVendedor={filtroVendedor} setFiltroVendedor={setFiltroVendedor}
+          />}
 
           {/* VENDAS */}
           {!clienteSel&&page==='vendas'&&(
