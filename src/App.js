@@ -40,6 +40,7 @@ const NAV_ITEMS_BASE=[
   {id:'implantacao',   icon:'ti-rocket',            label:'Implantação',    perfis:['admin','colaborador']},
   {id:'relatorios',    icon:'ti-file-spreadsheet',  label:'Relatórios',     perfis:['admin','financeiro']},
   {id:'solicitacoes',  icon:'ti-message-circle',    label:'Solicitações',   perfis:['admin','financeiro','colaborador']},
+  {id:'orcamentos',    icon:'ti-file-invoice',       label:'Orçamentos',     perfis:['admin','financeiro','colaborador']},
 ];
 // Config sempre fixo no final, só admin
 const NAV_CONFIG={id:'config',icon:'ti-settings',label:'Configurações',perfis:['admin']};
@@ -2288,6 +2289,644 @@ return(
 );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MÓDULO DE ORÇAMENTOS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STATUS_ORC=[
+  {id:'rascunho',   label:'Rascunho',       color:'#7f8c8d'},
+  {id:'enviado',    label:'Enviado',         color:'#3498db'},
+  {id:'negociacao', label:'Em negociação',   color:'#f5a623'},
+  {id:'fechado',    label:'Fechado',         color:'#27ae60'},
+  {id:'perdido',    label:'Perdido',         color:'#e74c3c'},
+];
+const COR_ORC={rascunho:'#7f8c8d',enviado:'#3498db',negociacao:'#f5a623',fechado:'#27ae60',perdido:'#e74c3c'};
+
+// ─── EDITOR RICO ──────────────────────────────────────────────────────────────
+function RichEditor({value,onChange,minHeight=120,placeholder=''}){
+  const ref=useRef(null);
+  const init=useRef(false);
+  useEffect(()=>{
+    if(ref.current&&!init.current){
+      ref.current.innerHTML=value||'';
+      init.current=true;
+    }
+  },[]);
+  function cmd(c,v=null){ref.current.focus();document.execCommand(c,false,v);onChange(ref.current.innerHTML);}
+  function handlePaste(e){
+    const items=e.clipboardData?.items||[];
+    for(let i=0;i<items.length;i++){
+      if(items[i].type.startsWith('image/')){
+        e.preventDefault();
+        const r=new FileReader();
+        r.onload=ev=>{cmd('insertImage',ev.target.result);};
+        r.readAsDataURL(items[i].getAsFile());
+        return;
+      }
+    }
+  }
+  const B={padding:'3px 7px',border:'1px solid #dde1e7',borderRadius:4,background:'#fff',cursor:'pointer',fontSize:12,color:'#4a4a4a',display:'inline-flex',alignItems:'center',justifyContent:'center'};
+  return(
+    <div style={{border:'1px solid #dde1e7',borderRadius:6,overflow:'hidden'}}>
+      <div style={{display:'flex',gap:2,padding:'5px 8px',background:'#f5f6fa',borderBottom:'1px solid #dde1e7',flexWrap:'wrap',alignItems:'center'}}>
+        <button style={{...B,fontWeight:700}} onMouseDown={e=>{e.preventDefault();cmd('bold');}}>B</button>
+        <button style={{...B,fontStyle:'italic'}} onMouseDown={e=>{e.preventDefault();cmd('italic');}}>I</button>
+        <button style={{...B,textDecoration:'underline'}} onMouseDown={e=>{e.preventDefault();cmd('underline');}}>U</button>
+        <div style={{width:1,background:'#dde1e7',height:18,margin:'0 3px'}}/>
+        <select onChange={e=>{if(e.target.value)cmd('fontSize',e.target.value);e.target.value='';}} style={{...B,padding:'2px 4px',fontSize:11}}>
+          <option value="">Tam</option>
+          {[1,2,3,4,5,6,7].map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        <input type="color" title="Cor" onInput={e=>cmd('foreColor',e.target.value)} style={{width:26,height:24,border:'1px solid #dde1e7',borderRadius:4,cursor:'pointer',padding:1}}/>
+        <div style={{width:1,background:'#dde1e7',height:18,margin:'0 3px'}}/>
+        <button style={B} title="Esquerda" onMouseDown={e=>{e.preventDefault();cmd('justifyLeft');}}>⬤</button>
+        <button style={B} title="Centro" onMouseDown={e=>{e.preventDefault();cmd('justifyCenter');}}>≡</button>
+        <button style={B} title="Direita" onMouseDown={e=>{e.preventDefault();cmd('justifyRight');}}>⬤</button>
+        <div style={{width:1,background:'#dde1e7',height:18,margin:'0 3px'}}/>
+        <button style={B} title="Lista" onMouseDown={e=>{e.preventDefault();cmd('insertUnorderedList');}}>•≡</button>
+        <button style={B} title="Numerada" onMouseDown={e=>{e.preventDefault();cmd('insertOrderedList');}}>1≡</button>
+        <div style={{width:1,background:'#dde1e7',height:18,margin:'0 3px'}}/>
+        <button style={B} title="Inserir imagem por URL" onMouseDown={e=>{e.preventDefault();const u=prompt('URL da imagem:');if(u)cmd('insertImage',u);}}>🖼</button>
+        <button style={B} title="Link" onMouseDown={e=>{e.preventDefault();const u=prompt('URL:');if(u)cmd('createLink',u);}}>🔗</button>
+        <button style={{...B,color:'#e74c3c'}} title="Limpar" onMouseDown={e=>{e.preventDefault();cmd('removeFormat');}}>✕</button>
+      </div>
+      <div ref={ref} contentEditable suppressContentEditableWarning
+        onInput={()=>onChange(ref.current.innerHTML)}
+        onPaste={handlePaste}
+        style={{minHeight,padding:'10px 12px',outline:'none',fontSize:13,color:'#4a4a4a',lineHeight:1.6}}
+      />
+    </div>
+  );
+}
+
+// ─── CONFIG: SERVIÇOS ─────────────────────────────────────────────────────────
+function OrcConfigServicos({servicos}){
+  const [form,setForm]=useState({nome:'',descricao:'',valor:''});
+  const [editId,setEditId]=useState(null);
+  const [saved,setSaved]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  async function salvar(){
+    if(!form.nome.trim()||!form.valor)return;
+    const id=editId||'svc_'+Date.now();
+    await setDoc(doc(db,'orc_servicos',id),{nome:form.nome.trim().toUpperCase(),descricao:form.descricao.trim(),valor:parseFloat(String(form.valor).replace(',','.'))||0,criadoEm:new Date().toISOString()});
+    setForm({nome:'',descricao:'',valor:''});setEditId(null);setSaved(true);setTimeout(()=>setSaved(false),2000);
+  }
+  async function remover(id){if(!window.confirm('Remover?'))return;await deleteDoc(doc(db,'orc_servicos',id));}
+  async function clonar(s){await setDoc(doc(db,'orc_servicos','svc_'+Date.now()),{...s,nome:s.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});}
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Serviços ({servicos.length})</div>
+      {servicos.map(s=>(
+        <div key={s.id} style={{display:'flex',alignItems:'flex-start',gap:8,padding:'10px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6,border:'1px solid #e8eaed'}}>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a'}}>{s.nome}</div>
+            {s.descricao&&<div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>{s.descricao}</div>}
+            <div style={{fontSize:12,fontWeight:700,color:'#27ae60',marginTop:4}}>R$ {Number(s.valor).toFixed(2).replace('.',',')}</div>
+          </div>
+          <button onClick={()=>{setForm({nome:s.nome,descricao:s.descricao||'',valor:s.valor});setEditId(s.id);}} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13}}>✏️</button>
+          <button onClick={()=>clonar(s)} style={{background:'none',border:'none',cursor:'pointer',color:'#f5a623',fontSize:13}} title="Clonar">⧉</button>
+          <button onClick={()=>remover(s.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+        </div>
+      ))}
+      <div style={{background:'#fff',borderRadius:8,padding:'14px',border:'1px dashed #dde1e7',marginTop:8}}>
+        <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a',marginBottom:10}}>{editId?'✏️ Editar serviço':'+ Novo serviço'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:8,marginBottom:8}}>
+          <div><label style={lbl}>Nome *</label><input style={{...fi,textTransform:'uppercase'}} value={form.nome} onChange={e=>setForm(x=>({...x,nome:e.target.value.toUpperCase()}))}/></div>
+          <div><label style={lbl}>Valor (R$) *</label><input style={fi} type="number" step="0.01" value={form.valor} onChange={e=>setForm(x=>({...x,valor:e.target.value}))}/></div>
+        </div>
+        <div style={{marginBottom:8}}><label style={lbl}>Descrição</label><textarea style={{...fi,resize:'vertical',minHeight:50}} value={form.descricao} onChange={e=>setForm(x=>({...x,descricao:e.target.value}))}/></div>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={salvar} style={{padding:'8px 18px',borderRadius:6,border:'none',background:saved?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>{saved?'✓ Salvo!':(editId?'Salvar':'+ Adicionar')}</button>
+          {editId&&<button onClick={()=>{setEditId(null);setForm({nome:'',descricao:'',valor:'']);}} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFIG: FORMAS DE PAGAMENTO ──────────────────────────────────────────────
+function OrcConfigFormas({formas}){
+  const [nova,setNova]=useState('');const [saved,setSaved]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
+  async function add(){if(!nova.trim())return;await setDoc(doc(db,'orc_formas','forma_'+Date.now()),{nome:nova.trim().toUpperCase(),criadoEm:new Date().toISOString()});setNova('');setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  async function rem(id){if(!window.confirm('Remover?'))return;await deleteDoc(doc(db,'orc_formas',id));}
+  async function clonar(f){await setDoc(doc(db,'orc_formas','forma_'+Date.now()),{...f,nome:f.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});}
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#9b59b6',marginBottom:12,textTransform:'uppercase'}}>Formas de pagamento ({formas.length})</div>
+      {formas.map(f=>(
+        <div key={f.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6,border:'1px solid #e8eaed'}}>
+          <span style={{flex:1,fontSize:12,fontWeight:600,color:'#4a4a4a'}}>{f.nome}</span>
+          <button onClick={()=>clonar(f)} style={{background:'none',border:'none',cursor:'pointer',color:'#f5a623',fontSize:12}}>⧉</button>
+          <button onClick={()=>rem(f.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
+        </div>
+      ))}
+      <div style={{display:'flex',gap:8,marginTop:8}}>
+        <input style={{...fi,textTransform:'uppercase'}} value={nova} onChange={e=>setNova(e.target.value.toUpperCase())} placeholder="EX: PIX OU CARTÃO..." onKeyDown={e=>e.key==='Enter'&&add()}/>
+        <button onClick={add} style={{padding:'8px 16px',borderRadius:6,border:'none',background:saved?'#27ae60':'#9b59b6',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>{saved?'✓':'+ Add'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFIG: TEMPLATES ────────────────────────────────────────────────────────
+function OrcConfigTemplates({templates}){
+  const [sel,setSel]=useState(null);
+  const [form,setForm]=useState({nome:'',secoes:[]});
+  const [saved,setSaved]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
+  function nova(){setForm({nome:'NOVA TEMPLATE',secoes:[{id:'s_'+Date.now(),titulo:'SEÇÃO 1',conteudo:''}]});setSel('new');}
+  function editar(t){setForm({nome:t.nome,secoes:JSON.parse(JSON.stringify(t.secoes||[]))});setSel(t.id);}
+  function addSec(){setForm(f=>({...f,secoes:[...f.secoes,{id:'s_'+Date.now(),titulo:'NOVA SEÇÃO',conteudo:''}]}));}
+  function remSec(id){setForm(f=>({...f,secoes:f.secoes.filter(s=>s.id!==id)}));}
+  function upSec(id,k,v){setForm(f=>({...f,secoes:f.secoes.map(s=>s.id===id?{...s,[k]:v}:s)}));}
+  async function salvar(){
+    if(!form.nome.trim())return;
+    const id=sel==='new'?'tpl_'+Date.now():sel;
+    await setDoc(doc(db,'orc_templates',id),{id,nome:form.nome.trim().toUpperCase(),secoes:form.secoes,atualizadoEm:new Date().toISOString()});
+    setSaved(true);setTimeout(()=>setSaved(false),2000);
+    if(sel==='new')setSel(id);
+  }
+  async function remover(id){if(!window.confirm('Remover template?'))return;await deleteDoc(doc(db,'orc_templates',id));if(sel===id)setSel(null);}
+  async function clonar(t){const id='tpl_'+Date.now();await setDoc(doc(db,'orc_templates',id),{...t,id,nome:t.nome+' (CÓPIA)',atualizadoEm:new Date().toISOString()});}
+
+  if(sel){
+    return(
+      <div>
+        <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
+        <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:14}}>
+          <input style={{...fi,fontSize:14,fontWeight:700,flex:1}} value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value.toUpperCase()}))} placeholder="NOME DA TEMPLATE"/>
+          <button onClick={salvar} style={{padding:'10px 18px',borderRadius:6,border:'none',background:saved?'#27ae60':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>{saved?'✓ Salvo!':'💾 Salvar'}</button>
+        </div>
+        {form.secoes.map(sec=>(
+          <div key={sec.id} style={{background:'#fff',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #e8eaed'}}>
+            <div style={{display:'flex',gap:8,marginBottom:8,alignItems:'center'}}>
+              <input style={{...fi,fontWeight:700,fontSize:12}} value={sec.titulo} onChange={e=>upSec(sec.id,'titulo',e.target.value.toUpperCase())} placeholder="TÍTULO DA SEÇÃO"/>
+              <button onClick={()=>remSec(sec.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:18,flexShrink:0}}>×</button>
+            </div>
+            <RichEditor value={sec.conteudo} onChange={v=>upSec(sec.id,'conteudo',v)} minHeight={160} placeholder="Cole imagens do Canva aqui (Ctrl+V), adicione textos..."/>
+          </div>
+        ))}
+        <button onClick={addSec} style={{width:'100%',padding:'10px',borderRadius:6,border:'2px dashed #dde1e7',background:'transparent',cursor:'pointer',fontSize:12,color:'#7f8c8d',fontWeight:600,marginTop:4}}>+ Adicionar seção</button>
+      </div>
+    );
+  }
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#e74c3c',textTransform:'uppercase'}}>Templates ({templates.length})</div>
+        <button onClick={nova} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>+ Nova template</button>
+      </div>
+      {templates.length===0&&<div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'20px',background:'#f8f9fa',borderRadius:8}}>Nenhuma template criada ainda.</div>}
+      {templates.map(t=>(
+        <div key={t.id} style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:8,background:'#f8f9fa',marginBottom:8,border:'1px solid #e8eaed',cursor:'pointer'}} onClick={()=>editar(t)}>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#4a4a4a'}}>{t.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>{(t.secoes||[]).length} seção(ões)</div>
+          </div>
+          <button onClick={e=>{e.stopPropagation();clonar(t);}} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',color:'#f5a623',fontSize:11}}>⧉ Clonar</button>
+          <button onClick={e=>{e.stopPropagation();remover(t.id);}} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16}}>×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── CONFIG ORÇAMENTO (agrupado) ──────────────────────────────────────────────
+function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
+  const [aba,setAba]=useState('servicos');
+  const abas=[{id:'servicos',l:'Serviços',c:'#3498db'},{id:'formas',l:'Formas de pagamento',c:'#9b59b6'},{id:'templates',l:'Templates',c:'#e74c3c'}];
+  return(
+    <div>
+      <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+        {abas.map(a=><button key={a.id} onClick={()=>setAba(a.id)} style={{padding:'8px 16px',borderRadius:6,border:'none',background:aba===a.id?a.c:'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>{a.l}</button>)}
+      </div>
+      <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+        {aba==='servicos'&&<OrcConfigServicos servicos={orcServicos}/>}
+        {aba==='formas'&&<OrcConfigFormas formas={orcFormas}/>}
+        {aba==='templates'&&<OrcConfigTemplates templates={orcTemplates}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── FORMULÁRIO DE ORÇAMENTO ──────────────────────────────────────────────────
+function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,onSalvar,onCancelar,orcEdit}){
+  const [etapa,setEtapa]=useState(1);
+  const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',email:'',tel:''});
+  const [itens,setItens]=useState(orcEdit?.itens||[]);
+  const [det,setDet]=useState(orcEdit?.detalhes||{vendedor:'',validade:'',forma:'',obs:'',templateId:''});
+  const [salvando,setSalvando]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+
+  const subtotal=itens.reduce((s,it)=>{
+    const p=parseFloat(it.preco)||0,q=parseFloat(it.qtd)||1,d=parseFloat(it.desconto)||0;
+    return s+(p*q-d);
+  },0);
+
+  function addItem(tipo,dados){
+    setItens(its=>[...its,{id:'i_'+Date.now(),tipo,nome:dados.nome,descricao:dados.descricao||'',preco:dados.valor||dados.preco||0,qtd:1,desconto:0}]);
+  }
+  function upItem(id,k,v){setItens(its=>its.map(it=>it.id===id?{...it,[k]:v}:it));}
+  function remItem(id){setItens(its=>its.filter(it=>it.id!==id));}
+
+  async function salvar(status='rascunho'){
+    setSalvando(true);
+    const id=orcEdit?.id||'orc_'+Date.now();
+    await setDoc(doc(db,'orcamentos',id),{id,cliente:cli,itens,detalhes:det,status,subtotal,
+      criadoEm:orcEdit?.criadoEm||new Date().toISOString(),atualizadoEm:new Date().toISOString()});
+    setSalvando(false);onSalvar();
+  }
+
+  const steps=[{n:1,l:'Cliente'},{n:2,l:'Itens'},{n:3,l:'Detalhes'},{n:4,l:'Preview'}];
+
+  return(
+    <div>
+      {/* Stepper */}
+      <div style={{display:'flex',alignItems:'center',background:'#fff',borderRadius:8,padding:'12px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:16,gap:0}}>
+        {steps.map((s,i)=>(
+          <React.Fragment key={s.n}>
+            <div onClick={()=>setEtapa(s.n)} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',flex:1}}>
+              <div style={{width:28,height:28,borderRadius:'50%',background:etapa>=s.n?'#f5a623':'#e8eaed',color:etapa>=s.n?'#fff':'#7f8c8d',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{etapa>s.n?'✓':s.n}</div>
+              <span style={{fontSize:12,fontWeight:etapa===s.n?700:400,color:etapa===s.n?'#f5a623':'#7f8c8d'}}>{s.l}</span>
+            </div>
+            {i<steps.length-1&&<div style={{flex:0,width:32,height:2,background:etapa>s.n?'#f5a623':'#e8eaed',borderRadius:1,margin:'0 4px'}}/>}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* ETAPA 1 */}
+      {etapa===1&&(
+        <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a',marginBottom:14,textTransform:'uppercase',letterSpacing:.8}}>Dados do cliente</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Nome do contato *</label><input style={{...fi,textTransform:'uppercase'}} value={cli.nome} onChange={e=>setCli(c=>({...c,nome:e.target.value.toUpperCase()}))}/></div>
+            <div><label style={lbl}>Empresa</label><input style={{...fi,textTransform:'uppercase'}} value={cli.empresa} onChange={e=>setCli(c=>({...c,empresa:e.target.value.toUpperCase()}))}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+            <div><label style={lbl}>Email</label><input style={fi} type="email" value={cli.email} onChange={e=>setCli(c=>({...c,email:e.target.value}))}/></div>
+            <div><label style={lbl}>Telefone</label><input style={fi} value={cli.tel} onChange={e=>setCli(c=>({...c,tel:mascaraTel(e.target.value)}))}/></div>
+          </div>
+          <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
+            <button onClick={onCancelar} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+            <button onClick={()=>setEtapa(2)} disabled={!cli.nome.trim()} style={{padding:'10px 24px',borderRadius:7,border:'none',background:cli.nome.trim()?'#f5a623':'#e8eaed',color:'#fff',fontWeight:700,cursor:cli.nome.trim()?'pointer':'default',fontSize:13}}>Próximo →</button>
+          </div>
+        </div>
+      )}
+
+      {/* ETAPA 2 */}
+      {etapa===2&&(
+        <div>
+          <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a',marginBottom:14,textTransform:'uppercase',letterSpacing:.8}}>Produtos e serviços</div>
+            {itens.length===0&&<div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'14px',background:'#f8f9fa',borderRadius:6,marginBottom:12}}>Nenhum item. Use os painéis abaixo para adicionar.</div>}
+            {itens.map((it,idx)=>(
+              <div key={it.id} style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #e8eaed'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:8}}>
+                  <div style={{flex:1,fontWeight:700,fontSize:12,color:'#4a4a4a',minWidth:120}}>{it.nome}</div>
+                  <div style={{display:'flex',gap:6,alignItems:'flex-end',flexWrap:'wrap'}}>
+                    {[['Preço unit. R$','preco',90],['Qtd','qtd',55],['Desconto R$','desconto',90]].map(([l,k,w])=>(
+                      <div key={k}>
+                        <div style={{fontSize:9,color:'#7f8c8d',textTransform:'uppercase',marginBottom:2}}>{l}</div>
+                        <input type="number" min="0" step={k==='qtd'?'1':'0.01'} value={it[k]} onChange={e=>upItem(it.id,k,e.target.value)} style={{width:w,padding:'5px 6px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,textAlign:'right'}}/>
+                      </div>
+                    ))}
+                    <div>
+                      <div style={{fontSize:9,color:'#7f8c8d',textTransform:'uppercase',marginBottom:2}}>Total</div>
+                      <div style={{fontSize:13,fontWeight:700,color:'#27ae60',minWidth:90,textAlign:'right'}}>R$ {((parseFloat(it.preco)||0)*(parseFloat(it.qtd)||1)-(parseFloat(it.desconto)||0)).toFixed(2).replace('.',',')}</div>
+                    </div>
+                    <button onClick={()=>remItem(it.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:18}}>×</button>
+                  </div>
+                </div>
+                <RichEditor value={it.descricao} onChange={v=>upItem(it.id,'descricao',v)} minHeight={60} placeholder="Descrição opcional..."/>
+              </div>
+            ))}
+            {itens.length>0&&(
+              <div style={{textAlign:'right',padding:'8px 12px',background:'#fff8ee',borderRadius:6,border:'1px solid #fde68a',marginBottom:12}}>
+                <span style={{fontSize:13,fontWeight:700,color:'#4a4a4a'}}>Subtotal: </span>
+                <span style={{fontSize:15,fontWeight:700,color:'#f5a623'}}>R$ {subtotal.toFixed(2).replace('.',',')}</span>
+              </div>
+            )}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              <div style={{background:'#f0f7ff',borderRadius:8,padding:'12px',border:'1px solid #bee3f8'}}>
+                <div style={{fontWeight:700,fontSize:11,color:'#3498db',marginBottom:8,textTransform:'uppercase'}}>+ Serviço</div>
+                {orcServicos.length===0&&<div style={{fontSize:11,color:'#7f8c8d'}}>Cadastre em Configurações → Orçamento → Serviços</div>}
+                <div style={{maxHeight:150,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+                  {orcServicos.map(s=>(
+                    <button key={s.id} onClick={()=>addItem('servico',s)} style={{padding:'7px 10px',borderRadius:5,border:'1px solid #bee3f8',background:'#fff',cursor:'pointer',textAlign:'left',fontSize:11}}>
+                      <span style={{fontWeight:600,color:'#4a4a4a'}}>{s.nome}</span>
+                      <span style={{color:'#27ae60',marginLeft:8,fontWeight:700}}>R$ {Number(s.valor).toFixed(2).replace('.',',')}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',border:'1px solid #9ae6b4'}}>
+                <div style={{fontWeight:700,fontSize:11,color:'#27ae60',marginBottom:8,textTransform:'uppercase'}}>+ Equipamento</div>
+                {equipamentosCad.length===0&&<div style={{fontSize:11,color:'#7f8c8d'}}>Cadastre em Configurações → Equipamentos</div>}
+                <div style={{maxHeight:150,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+                  {equipamentosCad.map(e=>(
+                    <button key={e.id} onClick={()=>addItem('equipamento',{nome:e.nome,descricao:e.descricao||'',valor:e.preco||1150})} style={{padding:'7px 10px',borderRadius:5,border:'1px solid #9ae6b4',background:'#fff',cursor:'pointer',textAlign:'left',fontSize:11}}>
+                      <span style={{fontWeight:600,color:'#4a4a4a'}}>{e.nome}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between'}}>
+            <button onClick={()=>setEtapa(1)} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>← Voltar</button>
+            <button onClick={()=>setEtapa(3)} disabled={itens.length===0} style={{padding:'10px 24px',borderRadius:7,border:'none',background:itens.length>0?'#f5a623':'#e8eaed',color:'#fff',fontWeight:700,cursor:itens.length>0?'pointer':'default',fontSize:13}}>Próximo →</button>
+          </div>
+        </div>
+      )}
+
+      {/* ETAPA 3 */}
+      {etapa===3&&(
+        <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a',marginBottom:14,textTransform:'uppercase',letterSpacing:.8}}>Detalhes da proposta</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Vendedor</label><input style={{...fi,textTransform:'uppercase'}} value={det.vendedor} onChange={e=>setDet(d=>({...d,vendedor:e.target.value.toUpperCase()}))}/></div>
+            <div><label style={lbl}>Validade</label><input style={fi} type="date" value={det.validade} onChange={e=>setDet(d=>({...d,validade:e.target.value}))}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div>
+              <label style={lbl}>Forma de pagamento</label>
+              <select style={fi} value={det.forma} onChange={e=>setDet(d=>({...d,forma:e.target.value}))}>
+                <option value="">— Selecione —</option>
+                {orcFormas.map(f=><option key={f.id} value={f.nome}>{f.nome}</option>)}
+                <option value="Pix ou Cartão de crédito">Pix ou Cartão de crédito</option>
+                <option value="Boleto">Boleto</option>
+                <option value="Pix">Pix</option>
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Template</label>
+              <select style={fi} value={det.templateId} onChange={e=>setDet(d=>({...d,templateId:e.target.value}))}>
+                <option value="">— Sem template —</option>
+                {orcTemplates.map(t=><option key={t.id} value={t.id}>{t.nome}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Observações / condições</label>
+            <textarea style={{...fi,resize:'vertical',minHeight:60}} value={det.obs} onChange={e=>setDet(d=>({...d,obs:e.target.value}))} placeholder="Ex: Frete grátis. Envio após confirmação do pagamento."/>
+          </div>
+          <div style={{display:'flex',justifyContent:'space-between',marginTop:14}}>
+            <button onClick={()=>setEtapa(2)} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>← Voltar</button>
+            <button onClick={()=>setEtapa(4)} style={{padding:'10px 24px',borderRadius:7,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>Preview →</button>
+          </div>
+        </div>
+      )}
+
+      {/* ETAPA 4 — PREVIEW */}
+      {etapa===4&&(
+        <div>
+          <OrcamentoPreview cli={cli} itens={itens} det={det} template={orcTemplates.find(t=>t.id===det.templateId)} subtotal={subtotal}/>
+          <div style={{display:'flex',justifyContent:'space-between',marginTop:14,flexWrap:'wrap',gap:8}}>
+            <button onClick={()=>setEtapa(3)} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>← Voltar</button>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+              <button onClick={()=>salvar('rascunho')} style={{padding:'10px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d',fontWeight:600}}>💾 Rascunho</button>
+              <button onClick={()=>window.print()} style={{padding:'10px 16px',borderRadius:7,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🖨️ Imprimir/PDF</button>
+              <button onClick={()=>{
+                const s=encodeURIComponent('Proposta Comercial — Guion Informática');
+                const b=encodeURIComponent(`Olá, ${cli.nome}!\n\nSegue a proposta comercial da Guion Informática.\n\nAtenciosamente,\n${det.vendedor||'Guion Informática'}\nfinanceiro@guionstore.com.br`);
+                window.open(`mailto:${cli.email}?subject=${s}&body=${b}`);
+              }} style={{padding:'10px 16px',borderRadius:7,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>✉️ Email</button>
+              <button onClick={()=>salvar('enviado')} disabled={salvando} style={{padding:'10px 16px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>{salvando?'Salvando...':'✅ Salvar como Enviado'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PREVIEW DA PROPOSTA ──────────────────────────────────────────────────────
+function OrcamentoPreview({cli,itens,det,template,subtotal}){
+  const hoje=new Date();
+  const validAte=det.validade?new Date(det.validade+'T12:00:00').toLocaleDateString('pt-BR'):'—';
+  const descTotal=itens.reduce((s,it)=>s+(parseFloat(it.desconto)||0),0);
+  const fmt=v=>'R$ '+v.toFixed(2).replace('.',',');
+  return(
+    <div id="orc-preview" style={{background:'#fff',border:'1px solid #e8eaed',borderRadius:8,overflow:'hidden',boxShadow:'0 2px 8px rgba(0,0,0,.08)'}}>
+      {/* Cabeçalho */}
+      <div style={{padding:'20px 28px',borderBottom:'1px solid #e8eaed',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.8,marginBottom:3}}>PROPOSTA</div>
+          <div style={{fontWeight:700,fontSize:17,color:'#2c3e50'}}>Guion Informática e Relógio de Ponto</div>
+          <div style={{fontSize:11,color:'#7f8c8d'}}>CNPJ: 07.334.645/0001-00</div>
+          <div style={{fontSize:11,color:'#7f8c8d',marginTop:2,textTransform:'capitalize'}}>
+            {hoje.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})} | Válida até: {validAte}
+          </div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:10,color:'#7f8c8d'}}>Proposta Nº</div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>orc_{Date.now().toString().slice(-6)}</div>
+        </div>
+      </div>
+
+      {/* Dados */}
+      <div style={{padding:'14px 28px',borderBottom:'1px solid #e8eaed',background:'#fafafa',display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:16}}>
+        <div>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Proposta enviada por</div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{det.vendedor||'ANDREUS CALODIANO'}</div>
+          <div style={{fontSize:11,color:'#7f8c8d'}}>✉ andreus@guionstore.com.br</div>
+        </div>
+        <div>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Para</div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{cli.empresa||cli.nome}</div>
+          {cli.email&&<div style={{fontSize:11,color:'#7f8c8d'}}>✉ {cli.email}</div>}
+          {cli.tel&&<div style={{fontSize:11,color:'#7f8c8d'}}>📞 {cli.tel}</div>}
+        </div>
+        <div>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Tipo</div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>SOFTWARE DE PONTO E EQUIPAMENTO</div>
+        </div>
+      </div>
+
+      {/* Seções da template */}
+      {template&&(template.secoes||[]).map(sec=>(
+        <div key={sec.id} style={{borderBottom:'1px solid #e8eaed'}}>
+          <div style={{padding:'12px 28px 0',fontWeight:700,fontSize:11,color:'#2c3e50',textTransform:'uppercase',letterSpacing:.8}}>{sec.titulo}</div>
+          <div dangerouslySetInnerHTML={{__html:sec.conteudo}} style={{padding:'8px 28px 14px',fontSize:13,color:'#4a4a4a',lineHeight:1.6,overflowX:'auto'}}/>
+        </div>
+      ))}
+
+      {/* Tabela */}
+      <div style={{padding:'18px 28px'}}>
+        <div style={{fontWeight:700,fontSize:11,color:'#2c3e50',marginBottom:10,textTransform:'uppercase',letterSpacing:.8}}>Produtos e serviços</div>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead>
+            <tr style={{background:'#f5f6fa'}}>
+              {['Item','Preço unit.','Qtd','Total','Desconto','Total c/ desc.'].map(h=>(
+                <th key={h} style={{padding:'7px 10px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,borderBottom:'1px solid #e8eaed'}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {itens.map((it,i)=>{
+              const p=parseFloat(it.preco)||0,q=parseFloat(it.qtd)||1,d=parseFloat(it.desconto)||0;
+              return(
+                <React.Fragment key={it.id}>
+                  <tr style={{borderBottom:it.descricao?'none':'1px solid #f0f0f0',background:i%2===0?'#fff':'#fafafa'}}>
+                    <td style={{padding:'9px 10px',fontWeight:700,color:'#2c3e50'}}>{it.nome}</td>
+                    <td style={{padding:'9px 10px',color:'#4a4a4a'}}>{fmt(p)}</td>
+                    <td style={{padding:'9px 10px',color:'#4a4a4a'}}>{q}</td>
+                    <td style={{padding:'9px 10px',color:'#4a4a4a'}}>{fmt(p*q)}</td>
+                    <td style={{padding:'9px 10px',color:'#7f8c8d'}}>{fmt(d)}</td>
+                    <td style={{padding:'9px 10px',fontWeight:700,color:'#2c3e50'}}>{fmt(p*q-d)}</td>
+                  </tr>
+                  {it.descricao&&<tr style={{borderBottom:'1px solid #f0f0f0',background:i%2===0?'#fff':'#fafafa'}}>
+                    <td colSpan={6} style={{padding:'0 10px 9px'}}>
+                      <div dangerouslySetInnerHTML={{__html:it.descricao}} style={{fontSize:11,color:'#7f8c8d'}}/>
+                    </td>
+                  </tr>}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Totais */}
+        <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}>
+          <div style={{minWidth:220}}>
+            <div style={{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:12,color:'#7f8c8d'}}><span>Valor</span><span>{fmt(subtotal+descTotal)}</span></div>
+            <div style={{display:'flex',justifyContent:'space-between',padding:'3px 0',fontSize:12,color:'#7f8c8d'}}><span>Valor do desconto</span><span>- {fmt(descTotal)}</span></div>
+            <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0 4px',borderTop:'2px solid #e8eaed',fontWeight:700,fontSize:14,color:'#2c3e50'}}><span>Valor total</span><span>{fmt(subtotal)}</span></div>
+          </div>
+        </div>
+
+        {/* Pagamento */}
+        {(det.validade||det.forma||det.obs)&&(
+          <div style={{marginTop:16,padding:'12px',background:'#f8f9fa',borderRadius:6}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#2c3e50',marginBottom:6}}>Detalhes e forma de pagamento</div>
+            {det.validade&&<div style={{fontSize:11,color:'#7f8c8d'}}>Validade da proposta até {validAte}.</div>}
+            {det.forma&&<div style={{fontSize:11,color:'#7f8c8d'}}>Forma de pagamento: {det.forma}.</div>}
+            {det.obs&&<div style={{fontSize:11,color:'#7f8c8d',marginTop:3}}>{det.obs}</div>}
+          </div>
+        )}
+
+        <div style={{marginTop:16,paddingTop:10,borderTop:'1px solid #e8eaed',fontSize:10,color:'#bdc3c7',textAlign:'center'}}>
+          Guion Informática e Relógio de Ponto | 07.334.645/0001-00
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LISTA DE ORÇAMENTOS ──────────────────────────────────────────────────────
+function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,onImportarCRM}){
+  const [subAba,setSubAba]=useState('lista');
+  const [orcSel,setOrcSel]=useState(null);
+  const [editando,setEditando]=useState(false);
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#4a4a4a',background:'#fff'};
+
+  async function atualizarStatus(id,status){
+    await setDoc(doc(db,'orcamentos',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
+    if(orcSel?.id===id)setOrcSel(o=>({...o,status}));
+  }
+  async function remover(id){if(!window.confirm('Remover orçamento?'))return;await deleteDoc(doc(db,'orcamentos',id));setOrcSel(null);}
+
+  function importar(orc){
+    onImportarCRM({
+      nome:orc.cliente?.empresa||orc.cliente?.nome||'',
+      cnpj:'',contato:orc.cliente?.nome||'',
+      tel:orc.cliente?.tel||'',email:orc.cliente?.email||'',
+      obs:`Importado do orçamento. Total: R$ ${(orc.subtotal||0).toFixed(2).replace('.',',')}`,
+    });
+  }
+
+  if(editando&&orcSel){
+    return(
+      <div>
+        <button onClick={()=>setEditando(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
+        <OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} orcEdit={orcSel} onSalvar={()=>setEditando(false)} onCancelar={()=>setEditando(false)}/>
+      </div>
+    );
+  }
+
+  if(orcSel){
+    const orc=orcamentos.find(o=>o.id===orcSel.id)||orcSel;
+    const tpl=orcTemplates.find(t=>t.id===orc.detalhes?.templateId);
+    return(
+      <div>
+        <button onClick={()=>setOrcSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Lista de orçamentos</button>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:'#4a4a4a'}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>{orc.cliente?.email} • {orc.cliente?.tel}</div>
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            <select value={orc.status||'rascunho'} onChange={e=>atualizarStatus(orc.id,e.target.value)} style={{...fi,fontWeight:700,color:COR_ORC[orc.status||'rascunho'],borderColor:COR_ORC[orc.status||'rascunho']}}>
+              {STATUS_ORC.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+            <button onClick={()=>setEditando(true)} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12}}>✏️ Editar</button>
+            <button onClick={()=>window.print()} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🖨️ Imprimir/PDF</button>
+            <button onClick={()=>{
+              const s=encodeURIComponent('Proposta Comercial — Guion Informática');
+              const b=encodeURIComponent(`Olá, ${orc.cliente?.nome||''}!\n\nSegue a proposta da Guion Informática.\n\nAtenciosamente,\n${orc.detalhes?.vendedor||'Guion Informática'}`);
+              window.open(`mailto:${orc.cliente?.email}?subject=${s}&body=${b}`);
+            }} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>✉️ Email</button>
+            {orc.status==='fechado'&&<button onClick={()=>importar(orc)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>📥 Importar p/ CRM</button>}
+            <button onClick={()=>remover(orc.id)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
+          </div>
+        </div>
+        <OrcamentoPreview cli={orc.cliente||{}} itens={orc.itens||[]} det={orc.detalhes||{}} template={tpl} subtotal={orc.subtotal||0}/>
+      </div>
+    );
+  }
+
+  const porStatus=STATUS_ORC.map(s=>({...s,qtd:orcamentos.filter(o=>o.status===s.id).length}));
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {[{id:'lista',l:`Orçamentos (${orcamentos.length})`},{id:'novo',l:'+ Novo'},{id:'config',l:'⚙️ Configurações'}].map(a=>(
+            <button key={a.id} onClick={()=>setSubAba(a.id)} style={{padding:'8px 16px',borderRadius:6,border:'none',background:subAba===a.id?'#f5a623':'#ecf0f1',color:subAba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:subAba===a.id?700:400}}>{a.l}</button>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+          {porStatus.map(s=><div key={s.id} style={{padding:'3px 10px',borderRadius:20,background:s.color+'22',border:`1px solid ${s.color}`,fontSize:10,fontWeight:700,color:s.color}}>{s.label}: {s.qtd}</div>)}
+        </div>
+      </div>
+
+      {subAba==='novo'&&<OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} onSalvar={()=>setSubAba('lista')} onCancelar={()=>setSubAba('lista')}/>}
+      {subAba==='config'&&<OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>}
+      {subAba==='lista'&&(
+        <div>
+          {orcamentos.length===0&&(
+            <div style={{background:'#fff',borderRadius:8,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+              <div style={{fontSize:36,marginBottom:10}}>📋</div>
+              <div style={{fontWeight:700,fontSize:14,color:'#4a4a4a',marginBottom:6}}>Nenhum orçamento ainda</div>
+              <div style={{fontSize:12,color:'#7f8c8d',marginBottom:14}}>Crie o primeiro orçamento agora</div>
+              <button onClick={()=>setSubAba('novo')} style={{padding:'10px 24px',borderRadius:7,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Novo orçamento</button>
+            </div>
+          )}
+          {[...orcamentos].sort((a,b)=>new Date(b.atualizadoEm||b.criadoEm)-new Date(a.atualizadoEm||a.criadoEm)).map((orc)=>{
+            const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+            return(
+              <div key={orc.id} onClick={()=>setOrcSel(orc)} style={{background:'#fff',borderRadius:8,padding:'13px 16px',marginBottom:8,cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#4a4a4a',marginBottom:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{orc.cliente?.empresa||orc.cliente?.nome||'(sem nome)'}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d'}}>{(orc.itens||[]).length} item(ns) • {orc.detalhes?.vendedor||'—'} • {orc.criadoEm?new Date(orc.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:'#27ae60'}}>R$ {(orc.subtotal||0).toFixed(2).replace('.',',')}</div>
+                  <span style={{background:st.color+'22',color:st.color,padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{st.label}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
   const [authUser,setAuthUser]=useState(null);
@@ -2308,6 +2947,10 @@ export default function App(){
   const [vendedoresCad,setVendedoresCad]=useState([]);
   const [equipamentosCad,setEquipamentosCad]=useState([]);
   const [solicitacoes,setSolicitacoes]=useState([]);
+  const [orcamentos,setOrcamentos]=useState([]);
+  const [orcServicos,setOrcServicos]=useState([]);
+  const [orcFormas,setOrcFormas]=useState([]);
+  const [orcTemplates,setOrcTemplates]=useState([]);
   const [menuOrder,setMenuOrder]=useState(()=>{try{const s=localStorage.getItem('crm_menu_order');return s?JSON.parse(s):null;}catch(e){return null;}});
   const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
   const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
@@ -2375,6 +3018,18 @@ export default function App(){
     }));
     unsubs.push(onSnapshot(collection(db,'solicitacoes'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setSolicitacoes(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'orcamentos'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcamentos(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'orc_servicos'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcServicos(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'orc_formas'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcFormas(arr);
+    }));
+    unsubs.push(onSnapshot(collection(db,'orc_templates'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcTemplates(arr);
     }));
     return()=>unsubs.forEach(u=>u());
   },[authUser]);
@@ -2451,7 +3106,7 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','config':'#95a5a6'};
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','config':'#95a5a6'};
             const svgIcons={
               // Dashboard: monitor com gráfico
               dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
@@ -2469,6 +3124,7 @@ export default function App(){
               relatorios:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>,
               // Solicitações: caixa de entrada / ticket
               solicitacoes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>,
+              orcamentos:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
               // Configurações: engrenagem
               config:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
             };
@@ -2701,6 +3357,13 @@ export default function App(){
 
           {/* RELATÓRIOS */}
           {!clienteSel&&page==='relatorios'&&<RelatoriosView todos={todos} implantacoes={implantacoes}/>}
+
+          {/* ORÇAMENTOS */}
+          {!clienteSel&&page==='orcamentos'&&<OrcamentosView
+            orcamentos={orcamentos} orcServicos={orcServicos} orcFormas={orcFormas}
+            orcTemplates={orcTemplates} equipamentosCad={equipamentosCad}
+            onImportarCRM={dados=>{setPage('novo');}}
+          />}
 
           {/* SOLICITAÇÕES */}
           {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile}/>}
