@@ -111,6 +111,25 @@ function getDataTs(c){
   const d=new Date(c.data);
   return isNaN(d.getTime())?0:d.getTime();
 }
+
+// ─── MÁSCARA TELEFONE ────────────────────────────────────────────────────────
+function mascaraTel(v){
+  // Remove tudo que não for número
+  const n=v.replace(/\D/g,'').slice(0,11);
+  if(n.length<=2) return n.length?'('+n:'';
+  if(n.length<=6) return '('+n.slice(0,2)+') '+n.slice(2);
+  if(n.length<=10) return '('+n.slice(0,2)+') '+n.slice(2,6)+'-'+n.slice(6);
+  return '('+n.slice(0,2)+') '+n.slice(2,7)+'-'+n.slice(7);
+}
+function telParaWa(tel){
+  // Remove tudo que não for número e adiciona código do Brasil
+  const n=tel.replace(/\D/g,'');
+  if(!n) return '';
+  // Se começar com 0 remove
+  const limpo=n.startsWith('0')?n.slice(1):n;
+  return '55'+limpo;
+}
+
 function sortRecente(arr){
   return [...arr].sort((a,b)=>getDataTs(b)-getDataTs(a));
 }
@@ -1093,7 +1112,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
           <div><label style={lbl}>Contato</label><input style={fi} value={f.contato} onChange={e=>up('contato',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
-          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
+          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
           <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
         </div>
       </div>
@@ -1172,7 +1191,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
     nome:c.nome||'',
     cnpj:c.cnpj||'',
     contato:c.contato||'',
-    tel:c.tel||'',
+    tel:mascaraTel(c.tel||''),
     email:c.email||'',
     func:c.func!=null?String(c.func):'',
     equipTipo:c.equipTipo||'Evo40',
@@ -1236,7 +1255,9 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
               </select>
             : type==='textarea'
               ? <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f[field]} onChange={e=>up(field,e.target.value.toUpperCase())}/>
-              : <input style={{...fi,textTransform:shouldUpper?'uppercase':'none'}} type={type} step={type==='number'?'0.01':undefined} value={f[field]||''} onChange={e=>up(field,shouldUpper?e.target.value.toUpperCase():e.target.value)}/>
+              : field==='tel'
+                ? <input style={{...fi}} type="tel" value={f[field]||''} onChange={e=>up(field,mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/>
+                : <input style={{...fi,textTransform:shouldUpper?'uppercase':'none'}} type={type} step={type==='number'?'0.01':undefined} value={f[field]||''} onChange={e=>up(field,shouldUpper?e.target.value.toUpperCase():e.target.value)}/>
           : <div style={fiView}>{viewVal()}</div>
         }
       </div>
@@ -1370,6 +1391,17 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                         Email
                       </a>
+                      {(()=>{
+                        const waNum=telParaWa(f.tel||'');
+                        const waNome=(f.contato||f.nome||'').split(' ')[0];
+                        const waMsg=encodeURIComponent('Olá, '+waNome+'! 😊\n\nSeu equipamento foi despachado e já está a caminho!\n\n📦 *Código de rastreio:* '+f.equipRastreio+'\n\n🔍 Acompanhe a entrega pelo link:\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\nQualquer dúvida estamos à disposição!\n\n_Guion Informática_');
+                        return(
+                          <a href={waNum?`https://wa.me/${waNum}?text=${waMsg}`:'#'} target="_blank" rel="noopener noreferrer" title={waNum?`WhatsApp ${f.tel}`:'Telefone não cadastrado'} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:'#25D366',fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none',opacity:waNum?1:0.4,pointerEvents:waNum?'auto':'none'}}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                            WhatsApp
+                          </a>
+                        );
+                      })()}
                     </>}
                   </div>
                 }
