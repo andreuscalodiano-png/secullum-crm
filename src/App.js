@@ -1432,6 +1432,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   const [savedVend,setSavedVend]=useState(false);
   const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true});
   const [savedEquip,setSavedEquip]=useState(false);
+  const [editEquipId,setEditEquipId]=useState(null);
   // Convite
   const [convite,setConvite]=useState({nome:'',email:'',perfil:'colaborador'});
   const [conviteStatus,setConviteStatus]=useState(''); // ''|'enviando'|'ok'|'erro'
@@ -1472,6 +1473,15 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   async function removeEquipamento(id){
     if(!window.confirm('Remover este equipamento?'))return;
     await deleteDoc(doc(db,'equipamentos',id));
+  }
+  async function salvarEdicaoEquip(){
+    if(!novoEquip.nome.trim())return;
+    await setDoc(doc(db,'equipamentos',editEquipId),{nome:novoEquip.nome.trim().toUpperCase(),requerPagamento:novoEquip.requerPagamento},{merge:true});
+    setNovoEquip({nome:'',requerPagamento:true});setEditEquipId(null);setSavedEquip(true);setTimeout(()=>setSavedEquip(false),2000);
+  }
+  function iniciarEdicaoEquip(e){
+    setEditEquipId(e.id);
+    setNovoEquip({nome:e.nome,requerPagamento:e.requerPagamento});
   }
 
   async function enviarConvite(){
@@ -1665,26 +1675,42 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
         <div style={{fontWeight:700,fontSize:12,color:C.teal,marginBottom:12,textTransform:'uppercase'}}>Equipamentos ({equipamentosCad.length})</div>
         <div style={{marginBottom:12}}>
           {equipamentosCad.map(e=>(
-            <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
-              <i className="ti ti-device-laptop" style={{color:C.teal,fontSize:15}}/>
+            <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:editEquipId===e.id?'#e8f4fd':'#f8f9fa',marginBottom:6,border:editEquipId===e.id?'1px solid #3498db':'1px solid transparent',transition:'all .15s'}}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.teal} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{e.nome}</span>
               <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:e.requerPagamento?'#fef9e7':'#d5f5e3',color:e.requerPagamento?C.orange:C.green}}>{e.requerPagamento?'Requer pagamento':'Sem custo'}</span>
-              <button onClick={()=>removeEquipamento(e.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
+              <button onClick={()=>iniciarEdicaoEquip(e)} title="Editar" style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,padding:'2px 5px'}}>✏️</button>
+              <button onClick={()=>removeEquipamento(e.id)} title="Remover" style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14,padding:'2px 5px'}}>×</button>
             </div>
           ))}
           {equipamentosCad.length===0&&<div style={{fontSize:12,color:C.textMuted,textAlign:'center',padding:'8px 0'}}>Nenhum equipamento cadastrado.</div>}
         </div>
-        <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
-          <div style={{flex:1}}><label style={lbl}>Nome do equipamento</label><input style={{...fi,textTransform:'uppercase'}} value={novoEquip.nome} onChange={e=>setNovoEquip(x=>({...x,nome:e.target.value.toUpperCase()}))} onKeyDown={e=>e.key==='Enter'&&addEquipamento()} placeholder="EX: EVO40, TABLET..."/></div>
-          <div><label style={lbl}>Requer pagamento?</label>
-            <select style={fi} value={String(novoEquip.requerPagamento)} onChange={e=>setNovoEquip(x=>({...x,requerPagamento:e.target.value==='true'}))}>
-              <option value="true">Sim — cliente paga</option>
-              <option value="false">Não — sem custo</option>
-            </select>
+        {/* Formulário add/edit */}
+        <div style={{background:editEquipId?'#e8f4fd':'#f8f9fa',borderRadius:7,padding:'12px',border:editEquipId?'1px solid #3498db':'1px dashed #dde1e7',marginTop:4}}>
+          <div style={{fontSize:11,fontWeight:700,color:editEquipId?'#3498db':C.textMuted,marginBottom:8,textTransform:'uppercase'}}>{editEquipId?'✏️ Editando equipamento':'+ Novo equipamento'}</div>
+          <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+            <div style={{flex:1}}><label style={lbl}>Nome do equipamento</label><input style={{...fi,textTransform:'uppercase'}} value={novoEquip.nome} onChange={e=>setNovoEquip(x=>({...x,nome:e.target.value.toUpperCase()}))} onKeyDown={e=>e.key==='Enter'&&(editEquipId?salvarEdicaoEquip():addEquipamento())} placeholder="EX: EVO40, TABLET..."/></div>
+            <div><label style={lbl}>Requer pagamento?</label>
+              <select style={fi} value={String(novoEquip.requerPagamento)} onChange={e=>setNovoEquip(x=>({...x,requerPagamento:e.target.value==='true'}))}>
+                <option value="true">Sim — cliente paga</option>
+                <option value="false">Não — sem custo</option>
+              </select>
+            </div>
+            {editEquipId?(
+              <div style={{display:'flex',gap:6}}>
+                <button onClick={salvarEdicaoEquip} style={{padding:'7px 14px',borderRadius:5,border:'none',background:savedEquip?C.green:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap',height:36}}>
+                  {savedEquip?'✓ Salvo!':'💾 Salvar'}
+                </button>
+                <button onClick={()=>{setEditEquipId(null);setNovoEquip({nome:'',requerPagamento:true});}} style={{padding:'7px 12px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted,height:36}}>
+                  Cancelar
+                </button>
+              </div>
+            ):(
+              <button onClick={addEquipamento} style={{padding:'7px 16px',borderRadius:5,border:'none',background:savedEquip?C.green:C.teal,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap',height:36}}>
+                {savedEquip?'✓ Adicionado!':'+ Adicionar'}
+              </button>
+            )}
           </div>
-          <button onClick={addEquipamento} style={{padding:'7px 16px',borderRadius:5,border:'none',background:savedEquip?C.green:C.teal,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap',height:36}}>
-            {savedEquip?'✓ Adicionado!':'+ Adicionar'}
-          </button>
         </div>
       </div>
 
@@ -2517,7 +2543,7 @@ function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
 }
 
 // ─── FORMULÁRIO DE ORÇAMENTO ──────────────────────────────────────────────────
-function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,onSalvar,onCancelar,orcEdit}){
+function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onSalvar,onCancelar,orcEdit}){
   const [etapa,setEtapa]=useState(1);
   const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',email:'',tel:''});
   const [itens,setItens]=useState(orcEdit?.itens||[]);
@@ -2652,7 +2678,16 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,onSal
         <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
           <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a',marginBottom:14,textTransform:'uppercase',letterSpacing:.8}}>Detalhes da proposta</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Vendedor</label><input style={{...fi,textTransform:'uppercase'}} value={det.vendedor} onChange={e=>setDet(d=>({...d,vendedor:e.target.value.toUpperCase()}))}/></div>
+            <div>
+              <label style={lbl}>Vendedor</label>
+              {vendedoresCad&&vendedoresCad.length>0
+                ?<select style={fi} value={det.vendedor} onChange={e=>setDet(d=>({...d,vendedor:e.target.value}))}>
+                    <option value="">— Selecione o vendedor —</option>
+                    {vendedoresCad.map(v=><option key={v.id} value={v.nome}>{v.nome}</option>)}
+                  </select>
+                :<input style={{...fi,textTransform:'uppercase'}} value={det.vendedor} onChange={e=>setDet(d=>({...d,vendedor:e.target.value.toUpperCase()}))} placeholder="Nome do vendedor"/>
+              }
+            </div>
             <div><label style={lbl}>Validade</label><input style={fi} type="date" value={det.validade} onChange={e=>setDet(d=>({...d,validade:e.target.value}))}/></div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -2822,7 +2857,7 @@ function OrcamentoPreview({cli,itens,det,template,subtotal}){
 }
 
 // ─── LISTA DE ORÇAMENTOS ──────────────────────────────────────────────────────
-function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,onImportarCRM}){
+function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM}){
   const [subAba,setSubAba]=useState('lista');
   const [orcSel,setOrcSel]=useState(null);
   const [editando,setEditando]=useState(false);
@@ -2847,7 +2882,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
     return(
       <div>
         <button onClick={()=>setEditando(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
-        <OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} orcEdit={orcSel} onSalvar={()=>setEditando(false)} onCancelar={()=>setEditando(false)}/>
+        <OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} vendedoresCad={vendedoresCad} orcEdit={orcSel} onSalvar={()=>setEditando(false)} onCancelar={()=>setEditando(false)}/>
       </div>
     );
   }
@@ -2898,7 +2933,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
         </div>
       </div>
 
-      {subAba==='novo'&&<OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} onSalvar={()=>setSubAba('lista')} onCancelar={()=>setSubAba('lista')}/>}
+      {subAba==='novo'&&<OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} vendedoresCad={vendedoresCad} onSalvar={()=>setSubAba('lista')} onCancelar={()=>setSubAba('lista')}/>}
       {subAba==='config'&&<OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>}
       {subAba==='lista'&&(
         <div>
@@ -3366,6 +3401,7 @@ export default function App(){
           {!clienteSel&&page==='orcamentos'&&<OrcamentosView
             orcamentos={orcamentos} orcServicos={orcServicos} orcFormas={orcFormas}
             orcTemplates={orcTemplates} equipamentosCad={equipamentosCad}
+            vendedoresCad={vendedoresCad}
             onImportarCRM={dados=>{setPage('novo');}}
           />}
 
