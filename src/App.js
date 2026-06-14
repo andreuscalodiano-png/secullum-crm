@@ -1106,9 +1106,14 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
   const [f,setF]=useState({
     data:hojeISO,
     nome:dadosImportados?.nome||'',
+    empresa:dadosImportados?.empresa||'',
     cnpj:dadosImportados?.cnpj||'',
     contato:dadosImportados?.contato||'',
     tel:dadosImportados?.tel||'',
+    fone:'',
+    email:dadosImportados?.email||'',
+    cep:'',rua:'',numero:'',complemento:'',bairro:'',cidade:'',
+    inscMunicipal:'',inscEstadual:'',
     func:dadosImportados?.func||'',
     equipTipo:dadosImportados?.equipTipo||equipDefault,
     vI:dadosImportados?.vI||'',
@@ -1116,7 +1121,6 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     vS:dadosImportados?.vS||'',
     pagamento:'Boleto',
     dtBoleto:dadosImportados?.dtBoleto||'',
-    email:dadosImportados?.email||'',
     status:'Aguardando',
     plano:dadosImportados?.plano||'Basic',
     vendedor:dadosImportados?.vendedor||nomeLogado,
@@ -1140,9 +1144,15 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
   function validar(){
     const e={};
     if(!f.nome.trim())e.nome='Obrigatório';
+    if(!f.empresa.trim())e.empresa='Obrigatório';
     if(!f.cnpj.trim())e.cnpj='Obrigatório';
     if(!f.tel.trim())e.tel='Obrigatório';
     if(!f.email.trim())e.email='Obrigatório';
+    if(!f.cep.trim())e.cep='Obrigatório';
+    if(!f.rua.trim())e.rua='Obrigatório';
+    if(!f.numero.trim())e.numero='Obrigatório';
+    if(!f.bairro.trim())e.bairro='Obrigatório';
+    if(!f.cidade.trim())e.cidade='Obrigatório';
     if(!f.plano)e.plano='Obrigatório';
     if(!f.equipTipo)e.equipTipo='Obrigatório';
     if(!f.vendedor||f.vendedor==='—')e.vendedor='Obrigatório';
@@ -1155,10 +1165,16 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     const d=f.data?new Date(f.data+'T12:00:00'):null;
     const vI=parseValor(f.vI),vE=parseValor(f.vE),vS=parseValor(f.vS);
     onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,
-      nome:f.nome.trim().toUpperCase(),cnpj:f.cnpj.trim().toUpperCase(),
-      contato:f.contato.trim().toUpperCase(),tel:f.tel.trim().toUpperCase(),
+      nome:f.nome.trim().toUpperCase(),empresa:f.empresa.trim().toUpperCase(),
+      cnpj:f.cnpj.trim().toUpperCase(),
+      contato:f.contato.trim().toUpperCase(),tel:f.tel.trim(),fone:f.fone.trim(),
+      email:f.email.trim(),
+      cep:f.cep.trim(),rua:f.rua.trim().toUpperCase(),numero:f.numero.trim(),
+      complemento:f.complemento.trim().toUpperCase(),bairro:f.bairro.trim().toUpperCase(),
+      cidade:f.cidade.trim().toUpperCase(),
+      inscMunicipal:f.inscMunicipal.trim(),inscEstadual:f.inscEstadual.trim(),
       func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,
-      pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),
+      pagamento:f.pagamento,dtBoleto:f.dtBoleto,
       status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,
       renovacao:f.renovacao,obs:f.obs,
       despachado:f.despachado,equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio,
@@ -1192,19 +1208,41 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
 
       {/* Dados da empresa */}
       <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
+        <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados do cliente</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={{...fiErr('nome'),textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())}/></div>
           <div><label style={lbl}>Data da venda</label><input style={fi} type="date" value={f.data} onChange={e=>up('data',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={{...lbl,color:erros.empresa?'#e74c3c':'#7f8c8d'}}>{erros.empresa?'Empresa — '+erros.empresa:'Empresa / Razão Social *'}</label><input style={{...fiErr('empresa'),textTransform:'uppercase'}} value={f.empresa} onChange={e=>up('empresa',e.target.value.toUpperCase())}/></div>
           <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={{...fiErr('cnpj'),textTransform:'uppercase'}} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())}/></div>
-          <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
           <div><label style={lbl}>Contato</label><input style={{...fi,textTransform:'uppercase'}} value={f.contato} onChange={e=>up('contato',e.target.value.toUpperCase())}/></div>
-          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Celular — '+erros.tel:'Celular *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
+          <div><label style={lbl}>Fone fixo</label><input style={fi} value={f.fone} onChange={e=>up('fone',mascaraTel(e.target.value))} placeholder="(00) 0000-0000" maxLength={14}/></div>
           <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
+        </div>
+        {/* Endereço */}
+        <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#7f8c8d',marginBottom:8,textTransform:'uppercase'}}>Endereço</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={{...lbl,color:erros.cep?'#e74c3c':'#7f8c8d'}}>{erros.cep?'CEP — '+erros.cep:'CEP *'}</label><input style={fiErr('cep')} value={f.cep} onChange={e=>up('cep',e.target.value)} placeholder="00000-000" maxLength={9}/></div>
+            <div><label style={{...lbl,color:erros.rua?'#e74c3c':'#7f8c8d'}}>{erros.rua?'Rua — '+erros.rua:'Rua *'}</label><input style={{...fiErr('rua'),textTransform:'uppercase'}} value={f.rua} onChange={e=>up('rua',e.target.value.toUpperCase())}/></div>
+            <div><label style={{...lbl,color:erros.numero?'#e74c3c':'#7f8c8d'}}>{erros.numero?'Nº — '+erros.numero:'Número *'}</label><input style={fiErr('numero')} value={f.numero} onChange={e=>up('numero',e.target.value)}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Complemento</label><input style={{...fi,textTransform:'uppercase'}} value={f.complemento} onChange={e=>up('complemento',e.target.value.toUpperCase())}/></div>
+            <div><label style={{...lbl,color:erros.bairro?'#e74c3c':'#7f8c8d'}}>{erros.bairro?'Bairro — '+erros.bairro:'Bairro *'}</label><input style={{...fiErr('bairro'),textTransform:'uppercase'}} value={f.bairro} onChange={e=>up('bairro',e.target.value.toUpperCase())}/></div>
+            <div><label style={{...lbl,color:erros.cidade?'#e74c3c':'#7f8c8d'}}>{erros.cidade?'Cidade — '+erros.cidade:'Cidade *'}</label><input style={{...fiErr('cidade'),textTransform:'uppercase'}} value={f.cidade} onChange={e=>up('cidade',e.target.value.toUpperCase())}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div><label style={lbl}>Inscrição Municipal</label><input style={fi} value={f.inscMunicipal} onChange={e=>up('inscMunicipal',e.target.value)}/></div>
+            <div><label style={lbl}>Inscrição Estadual</label><input style={fi} value={f.inscEstadual} onChange={e=>up('inscEstadual',e.target.value)}/></div>
+          </div>
         </div>
       </div>
 
@@ -1377,10 +1415,20 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
   const [modalAlteracao,setModalAlteracao]=useState(null); // null | 'valor' | 'cancelamento'
   const [f,setF]=useState({
     nome:c.nome||'',
+    empresa:c.empresa||'',
     cnpj:c.cnpj||'',
     contato:c.contato||'',
     tel:mascaraTel(c.tel||''),
+    fone:c.fone||'',
     email:c.email||'',
+    cep:c.cep||'',
+    rua:c.rua||'',
+    numero:c.numero||'',
+    complemento:c.complemento||'',
+    bairro:c.bairro||'',
+    cidade:c.cidade||'',
+    inscMunicipal:c.inscMunicipal||'',
+    inscEstadual:c.inscEstadual||'',
     func:c.func!=null?String(c.func):'',
     equipTipo:c.equipTipo||'Evo40',
     vI:c.vI!=null?String(c.vI):'0',
@@ -1492,19 +1540,41 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
 
       {/* Dados da empresa */}
       <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
+        <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Dados do cliente</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Nome *" field="nome"/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="CNPJ/CPF" field="cnpj"/>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Contato" field="contato"/>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Telefone" field="tel"/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Empresa / Razão Social" field="empresa"/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Email financeiro" field="email" type="email"/>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Contato" field="contato"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Celular" field="tel"/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Fone fixo" field="fone"/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Funcionários" field="func" type="number"/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Equipamento" field="equipTipo" opts={equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS}/>
+        </div>
+        {/* Endereço */}
+        <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#7f8c8d',marginBottom:8,textTransform:'uppercase'}}>Endereço</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr',gap:10,marginBottom:10}}>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="CEP" field="cep"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Rua" field="rua"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Número" field="numero"/>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Complemento" field="complemento"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Bairro" field="bairro"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Cidade" field="cidade"/>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Inscrição Municipal" field="inscMunicipal"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Inscrição Estadual" field="inscEstadual"/>
+          </div>
         </div>
       </div>
 
@@ -3761,8 +3831,21 @@ async function asaasCriarOuBuscarCliente(c){
   const existente=await asaasBuscarClientePorCNPJ(c.cnpj||'');
   if(existente)return existente;
   return asaasReq('/customers','POST',{
-    name:c.nome,cpfCnpj:(c.cnpj||'').replace(/\D/g,''),
-    email:c.email||undefined,mobilePhone:(c.tel||'').replace(/\D/g,'')||undefined,
+    name:c.nome,
+    company:c.empresa||undefined,
+    cpfCnpj:(c.cnpj||'').replace(/\D/g,''),
+    email:c.email||undefined,
+    mobilePhone:(c.tel||'').replace(/\D/g,'')||undefined,
+    phone:(c.fone||'').replace(/\D/g,'')||undefined,
+    postalCode:(c.cep||'').replace(/\D/g,'')||undefined,
+    address:c.rua||undefined,
+    addressNumber:c.numero||undefined,
+    complement:c.complemento||undefined,
+    province:c.bairro||undefined,
+    city:c.cidade||undefined,
+    municipalInscription:c.inscMunicipal||undefined,
+    stateInscription:c.inscEstadual||undefined,
+    observations:c.obs||undefined,
     notificationDisabled:false,
   });
 }
