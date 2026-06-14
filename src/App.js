@@ -1135,7 +1135,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     vS:dadosImportados?.vS||'',
     pagamento:'Boleto',
     dtBoleto:dadosImportados?.dtBoleto||'',
-    status:'Aguardando',
+    status:'Novo',
     plano:dadosImportados?.plano||'Basic',
     vendedor:dadosImportados?.vendedor||nomeLogado,
     nfe:dadosImportados?.nfe||'Não',
@@ -1355,11 +1355,6 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
           </div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Status</label>
-            <select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}>
-              {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-          </div>
           <div><label style={lbl}>Emitir NF-e</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
         </div>
         <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/></div>
@@ -1602,7 +1597,17 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Plano" field="plano" opts={PLANOS}/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Status" field="status" opts={STATUS_CLIENTE.map(s=>({v:s.id,l:s.label}))}/>
+          <div>
+            <label style={lbl}>Status</label>
+            {(perfil==='admin'||perfil==='financeiro')&&editMode
+              ?<select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}>
+                  {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              :<div style={{...fiView,fontWeight:700,color:corStatus(f.status),background:corStatus(f.status)+'11'}}>
+                {labelStatus(f.status)}
+              </div>
+            }
+          </div>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -3888,24 +3893,17 @@ async function asaasCriarLinkPagamento(customerId,valor,billingType,desc){
   const amanha=new Date(hoje);amanha.setDate(hoje.getDate()+1);
   const dueDate=`${amanha.getFullYear()}-${String(amanha.getMonth()+1).padStart(2,'0')}-${String(amanha.getDate()).padStart(2,'0')}`;
 
-  if(billingType==='PIX'){
-    const r=await asaasReq('/payments','POST',{
-      customer:customerId,billingType:'PIX',value:valor,dueDate,description:desc,
-    });
-    console.log('[Asaas PIX response]',JSON.stringify(r));
-    // invoiceUrl é a URL completa do boleto/pix ex: https://sandbox.asaas.com/i/xxx
-    const pixUrl=r.invoiceUrl||r.bankSlipUrl||
-      (r.id?`https://sandbox.asaas.com/i/${r.id}`:'');
-    return{url:pixUrl,id:r.id||''};
-  }
-
-  // Cartão: tenta paymentLinks primeiro
-  const r=await asaasReq('/paymentLinks','POST',{
-    name:desc,billingType:'CREDIT_CARD',chargeType:'DETACHED',value:valor,description:desc,
+  // Tanto Pix quanto Cartão usam /payments vinculado ao customer
+  // Isso garante que payment.id bate com asaas_link_*_id no Firestore
+  const r=await asaasReq('/payments','POST',{
+    customer:customerId,
+    billingType:billingType==='PIX'?'PIX':'CREDIT_CARD',
+    value:valor,
+    dueDate,
+    description:desc,
   });
-  console.log('[Asaas CARTAO response]',JSON.stringify(r));
-  const url=r.url||r.shortUrl||r.invoiceUrl||r.paymentUrl||
-    (r.id?`https://sandbox.asaas.com/p/${r.id}`:'');
+  console.log('[Asaas link response]',billingType,JSON.stringify({id:r.id,invoiceUrl:r.invoiceUrl,status:r.status}));
+  const url=r.invoiceUrl||(r.id?`https://sandbox.asaas.com/i/${r.id}`:'');
   return{url,id:r.id||''};
 }
 async function asaasBuscarStatusCliente(customerId){
@@ -4959,7 +4957,11 @@ export default function App(){
             {/* Versão / build */}
             <div style={{fontSize:10,color:'#bdc3c7',borderLeft:'1px solid #e8eaed',paddingLeft:12,lineHeight:1.4,display:'flex',flexDirection:'column',alignItems:'flex-end'}}>
               <span style={{color:'#27ae60',fontWeight:700}}>● ao vivo</span>
-              <span>{new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'})} {new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'})}</span>
+              <span>{(()=>{
+                const t=process.env.REACT_APP_BUILD_TIME;
+                const d=t?new Date(t):new Date();
+                return d.toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+              })()}</span>
             </div>
             {/* Avatar + nome usuário */}
             <div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid #e8eaed',paddingLeft:16}}>
