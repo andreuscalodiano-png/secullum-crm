@@ -2706,7 +2706,7 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
   const [etapa,setEtapa]=useState(1);
   const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',cnpj:'',email:'',tel:'',func:'',equipTipo:'',plano:'Basic',nfe:'Não'});
   const [itens,setItens]=useState(orcEdit?.itens||[]);
-  const [det,setDet]=useState(orcEdit?.detalhes||{vendedor:'',validade:'',forma:'',obs:'',templateId:''});
+  const [det,setDet]=useState(orcEdit?.detalhes||{vendedor:'',validade:'',forma:'',obs:'',templateId:'',vE:'',vS:''});
   const [salvando,setSalvando]=useState(false);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
@@ -2879,6 +2879,14 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
             </div>
             <div><label style={lbl}>Validade</label><input style={fi} type="date" value={det.validade} onChange={e=>setDet(d=>({...d,validade:e.target.value}))}/></div>
           </div>
+          {/* Valores separados para o Kanban */}
+          <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #9ae6b4'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8,textTransform:'uppercase'}}>💰 Valores para o Kanban</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              <div><label style={lbl}>💻 Equipamento (R$)</label><input style={fi} type="number" step="0.01" value={det.vE||''} onChange={e=>setDet(d=>({...d,vE:e.target.value}))} placeholder="0,00"/></div>
+              <div><label style={lbl}>🔄 Sistema/mês (R$)</label><input style={fi} type="number" step="0.01" value={det.vS||''} onChange={e=>setDet(d=>({...d,vS:e.target.value}))} placeholder="0,00"/></div>
+            </div>
+          </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
             <div>
               <label style={lbl}>Forma de pagamento</label>
@@ -3046,22 +3054,503 @@ function OrcamentoPreview({cli,itens,det,template,subtotal}){
 }
 
 // ─── LISTA DE ORÇAMENTOS ──────────────────────────────────────────────────────
-function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM}){
+function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM,currentUser}){
   const [subAba,setSubAba]=useState('lista');
+  const [visao,setVisao]=useState('lista'); // 'lista' | 'kanban'
   const [orcSel,setOrcSel]=useState(null);
   const [editando,setEditando]=useState(false);
-  const [modalVenda,setModalVenda]=useState(null); // orçamento selecionado para fechar venda
-  const [dadosVenda,setDadosVenda]=useState({
-    // Implantação
-    pagamentoI:'Boleto',parcelasI:1,
-    // Equipamento
-    pagamentoE:'Boleto',parcelasE:1,
-    // Sistema
-    dtBoleto:'',
-  });
+  const [modalVenda,setModalVenda]=useState(null);
+  const [dadosVenda,setDadosVenda]=useState({pagamentoI:'Boleto',parcelasI:1,pagamentoE:'Boleto',parcelasE:1,dtBoleto:''});
   const [importando,setImportando]=useState(false);
+  const [dragId,setDragId]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  // Painel lateral co-piloto
+  const [painelOrc,setPainelOrc]=useState(null);
+  const [followInput,setFollowInput]=useState('');
+  const [iaResposta,setIaResposta]=useState('');
+  const [iaLoading,setIaLoading]=useState(false);
+  const [iaAberta,setIaAberta]=useState(false);
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#4a4a4a',background:'#fff'};
-  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const nomeVendedor=currentUser?.nome||currentUser?.email?.split('@')[0]||'Vendedor';
+
+  function diasDesde(data){
+    if(!data)return 0;
+    return Math.floor((Date.now()-new Date(data).getTime())/(1000*60*60*24));
+  }
+  function corFollowup(orc){
+    if(!orc.proximoContato)return'#bdc3c7';
+    const diff=Math.floor((new Date(orc.proximoContato).getTime()-Date.now())/(1000*60*60*24));
+    if(diff<0)return'#e74c3c';
+    if(diff<=1)return'#f5a623';
+    return'#27ae60';
+  }
+
+  function extrairValores(orc){
+    const vE=parseFloat(orc.detalhes?.vE)||0;
+    const vS=parseFloat(orc.detalhes?.vS)||0;
+    let vI=0;
+    (orc.itens||[]).forEach(it=>{
+      const n=(it.nome||'').toLowerCase();
+      const v=(parseFloat(it.preco)||0)*(parseFloat(it.qtd)||1)-(parseFloat(it.desconto)||0);
+      if(n.includes('implanta')||n.includes('instala'))vI+=v;
+    });
+    return{vI,vE,vS};
+  }
+
+  async function atualizarStatus(id,status){
+    await setDoc(doc(db,'orcamentos',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
+    if(orcSel?.id===id)setOrcSel(o=>({...o,status}));
+  }
+  async function remover(id){if(!window.confirm('Remover orçamento?'))return;await deleteDoc(doc(db,'orcamentos',id));setOrcSel(null);}
+
+  function abrirModalVenda(orc){
+    setModalVenda(orc);
+    setDadosVenda({pagamentoI:'Boleto',parcelasI:1,pagamentoE:'Boleto',parcelasE:1,dtBoleto:''});
+  }
+
+  async function confirmarVendaFechada(){
+    if(!modalVenda)return;
+    setImportando(true);
+    const orc=modalVenda;
+    const {vI,vE,vS}=extrairValores(orc);
+    await setDoc(doc(db,'orcamentos',orc.id),{status:'fechado',atualizadoEm:new Date().toISOString()},{merge:true});
+    onImportarCRM({
+      nome:(orc.cliente?.empresa||orc.cliente?.nome||'').toUpperCase(),
+      cnpj:(orc.cliente?.cnpj||'').toUpperCase(),
+      contato:(orc.cliente?.nome||'').toUpperCase(),
+      tel:orc.cliente?.tel||'',
+      email:orc.cliente?.email||'',
+      func:parseInt(orc.cliente?.func)||0,
+      equipTipo:orc.cliente?.equipTipo||'Nenhum',
+      plano:orc.cliente?.plano||'Basic',
+      nfe:orc.cliente?.nfe||'Não',
+      vI,vE,vS,total:vI+vE+vS,
+      pagamentoI:dadosVenda.pagamentoI,parcelasI:dadosVenda.parcelasI,
+      pagamentoE:dadosVenda.pagamentoE,parcelasE:dadosVenda.parcelasE,
+      dtBoleto:dadosVenda.dtBoleto,
+      vendedor:orc.detalhes?.vendedor||'',
+      status:'Aguardando',
+      obs:`Importado do orçamento ${orc.id}.`,
+      orcamentoId:orc.id,
+    });
+    setImportando(false);setModalVenda(null);setOrcSel(null);
+  }
+
+  // Drag & drop kanban
+  async function onDrop(novoStatus){
+    if(!dragId)return;
+    await setDoc(doc(db,'orcamentos',dragId),{status:novoStatus,atualizadoEm:new Date().toISOString()},{merge:true});
+    setDragId(null);setDragOver(null);
+  }
+
+  // Registrar follow-up
+  async function registrarFollowup(orc,descricao,proximoContato){
+    const historico=[...(orc.followup||[]),{
+      descricao,data:new Date().toISOString(),
+      usuario:nomeVendedor,
+    }];
+    await setDoc(doc(db,'orcamentos',orc.id),{
+      followup:historico,
+      proximoContato:proximoContato||orc.proximoContato||'',
+      ultimoContato:new Date().toISOString(),
+      atualizadoEm:new Date().toISOString(),
+    },{merge:true});
+    setPainelOrc(o=>({...o,followup:historico,proximoContato:proximoContato||o?.proximoContato}));
+  }
+
+  // Co-piloto IA vendas
+  async function consultarIA(){
+    if(!followInput.trim()||!painelOrc)return;
+    setIaLoading(true);setIaResposta('');setIaAberta(true);
+    const orc=painelOrc;
+    const dias=diasDesde(orc.criadoEm);
+    const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
+    const historico=(orc.followup||[]).map(f=>`- ${new Date(f.data).toLocaleDateString('pt-BR')}: ${f.descricao}`).join('\n')||'Nenhum contato registrado ainda.';
+    const {vE,vS}=extrairValores(orc);
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-6',
+          max_tokens:1000,
+          system:`Você é um co-piloto de vendas especialista em sistemas de ponto e RH da Secullum. 
+Seu papel é ajudar o vendedor ${nomeVendedor} a fechar orçamentos com linguagem direta, persuasiva, profissional mas informal — como um colega sênior experiente.
+Use sempre o nome do vendedor (${nomeVendedor}) na sua resposta.
+Seja objetivo, prático e motivador. Dê sugestões concretas de abordagem, mensagens prontas para WhatsApp, e estratégias para quebrar objeções.
+Nunca seja genérico — use os dados do orçamento para personalizar cada resposta.`,
+          messages:[{role:'user',content:`
+Orçamento: ${orc.cliente?.empresa||orc.cliente?.nome||'Cliente'}
+Valor equipamento: R$ ${vE.toFixed(2)}
+Valor sistema/mês: R$ ${vS.toFixed(2)}
+Total: R$ ${(orc.subtotal||0).toFixed(2)}
+Plano: ${orc.cliente?.plano||'—'}
+Status: ${orc.status}
+Dias no pipeline: ${dias}
+Dias sem contato: ${diasSemContato}
+Próximo contato agendado: ${orc.proximoContato?new Date(orc.proximoContato+'T12:00:00').toLocaleDateString('pt-BR'):'Não agendado'}
+
+Histórico de contatos:
+${historico}
+
+O vendedor informa: "${followInput}"
+
+Responda como co-piloto de vendas: analise a situação, dê sugestões práticas e, se necessário, gere uma mensagem pronta para WhatsApp.`}],
+        }),
+      });
+      const data=await resp.json();
+      setIaResposta(data.content?.[0]?.text||'Não consegui gerar uma resposta.');
+    }catch(e){
+      setIaResposta('Erro ao consultar IA. Verifique a conexão.');
+    }
+    setIaLoading(false);
+  }
+
+  // ─── PAINEL LATERAL ───────────────────────────────────────────────────────
+  const PainelLateral=()=>{
+    if(!painelOrc)return null;
+    const orc=orcamentos.find(o=>o.id===painelOrc.id)||painelOrc;
+    const [desc,setDesc]=useState('');
+    const [proxData,setProxData]=useState(orc.proximoContato||'');
+    const [salvando,setSalvando]=useState(false);
+    const dias=diasDesde(orc.criadoEm);
+    const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
+    const corFup=corFollowup(orc);
+    const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+    const {vE,vS}=extrairValores(orc);
+    const nomeExibido=currentUser?.nome?.split(' ')[0]||nomeVendedor;
+
+    async function salvarFollowup(){
+      if(!desc.trim())return;
+      setSalvando(true);
+      await registrarFollowup(orc,desc,proxData);
+      setDesc('');setSalvando(false);
+    }
+
+    // Frase de abertura contextual
+    const fraseAbertura=(()=>{
+      if(diasSemContato>=7)return`${nomeExibido}, esse cliente esfriou muito — ${diasSemContato} dias sem contato! Bora reagir ou mover para perdido?`;
+      if(!orc.followup?.length)return`${nomeExibido}, esse orçamento ainda não tem nenhum contato registrado. Me conta como foi?`;
+      if(orc.proximoContato&&corFup==='#e74c3c')return`${nomeExibido}, o prazo de contato com esse cliente venceu! O que aconteceu?`;
+      return`${nomeExibido}, como está esse cliente? Pode me contar e eu te ajudo a fechar! 💪`;
+    })();
+
+    return(
+      <div style={{position:'fixed',top:0,right:0,width:400,height:'100vh',background:'#fff',boxShadow:'-4px 0 24px rgba(0,0,0,.15)',zIndex:1000,display:'flex',flexDirection:'column',fontFamily:'sans-serif'}}>
+        {/* Header */}
+        <div style={{background:'#2c3e50',padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:14,marginBottom:4}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              <span style={{background:st.color+'33',color:st.color,border:`1px solid ${st.color}`,borderRadius:10,padding:'1px 8px',fontSize:10,fontWeight:700}}>{st.label}</span>
+              <span style={{color:'#7f8c8d',fontSize:10}}>⏱ {dias}d no pipeline</span>
+              {vE>0&&<span style={{color:'#9ae6b4',fontSize:10}}>💻 {moeda(vE)}</span>}
+              {vS>0&&<span style={{color:'#bee3f8',fontSize:10}}>🔄 {moeda(vS)}/mês</span>}
+            </div>
+          </div>
+          <button onClick={()=>{setPainelOrc(null);setIaResposta('');setIaAberta(false);}} style={{background:'none',border:'none',color:'#7f8c8d',fontSize:20,cursor:'pointer',lineHeight:1}}>×</button>
+        </div>
+
+        <div style={{flex:1,overflowY:'auto',padding:'16px'}}>
+          {/* Próximo contato */}
+          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12,border:`2px solid ${corFup}`}}>
+            <div style={{fontSize:11,fontWeight:700,color:corFup,marginBottom:6,textTransform:'uppercase'}}>📅 Próximo contato</div>
+            <input type="date" value={proxData} onChange={e=>setProxData(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:'100%',boxSizing:'border-box'}}/>
+          </div>
+
+          {/* Co-piloto IA */}
+          <div style={{background:'#1a1a2e',borderRadius:8,padding:'12px',marginBottom:12}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+              <span style={{fontSize:16}}>🤖</span>
+              <span style={{color:'#f5a623',fontWeight:700,fontSize:12}}>Co-piloto de Vendas</span>
+            </div>
+            {!iaAberta&&<div style={{color:'#a0aec0',fontSize:12,marginBottom:8,lineHeight:1.5}}>{fraseAbertura}</div>}
+            <textarea
+              value={followInput}
+              onChange={e=>setFollowInput(e.target.value)}
+              placeholder="Conta o que rolou com esse cliente..."
+              style={{width:'100%',boxSizing:'border-box',padding:'8px 10px',borderRadius:6,border:'1px solid #2d3748',background:'#2d3748',color:'#e2e8f0',fontSize:12,resize:'vertical',minHeight:70,outline:'none'}}
+            />
+            <button onClick={consultarIA} disabled={iaLoading||!followInput.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:iaLoading?'#4a5568':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {iaLoading?'⏳ Analisando...':'✨ Pedir sugestão da IA'}
+            </button>
+            {iaResposta&&(
+              <div style={{marginTop:10,background:'#2d3748',borderRadius:6,padding:'10px',color:'#e2e8f0',fontSize:12,lineHeight:1.6,whiteSpace:'pre-wrap',maxHeight:280,overflowY:'auto'}}>
+                {iaResposta}
+              </div>
+            )}
+          </div>
+
+          {/* Registrar contato */}
+          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📝 Registrar contato</div>
+            <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="O que foi feito/combinado com o cliente?"
+              style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,resize:'vertical',minHeight:60}}/>
+            <button onClick={salvarFollowup} disabled={salvando||!desc.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:salvando?'#e8eaed':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {salvando?'Salvando...':'💾 Registrar'}
+            </button>
+          </div>
+
+          {/* Histórico */}
+          {(orc.followup||[]).length>0&&(
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📋 Histórico de contatos</div>
+              {[...(orc.followup||[])].reverse().map((f,i)=>(
+                <div key={i} style={{background:'#fff',borderRadius:6,padding:'8px 10px',marginBottom:6,border:'1px solid #e8eaed',borderLeft:'3px solid #3498db'}}>
+                  <div style={{fontSize:10,color:'#7f8c8d',marginBottom:3}}>{new Date(f.data).toLocaleDateString('pt-BR')} {new Date(f.data).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} • {f.usuario}</div>
+                  <div style={{fontSize:12,color:'#2c3e50'}}>{f.descricao}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer ações */}
+        <div style={{padding:'12px 16px',borderTop:'1px solid #e8eaed',display:'flex',gap:8}}>
+          {(orc.status==='enviado'||orc.status==='negociacao')&&(
+            <button onClick={()=>abrirModalVenda(orc)} style={{flex:1,padding:'10px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              🤝 Fechar Venda
+            </button>
+          )}
+          <button onClick={()=>{setEditando(true);setOrcSel(painelOrc);setPainelOrc(null);}} style={{flex:1,padding:'10px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#4a4a4a'}}>
+            ✏️ Editar
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // ─── MODAL VENDA FECHADA ─────────────────────────────────────────────────
+  const ModalVendaFechada=()=>{
+    if(!modalVenda)return null;
+    const orc=modalVenda;
+    const {vI,vE,vS}=extrairValores(orc);
+    const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'};
+    const upDados=(k,v)=>setDadosVenda(d=>({...d,[k]:v}));
+    return(
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+        <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:520,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)',maxHeight:'90vh',overflowY:'auto'}}>
+          <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>🤝 Confirmar Venda Fechada</div>
+          <div style={{fontSize:12,color:'#7f8c8d',marginBottom:16}}>Preencha os dados de pagamento para importar ao CRM</div>
+          <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:16}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>{orc.cliente?.cnpj||''} • {orc.cliente?.email}</div>
+            <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
+              {vI>0&&<span style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#b45309'}}>🔧 {moeda(vI)}</span>}
+              {vE>0&&<span style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#276749'}}>💻 {moeda(vE)}</span>}
+              {vS>0&&<span style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#2b6cb0'}}>🔄 {moeda(vS)}/mês</span>}
+            </div>
+          </div>
+          {vI>0&&(<div style={{background:'#fff8ee',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #fde68a'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#b45309',marginBottom:8}}>🔧 Implantação — {moeda(vI)}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={lbl}>Forma</label><select style={fi} value={dadosVenda.pagamentoI} onChange={e=>{upDados('pagamentoI',e.target.value);if(e.target.value==='Pix')upDados('parcelasI',1);}}><option>Boleto</option><option>Pix</option><option value="Cartão">Cartão</option></select></div>
+              <div><label style={lbl}>Parcelas</label><select style={fi} value={dadosVenda.parcelasI} onChange={e=>upDados('parcelasI',+e.target.value)} disabled={dadosVenda.pagamentoI==='Pix'}>{[1,2,3].map(n=><option key={n} value={n}>{n}x</option>)}</select></div>
+            </div>
+          </div>)}
+          {vE>0&&(<div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #9ae6b4'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8}}>💻 Equipamento — {moeda(vE)}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={lbl}>Forma</label><select style={fi} value={dadosVenda.pagamentoE} onChange={e=>{upDados('pagamentoE',e.target.value);if(e.target.value==='Pix')upDados('parcelasE',1);}}><option>Boleto</option><option>Pix</option><option value="Cartão">Cartão</option></select></div>
+              <div><label style={lbl}>Parcelas</label><select style={fi} value={dadosVenda.parcelasE} onChange={e=>upDados('parcelasE',+e.target.value)} disabled={dadosVenda.pagamentoE==='Pix'}>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>{n}x</option>)}</select></div>
+            </div>
+          </div>)}
+          {vS>0&&(<div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',marginBottom:16,border:'1px solid #bee3f8'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',marginBottom:8}}>🔄 Sistema — {moeda(vS)}/mês</div>
+            <div><label style={lbl}>Data vencimento mensal *</label><input style={fi} type="date" value={dadosVenda.dtBoleto} onChange={e=>upDados('dtBoleto',e.target.value)}/></div>
+          </div>)}
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button onClick={()=>setModalVenda(null)} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+            <button onClick={confirmarVendaFechada} disabled={importando||(vS>0&&!dadosVenda.dtBoleto)} style={{padding:'10px 24px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+              {importando?'Importando...':'✅ Confirmar → CRM'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if(editando&&orcSel){
+    return(
+      <div>
+        <button onClick={()=>setEditando(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
+        <OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} vendedoresCad={vendedoresCad} orcEdit={orcSel} onSalvar={()=>setEditando(false)} onCancelar={()=>setEditando(false)}/>
+      </div>
+    );
+  }
+
+  if(orcSel&&!painelOrc){
+    const orc=orcamentos.find(o=>o.id===orcSel.id)||orcSel;
+    const tpl=orcTemplates.find(t=>t.id===orc.detalhes?.templateId);
+    return(
+      <div>
+        {modalVenda&&<ModalVendaFechada/>}
+        <button onClick={()=>setOrcSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Lista de orçamentos</button>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:'#4a4a4a'}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>{orc.cliente?.email} • {orc.cliente?.tel}</div>
+          </div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            <select value={orc.status||'rascunho'} onChange={e=>atualizarStatus(orc.id,e.target.value)} style={{...fi,fontWeight:700,color:COR_ORC[orc.status||'rascunho'],borderColor:COR_ORC[orc.status||'rascunho']}}>
+              {STATUS_ORC.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+            <button onClick={()=>setEditando(true)} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12}}>✏️ Editar</button>
+            <button onClick={()=>window.print()} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🖨️ Imprimir</button>
+            <button onClick={()=>{const s=encodeURIComponent('Proposta Comercial — Guion Informática');const b=encodeURIComponent(`Olá, ${orc.cliente?.nome||''}!\n\nSegue a proposta.\n\nAtenciosamente,\n${orc.detalhes?.vendedor||'Guion Informática'}`);window.open(`mailto:${orc.cliente?.email}?subject=${s}&body=${b}`);}} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>✉️ Email</button>
+            {(orc.status==='enviado'||orc.status==='negociacao')&&(
+              <button onClick={()=>abrirModalVenda(orc)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🤝 Fechar Venda</button>
+            )}
+            <button onClick={()=>remover(orc.id)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
+          </div>
+        </div>
+        <OrcamentoPreview cli={orc.cliente||{}} itens={orc.itens||[]} det={orc.detalhes||{}} template={tpl} subtotal={orc.subtotal||0}/>
+      </div>
+    );
+  }
+
+  const porStatus=STATUS_ORC.map(s=>({...s,qtd:orcamentos.filter(o=>o.status===s.id).length,total:orcamentos.filter(o=>o.status===s.id).reduce((acc,o)=>acc+(o.subtotal||0),0)}));
+
+  // ─── CARD DO KANBAN ───────────────────────────────────────────────────────
+  const CardKanban=({orc})=>{
+    const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+    const dias=diasDesde(orc.criadoEm);
+    const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
+    const corFup=corFollowup(orc);
+    const {vE,vS}=extrairValores(orc);
+    const alerta=dias>=7;
+    const alertaContato=diasSemContato>=5;
+    return(
+      <div
+        draggable
+        onDragStart={e=>{setDragId(orc.id);e.dataTransfer.effectAllowed='move';}}
+        onDragEnd={()=>{setDragId(null);setDragOver(null);}}
+        onClick={()=>{setPainelOrc(orc);setFollowInput('');setIaResposta('');setIaAberta(false);}}
+        style={{
+          background:'#fff',borderRadius:8,padding:'10px',marginBottom:8,
+          cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.08)',
+          borderLeft:`3px solid ${corFup}`,
+          opacity:dragId===orc.id?.5:1,
+          border:dragId===orc.id?'2px dashed #3498db':'none',
+          borderLeft:`3px solid ${corFup}`,
+        }}>
+        {alerta&&<div style={{background:'#fff5f5',color:'#e74c3c',fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4,marginBottom:6,display:'inline-block'}}>⚠ {dias}d sem fechar</div>}
+        <div style={{fontSize:12,fontWeight:700,color:'#2c3e50',marginBottom:4,lineHeight:1.3}}>{orc.cliente?.empresa||orc.cliente?.nome||'(sem nome)'}</div>
+        <div style={{fontSize:10,color:'#7f8c8d',marginBottom:6}}>{orc.detalhes?.vendedor||'—'} • {orc.criadoEm?new Date(orc.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+        <div style={{display:'flex',gap:4,flexWrap:'wrap',marginBottom:6}}>
+          {vE>0&&<span style={{background:'#f0fff4',color:'#276749',borderRadius:5,padding:'2px 6px',fontSize:9,fontWeight:700}}>💻 {moeda(vE)}</span>}
+          {vS>0&&<span style={{background:'#ebf8ff',color:'#2b6cb0',borderRadius:5,padding:'2px 6px',fontSize:9,fontWeight:700}}>🔄 {moeda(vS)}/mês</span>}
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:12,fontWeight:700,color:'#27ae60'}}>{moeda(orc.subtotal||0)}</span>
+          <div style={{display:'flex',alignItems:'center',gap:4}}>
+            {orc.proximoContato&&<span style={{fontSize:9,color:corFup,fontWeight:700}}>📅 {new Date(orc.proximoContato+'T12:00:00').toLocaleDateString('pt-BR')}</span>}
+            {alertaContato&&!orc.proximoContato&&<span style={{fontSize:9,color:'#e74c3c',fontWeight:700}}>🔔 {diasSemContato}d s/ contato</span>}
+          </div>
+        </div>
+        {(orc.followup||[]).length>0&&<div style={{fontSize:9,color:'#7f8c8d',marginTop:4}}>💬 {orc.followup.length} contato(s)</div>}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      {painelOrc&&<PainelLateral/>}
+      {modalVenda&&<ModalVendaFechada/>}
+
+      {/* Toolbar */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          {subAba==='lista'&&(
+            <>
+              <button onClick={()=>setSubAba('novo')} style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>+ Novo</button>
+              {/* Toggle lista/kanban */}
+              <div style={{display:'flex',border:'1px solid #dde1e7',borderRadius:6,overflow:'hidden'}}>
+                <button onClick={()=>setVisao('lista')} title="Visão lista" style={{padding:'7px 12px',border:'none',background:visao==='lista'?'#3498db':'#fff',color:visao==='lista'?'#fff':'#7f8c8d',cursor:'pointer'}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                </button>
+                <button onClick={()=>setVisao('kanban')} title="Visão Kanban" style={{padding:'7px 12px',border:'none',background:visao==='kanban'?'#3498db':'#fff',color:visao==='kanban'?'#fff':'#7f8c8d',cursor:'pointer'}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="15" rx="1"/></svg>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+          {porStatus.map(s=><div key={s.id} style={{padding:'3px 10px',borderRadius:20,background:s.color+'22',border:`1px solid ${s.color}`,fontSize:10,fontWeight:700,color:s.color}}>{s.label}: {s.qtd}</div>)}
+        </div>
+      </div>
+
+      {subAba==='novo'&&<OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} vendedoresCad={vendedoresCad} onSalvar={()=>setSubAba('lista')} onCancelar={()=>setSubAba('lista')}/>}
+
+      {subAba==='lista'&&visao==='kanban'&&(
+        <div style={{overflowX:'auto',paddingBottom:8}}>
+          <div style={{display:'flex',gap:12,minWidth:'max-content'}}>
+            {STATUS_ORC.map(st=>{
+              const cols=orcamentos.filter(o=>o.status===st.id);
+              const total=cols.reduce((s,o)=>s+(o.subtotal||0),0);
+              const isOver=dragOver===st.id;
+              return(
+                <div key={st.id} style={{width:220,flexShrink:0}}
+                  onDragOver={e=>{e.preventDefault();setDragOver(st.id);}}
+                  onDrop={()=>onDrop(st.id)}
+                  onDragLeave={()=>setDragOver(null)}>
+                  {/* Cabeçalho coluna */}
+                  <div style={{background:st.color,borderRadius:'8px 8px 0 0',padding:'10px 12px'}}>
+                    <div style={{color:'#fff',fontWeight:700,fontSize:12}}>{st.label}</div>
+                    <div style={{color:'rgba(255,255,255,.8)',fontSize:10,marginTop:2}}>{cols.length} orçamento{cols.length!==1?'s':''}</div>
+                    <div style={{color:'#fff',fontSize:13,fontWeight:700,marginTop:4}}>{moeda(total)}</div>
+                  </div>
+                  {/* Cards */}
+                  <div style={{background:isOver?'#d6eaf8':'#f0f2f5',borderRadius:'0 0 8px 8px',minHeight:120,padding:8,border:isOver?`2px dashed ${st.color}`:'2px solid transparent'}}>
+                    {cols.map(orc=><CardKanban key={orc.id} orc={orc}/>)}
+                    {cols.length===0&&<div style={{fontSize:11,color:'#bdc3c7',textAlign:'center',padding:'20px 0'}}>{isOver?'Soltar aqui':'Vazio'}</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {subAba==='lista'&&visao==='lista'&&(
+        <div>
+          {orcamentos.length===0&&(
+            <div style={{background:'#fff',borderRadius:8,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+              <div style={{fontSize:36,marginBottom:10}}>📋</div>
+              <div style={{fontWeight:700,fontSize:14,color:'#4a4a4a',marginBottom:6}}>Nenhum orçamento ainda</div>
+              <button onClick={()=>setSubAba('novo')} style={{padding:'10px 24px',borderRadius:7,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>+ Novo orçamento</button>
+            </div>
+          )}
+          {[...orcamentos].sort((a,b)=>new Date(b.atualizadoEm||b.criadoEm)-new Date(a.atualizadoEm||a.criadoEm)).map(orc=>{
+            const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+            const corFup=corFollowup(orc);
+            const dias=diasDesde(orc.criadoEm);
+            const {vE,vS}=extrairValores(orc);
+            return(
+              <div key={orc.id} style={{background:'#fff',borderRadius:8,padding:'13px 16px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${corFup}`}}>
+                <div style={{flex:1,minWidth:0,cursor:'pointer'}} onClick={()=>{setPainelOrc(orc);setFollowInput('');setIaResposta('');setIaAberta(false);}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#4a4a4a',marginBottom:3}}>{orc.cliente?.empresa||orc.cliente?.nome||'(sem nome)'}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d',marginBottom:3}}>{orc.detalhes?.vendedor||'—'} • {orc.criadoEm?new Date(orc.criadoEm).toLocaleDateString('pt-BR'):''} • {dias}d no pipeline</div>
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                    {vE>0&&<span style={{background:'#f0fff4',color:'#276749',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:700}}>💻 {moeda(vE)}</span>}
+                    {vS>0&&<span style={{background:'#ebf8ff',color:'#2b6cb0',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:700}}>🔄 {moeda(vS)}/mês</span>}
+                  </div>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,flexShrink:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:'#27ae60'}}>{moeda(orc.subtotal||0)}</div>
+                  <span style={{background:st.color+'22',color:st.color,padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{st.label}</span>
+                  {orc.proximoContato&&<span style={{fontSize:10,color:corFup,fontWeight:700}}>📅 {new Date(orc.proximoContato+'T12:00:00').toLocaleDateString('pt-BR')}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
   // Extrai valores do orçamento pelos tipos de item
   function extrairValores(orc){
@@ -3779,6 +4268,174 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
 
 // ─── FIM MÓDULO ASAAS ────────────────────────────────────────────────────────
 
+// ─── WIDGET FINANCEIRO IA FLUTUANTE ──────────────────────────────────────────
+function WidgetFinanceiro({currentUser,clientes,todos}){
+  const [aberto,setAberto]=useState(false);
+  const [aba,setAba]=useState('resumo');
+  const [iaLoading,setIaLoading]=useState(false);
+  const [mensagemGerada,setMensagemGerada]=useState('');
+  const [clienteMsg,setClienteMsg]=useState(null);
+  const nomeFinanceiro=currentUser?.nome?.split(' ')[0]||'Financeiro';
+
+  const vencidos=clientes.filter(c=>c.asaas_status==='OVERDUE');
+  const pendentePix=clientes.filter(c=>c.asaas_link_impl||c.asaas_link_equip).filter(c=>c.asaas_status==='PENDING');
+  const semFaturamento=clientes.filter(c=>!c.asaas_id&&!c._base&&c.status==='Aguardando');
+  const totalAberto=vencidos.reduce((s,c)=>s+(c.vS||0),0);
+  const temAlertas=vencidos.length>0||pendentePix.length>0||semFaturamento.length>0;
+
+  // Cor do ícone
+  const corWidget=vencidos.length>0?'#e74c3c':temAlertas?'#f5a623':'#27ae60';
+
+  async function gerarMensagem(cliente){
+    setClienteMsg(cliente);setIaLoading(true);setMensagemGerada('');
+    const diasAtraso=cliente.asaas_status==='OVERDUE'?'em atraso':
+      cliente.asaas_link_impl&&!cliente.asaas_status_impl==='RECEIVED'?'link Pix não pago':'pendente';
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-6',
+          max_tokens:600,
+          system:`Você é ${nomeFinanceiro}, do financeiro da Guion Informática. 
+Escreva mensagens de cobrança profissionais, simpáticas e eficazes para WhatsApp.
+Tom: cordial, não agressivo, mas direto. Máximo 4 linhas. Use emojis com moderação.`,
+          messages:[{role:'user',content:`Gere uma mensagem de WhatsApp para ${cliente.contato||cliente.nome}, do financeiro da empresa ${cliente.nome}.
+Situação: boleto ${diasAtraso}. Valor: ${moeda(cliente.vS||0)}/mês.
+Meu nome é ${nomeFinanceiro}. Seja simpático mas eficaz em cobrar.`}],
+        }),
+      });
+      const data=await resp.json();
+      setMensagemGerada(data.content?.[0]?.text||'');
+    }catch(e){setMensagemGerada('Erro ao gerar mensagem.');}
+    setIaLoading(false);
+  }
+
+  return(
+    <>
+      {/* Ícone flutuante */}
+      <div onClick={()=>setAberto(a=>!a)} style={{
+        position:'fixed',bottom:24,right:24,width:52,height:52,borderRadius:'50%',
+        background:corWidget,boxShadow:'0 4px 16px rgba(0,0,0,.25)',
+        display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+        zIndex:998,transition:'all .2s',
+        animation:temAlertas&&!aberto?'pulse 2s infinite':'none',
+      }}>
+        <span style={{fontSize:22}}>💰</span>
+        {temAlertas&&!aberto&&(
+          <div style={{position:'absolute',top:-4,right:-4,background:'#e74c3c',color:'#fff',borderRadius:'50%',width:18,height:18,fontSize:10,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            {vencidos.length+semFaturamento.length}
+          </div>
+        )}
+      </div>
+
+      {/* Painel */}
+      {aberto&&(
+        <div style={{position:'fixed',bottom:88,right:24,width:360,maxHeight:'70vh',background:'#fff',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,.2)',zIndex:997,display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'sans-serif'}}>
+          {/* Header */}
+          <div style={{background:'#2c3e50',padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <div style={{color:'#fff',fontWeight:700,fontSize:13}}>💰 Assistente Financeiro</div>
+              <div style={{color:'#7f8c8d',fontSize:11,marginTop:2}}>Oi {nomeFinanceiro}! Aqui seu resumo.</div>
+            </div>
+            <button onClick={()=>setAberto(false)} style={{background:'none',border:'none',color:'#7f8c8d',fontSize:18,cursor:'pointer'}}>×</button>
+          </div>
+
+          {/* Abas */}
+          <div style={{display:'flex',borderBottom:'1px solid #e8eaed'}}>
+            {[['resumo','📊 Resumo'],['vencidos',`🔴 Vencidos (${vencidos.length})`],['pendentes',`🟡 Pix (${pendentePix.length})`],['faturar',`⏳ Faturar (${semFaturamento.length})`]].map(([id,l])=>(
+              <button key={id} onClick={()=>{setAba(id);setMensagemGerada('');setClienteMsg(null);}} style={{flex:1,padding:'8px 4px',border:'none',borderBottom:aba===id?'2px solid #f5a623':'2px solid transparent',background:'transparent',cursor:'pointer',fontSize:10,fontWeight:aba===id?700:400,color:aba===id?'#f5a623':'#7f8c8d'}}>{l}</button>
+            ))}
+          </div>
+
+          <div style={{flex:1,overflowY:'auto',padding:'12px'}}>
+            {/* RESUMO */}
+            {aba==='resumo'&&(
+              <div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+                  {[
+                    {l:'Vencidos',v:vencidos.length,c:'#e74c3c',sub:moeda(totalAberto)},
+                    {l:'Pix pendente',v:pendentePix.length,c:'#f5a623',sub:'links não pagos'},
+                    {l:'Sem faturamento',v:semFaturamento.length,c:'#3498db',sub:'aguardando'},
+                    {l:'Clientes Asaas',v:clientes.filter(c=>c.asaas_id).length,c:'#27ae60',sub:'ativos'},
+                  ].map((card,i)=>(
+                    <div key={i} style={{background:'#f8f9fa',borderRadius:8,padding:'10px',borderTop:`3px solid ${card.c}`}}>
+                      <div style={{fontSize:9,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700}}>{card.l}</div>
+                      <div style={{fontSize:20,fontWeight:700,color:card.c}}>{card.v}</div>
+                      <div style={{fontSize:10,color:'#7f8c8d'}}>{card.sub}</div>
+                    </div>
+                  ))}
+                </div>
+                {vencidos.length>0&&<div style={{background:'#fff5f5',borderRadius:8,padding:'10px',border:'1px solid #feb2b2',fontSize:12,color:'#c53030'}}>
+                  ⚠️ {nomeFinanceiro}, você tem {vencidos.length} cliente(s) com boleto vencido totalizando {moeda(totalAberto)}. Clique em "Vencidos" para agir!
+                </div>}
+                {vencidos.length===0&&semFaturamento.length===0&&<div style={{background:'#f0fff4',borderRadius:8,padding:'10px',border:'1px solid #9ae6b4',fontSize:12,color:'#276749'}}>
+                  ✅ {nomeFinanceiro}, tudo em dia! Nenhuma ação urgente necessária.
+                </div>}
+              </div>
+            )}
+
+            {/* VENCIDOS */}
+            {aba==='vencidos'&&(
+              <div>
+                {vencidos.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum vencido!</div>}
+                {vencidos.map(c=>(
+                  <div key={c.id} style={{background:'#fff5f5',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #feb2b2'}}>
+                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                    <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>{moeda(c.vS||0)}/mês • {c.tel||'sem telefone'}</div>
+                    {clienteMsg?.id===c.id&&mensagemGerada&&(
+                      <div style={{background:'#fff',borderRadius:6,padding:'8px',marginBottom:6,fontSize:11,color:'#2c3e50',border:'1px solid #e8eaed',whiteSpace:'pre-wrap'}}>{mensagemGerada}</div>
+                    )}
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                      <button onClick={()=>gerarMensagem(c)} disabled={iaLoading&&clienteMsg?.id===c.id} style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10}}>
+                        {iaLoading&&clienteMsg?.id===c.id?'⏳':'🤖 Gerar msg'}
+                      </button>
+                      {mensagemGerada&&clienteMsg?.id===c.id&&(
+                        <>
+                          <button onClick={()=>navigator.clipboard.writeText(mensagemGerada)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10}}>📋 Copiar</button>
+                          {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent(mensagemGerada)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10,textDecoration:'none'}}>📲 WhatsApp</a>}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* PIX PENDENTE */}
+            {aba==='pendentes'&&(
+              <div>
+                {pendentePix.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum Pix pendente!</div>}
+                {pendentePix.map(c=>(
+                  <div key={c.id} style={{background:'#fff8ee',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #fde68a'}}>
+                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                    <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>Link enviado — aguardando pagamento</div>
+                    {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent('Olá! Passando para lembrar do link de pagamento que enviamos. Posso te ajudar com algo? 😊')}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10,textDecoration:'none',display:'inline-block'}}>📲 Lembrar via WhatsApp</a>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* SEM FATURAMENTO */}
+            {aba==='faturar'&&(
+              <div>
+                {semFaturamento.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Todos faturados!</div>}
+                {semFaturamento.map(c=>(
+                  <div key={c.id} style={{background:'#ebf8ff',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #bee3f8'}}>
+                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                    <div style={{fontSize:11,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.total)} • aguardando faturamento</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <style>{`@keyframes pulse{0%,100%{box-shadow:0 4px 16px rgba(0,0,0,.25)}50%{box-shadow:0 4px 24px rgba(231,76,60,.5)}}`}</style>
+    </>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
   const [authUser,setAuthUser]=useState(null);
@@ -4227,6 +4884,7 @@ export default function App(){
             orcamentos={orcamentos} orcServicos={orcServicos} orcFormas={orcFormas}
             orcTemplates={orcTemplates} equipamentosCad={equipamentosCad}
             vendedoresCad={vendedoresCad}
+            currentUser={userProfile}
             onImportarCRM={dados=>{setDadosImportados(dados);setPage('novo');}}
           />}
 
@@ -4269,6 +4927,11 @@ export default function App(){
 
         </div>
       </div>
+
+      {/* WIDGET FINANCEIRO IA FLUTUANTE */}
+      {(perfil==='financeiro'||perfil==='admin')&&(
+        <WidgetFinanceiro currentUser={userProfile} clientes={clientes} todos={todos}/>
+      )}
     </div>
   );
 }
