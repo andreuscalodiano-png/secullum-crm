@@ -1571,7 +1571,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
           <span>💰 Financeiro Asaas</span>
           {c.asaas_id&&<span style={{fontSize:10,color:'#7f8c8d',fontWeight:400}}>ID: {c.asaas_id}</span>}
         </div>
-        <PainelAsaasCliente cliente={f} perfil={perfil}/>
+        <PainelAsaasCliente cliente={f} perfil={perfil} onUpdate={async u=>{await onUpdate(u);setF(u);}}/>
 
         {/* Botão Gerar Faturamento — só financeiro/admin e sem asaas_id ainda */}
         {(perfil==='financeiro'||perfil==='admin')&&!c.asaas_id&&(
@@ -3885,19 +3885,84 @@ function AsaasBadge({status,size='normal'}){
 }
 
 // Painel financeiro Asaas no detalhe do cliente
-function PainelAsaasCliente({cliente,perfil}){
-  // Simula dados Asaas (quando API Key disponível, substituir pelas chamadas reais)
-  const asaasId=cliente.asaas_id;
-  const faturado=!!asaasId;
-  const statusAsaas=cliente.asaas_status||'SEM_FATURAMENTO';
-  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+function PainelAsaasCliente({cliente,perfil,onUpdate}){
+  const [gerandoImpl,setGerandoImpl]=useState(false);
+  const [gerandoEquip,setGerandoEquip]=useState(false);
+  const [erro,setErro]=useState('');
 
-  if(!faturado){
+  async function gerarNovoLinkImpl(){
+    setGerandoImpl(true);setErro('');
+    try{
+      let asaasId=cliente.asaas_id;
+      if(!asaasId){
+        const ac=await asaasCriarOuBuscarCliente(cliente);
+        asaasId=ac.id;
+      }
+      const billingType=cliente.pagamentoI==='Pix'?'PIX':'CREDIT_CARD';
+      const link=await asaasCriarLinkPagamento(asaasId,cliente.vI,billingType,`Implantação — ${cliente.nome}`);
+      const url=link.url||link.invoiceUrl||link.paymentLink||'';
+      await onUpdate({...cliente,asaas_id:asaasId,asaas_link_impl:url,asaas_link_impl_id:link.id||'',asaas_status_impl:'PENDING'});
+    }catch(e){setErro('Erro ao gerar link: '+e.message);}
+    setGerandoImpl(false);
+  }
+
+  async function gerarNovoLinkEquip(){
+    setGerandoEquip(true);setErro('');
+    try{
+      let asaasId=cliente.asaas_id;
+      if(!asaasId){
+        const ac=await asaasCriarOuBuscarCliente(cliente);
+        asaasId=ac.id;
+      }
+      const billingType=cliente.pagamentoE==='Pix'?'PIX':'CREDIT_CARD';
+      const link=await asaasCriarLinkPagamento(asaasId,cliente.vE,billingType,`Equipamento — ${cliente.nome}`);
+      const url=link.url||link.invoiceUrl||link.paymentLink||'';
+      await onUpdate({...cliente,asaas_id:asaasId,asaas_link_equip:url,asaas_link_equip_id:link.id||'',asaas_status_equip:'PENDING'});
+    }catch(e){setErro('Erro ao gerar link: '+e.message);}
+    setGerandoEquip(false);
+  }
+
+  function LinkBox({label,link,tipo,status,waMsg,onGerarNovo,gerando,cor,corBg}){
+    const temLink=!!link;
     return(
-      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',border:'2px dashed #dde1e7',textAlign:'center'}}>
-        <div style={{fontSize:20,marginBottom:6}}>🔵</div>
-        <div style={{fontWeight:700,fontSize:12,color:'#7f8c8d',marginBottom:4}}>Sem faturamento no Asaas</div>
-        <div style={{fontSize:11,color:'#bdc3c7'}}>Aguardando geração de cobrança pelo financeiro</div>
+      <div style={{padding:'10px',background:corBg,borderRadius:6,border:`1px solid ${cor}44`,marginBottom:8}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+          <span style={{fontSize:10,color:cor,fontWeight:700,textTransform:'uppercase'}}>{label}</span>
+          <AsaasBadge status={status||'PENDING'} size="small"/>
+        </div>
+        {temLink?(
+          <>
+            {/* QR Code visual via API pública */}
+            {tipo==='Pix'&&(
+              <div style={{textAlign:'center',marginBottom:8}}>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(link)}`}
+                  alt="QR Code Pix"
+                  style={{borderRadius:6,border:'1px solid #dde1e7',padding:4,background:'#fff'}}
+                />
+              </div>
+            )}
+            <div style={{background:'#fff',borderRadius:5,padding:'6px 8px',fontSize:10,color:'#4a4a4a',wordBreak:'break-all',marginBottom:6,border:'1px solid #e8eaed',maxHeight:40,overflow:'hidden',textOverflow:'ellipsis'}}>
+              {link}
+            </div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              <button onClick={()=>navigator.clipboard.writeText(link)} style={{padding:'5px 10px',borderRadius:5,border:`1px solid ${cor}`,background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:cor}}>📋 Copiar</button>
+              <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent(waMsg+' '+link)}`} target="_blank" rel="noopener noreferrer" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
+              <button onClick={onGerarNovo} disabled={gerando} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #7f8c8d',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#7f8c8d'}}>
+                {gerando?'⏳':'🔄 Novo link'}
+              </button>
+            </div>
+          </>
+        ):(
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:11,color:'#7f8c8d'}}>{tipo==='Boleto'?'📄 Financeiro processa':'Sem link gerado'}</span>
+            {tipo!=='Boleto'&&(
+              <button onClick={onGerarNovo} disabled={gerando} style={{padding:'5px 12px',borderRadius:5,border:'none',background:cor,color:'#fff',cursor:'pointer',fontSize:10,fontWeight:700}}>
+                {gerando?'⏳ Gerando...':'⚡ Gerar link'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -3905,53 +3970,58 @@ function PainelAsaasCliente({cliente,perfil}){
   return(
     <div style={{background:'#fff',borderRadius:8,border:'1px solid #e8eaed',overflow:'hidden'}}>
       <div style={{background:'#f8f9fa',padding:'10px 14px',borderBottom:'1px solid #e8eaed',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <span style={{fontWeight:700,fontSize:11,color:'#2c3e50',textTransform:'uppercase'}}>💰 Asaas — Status Financeiro</span>
-        <AsaasBadge status={statusAsaas}/>
+        <span style={{fontWeight:700,fontSize:11,color:'#2c3e50',textTransform:'uppercase'}}>💰 Pagamentos</span>
+        {cliente.asaas_id&&<span style={{fontSize:9,color:'#bdc3c7'}}>Asaas ID: {cliente.asaas_id}</span>}
       </div>
       <div style={{padding:'12px 14px'}}>
+        {erro&&<div style={{background:'#fff5f5',borderRadius:6,padding:'8px',marginBottom:8,fontSize:11,color:'#e74c3c'}}>{erro}</div>}
+
         {/* Implantação */}
-        {(cliente.vI>0)&&(
-          <div style={{marginBottom:10,padding:'8px 10px',background:'#fff8ee',borderRadius:6,border:'1px solid #fde68a'}}>
-            <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔧 Implantação — {moeda(cliente.vI)}</div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:11,color:'#7f8c8d'}}>{cliente.pagamentoI||'Boleto'} • {cliente.parcelasI||1}x</span>
-              <AsaasBadge status={cliente.asaas_status_impl||'PENDING'} size="small"/>
-            </div>
-            {(cliente.pagamentoI==='Pix'||cliente.pagamentoI==='Cartão')&&cliente.asaas_link_impl&&(
-              <div style={{marginTop:6,display:'flex',gap:6}}>
-                <button onClick={()=>navigator.clipboard.writeText(cliente.asaas_link_impl)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #fde68a',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#b45309'}}>📋 Copiar link</button>
-                <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent('Olá! Segue o link para pagamento da implantação: '+cliente.asaas_link_impl)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
-              </div>
-            )}
-          </div>
+        {cliente.vI>0&&(
+          <LinkBox
+            label={`🔧 Implantação — ${moeda(cliente.vI)} • ${cliente.parcelasI||1}x`}
+            link={cliente.asaas_link_impl}
+            tipo={cliente.pagamentoI||'Boleto'}
+            status={cliente.asaas_status_impl}
+            waMsg="Olá! Segue o link para pagamento da implantação:"
+            onGerarNovo={gerarNovoLinkImpl}
+            gerando={gerandoImpl}
+            cor="#b45309"
+            corBg="#fff8ee"
+          />
         )}
+
         {/* Equipamento */}
-        {(cliente.vE>0)&&(
-          <div style={{marginBottom:10,padding:'8px 10px',background:'#f0fff4',borderRadius:6,border:'1px solid #9ae6b4'}}>
-            <div style={{fontSize:10,color:'#276749',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>💻 Equipamento — {moeda(cliente.vE)}</div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:11,color:'#7f8c8d'}}>{cliente.pagamentoE||'Boleto'} • {cliente.parcelasE||1}x</span>
-              <AsaasBadge status={cliente.asaas_status_equip||'PENDING'} size="small"/>
+        {cliente.vE>0&&(
+          <LinkBox
+            label={`💻 Equipamento — ${moeda(cliente.vE)} • ${cliente.parcelasE||1}x`}
+            link={cliente.asaas_link_equip}
+            tipo={cliente.pagamentoE||'Boleto'}
+            status={cliente.asaas_status_equip}
+            waMsg="Olá! Segue o link para pagamento do equipamento:"
+            onGerarNovo={gerarNovoLinkEquip}
+            gerando={gerandoEquip}
+            cor="#276749"
+            corBg="#f0fff4"
+          />
+        )}
+
+        {/* Sistema */}
+        {cliente.vS>0&&(
+          <div style={{padding:'10px',background:'#ebf8ff',borderRadius:6,border:'1px solid #bee3f844'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <span style={{fontSize:10,color:'#2b6cb0',fontWeight:700,textTransform:'uppercase'}}>🔄 Sistema — {moeda(cliente.vS)}/mês</span>
+              <AsaasBadge status={cliente.asaas_status_sistema||'SEM_FATURAMENTO'} size="small"/>
             </div>
-            {(cliente.pagamentoE==='Pix'||cliente.pagamentoE==='Cartão')&&cliente.asaas_link_equip&&(
-              <div style={{marginTop:6,display:'flex',gap:6}}>
-                <button onClick={()=>navigator.clipboard.writeText(cliente.asaas_link_equip)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #9ae6b4',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#276749'}}>📋 Copiar link</button>
-                <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent('Olá! Segue o link para pagamento do equipamento: '+cliente.asaas_link_equip)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
-              </div>
-            )}
+            <div style={{fontSize:11,color:'#7f8c8d'}}>
+              {cliente.asaas_id?`Vence dia ${cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—'} todo mês`:'📄 Financeiro processa ao gerar faturamento'}
+            </div>
+            {cliente.asaas_ultimo_pagamento&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:2}}>Último pag.: {new Date(cliente.asaas_ultimo_pagamento).toLocaleDateString('pt-BR')}</div>}
           </div>
         )}
-        {/* Sistema */}
-        {(cliente.vS>0)&&(
-          <div style={{padding:'8px 10px',background:'#ebf8ff',borderRadius:6,border:'1px solid #bee3f8'}}>
-            <div style={{fontSize:10,color:'#2b6cb0',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔄 Sistema SaaS — {moeda(cliente.vS)}/mês</div>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <span style={{fontSize:11,color:'#7f8c8d'}}>Vence dia {cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—'} todo mês</span>
-              <AsaasBadge status={cliente.asaas_status_sistema||'PENDING'} size="small"/>
-            </div>
-            {cliente.asaas_ultimo_pagamento&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>Último pag.: {new Date(cliente.asaas_ultimo_pagamento).toLocaleDateString('pt-BR')}</div>}
-            {cliente.asaas_proximo_vencimento&&<div style={{fontSize:10,color:'#2b6cb0',marginTop:2,fontWeight:600}}>Próximo: {new Date(cliente.asaas_proximo_vencimento).toLocaleDateString('pt-BR')}</div>}
-          </div>
+
+        {!cliente.vI&&!cliente.vE&&!cliente.vS&&(
+          <div style={{textAlign:'center',padding:'16px',color:'#bdc3c7',fontSize:12}}>Nenhum valor cadastrado</div>
         )}
       </div>
     </div>
@@ -4851,7 +4921,52 @@ export default function App(){
 
           {/* NOVO */}
           {page==='novo'&&<NovoForm
-            onSave={async d=>{await salvarCliente(d);setDadosImportados(null);setPage('clientes');}}
+            onSave={async d=>{
+              // 1. Salva o cliente no Firestore
+              const ref=doc(collection(db,'clientes'));
+              const novoId=ref.id;
+              const dadosSalvos={...d,id:novoId};
+              await setDoc(ref,dadosSalvos);
+              // 2. Gera links Pix/Cartão no Asaas se necessário
+              let dadosAsaas={};
+              const precisaAsaas=(d.pagamentoI==='Pix'||d.pagamentoI==='Cartão')&&d.vI>0
+                ||(d.pagamentoE==='Pix'||d.pagamentoE==='Cartão')&&d.vE>0;
+              if(precisaAsaas){
+                try{
+                  const asaasCliente=await asaasCriarOuBuscarCliente(d);
+                  dadosAsaas.asaas_id=asaasCliente.id;
+                  // Link implantação Pix/Cartão
+                  if((d.pagamentoI==='Pix'||d.pagamentoI==='Cartão')&&d.vI>0){
+                    const billingType=d.pagamentoI==='Pix'?'PIX':'CREDIT_CARD';
+                    const link=await asaasCriarLinkPagamento(asaasCliente.id,d.vI,billingType,`Implantação — ${d.nome}`);
+                    dadosAsaas.asaas_link_impl=link.url||link.invoiceUrl||link.paymentLink||'';
+                    dadosAsaas.asaas_link_impl_id=link.id||'';
+                    dadosAsaas.asaas_status_impl='PENDING';
+                    dadosAsaas.asaas_link_impl_tipo=d.pagamentoI;
+                  }
+                  // Link equipamento Pix/Cartão
+                  if((d.pagamentoE==='Pix'||d.pagamentoE==='Cartão')&&d.vE>0){
+                    const billingType=d.pagamentoE==='Pix'?'PIX':'CREDIT_CARD';
+                    const link=await asaasCriarLinkPagamento(asaasCliente.id,d.vE,billingType,`Equipamento — ${d.nome}`);
+                    dadosAsaas.asaas_link_equip=link.url||link.invoiceUrl||link.paymentLink||'';
+                    dadosAsaas.asaas_link_equip_id=link.id||'';
+                    dadosAsaas.asaas_status_equip='PENDING';
+                    dadosAsaas.asaas_link_equip_tipo=d.pagamentoE;
+                  }
+                  // Atualiza Firestore com dados do Asaas
+                  if(Object.keys(dadosAsaas).length>0){
+                    await setDoc(ref,dadosAsaas,{merge:true});
+                  }
+                }catch(err){
+                  console.error('Erro ao gerar link Asaas:',err);
+                }
+              }
+              // 3. Vai para o detalhe do cliente (não fecha para lista)
+              const clienteCompleto={...dadosSalvos,...dadosAsaas};
+              setDadosImportados(null);
+              setClienteSel(clienteCompleto);
+              setPage('clientes');
+            }}
             onCancel={()=>{setDadosImportados(null);setPage('clientes');}}
             vendedoresCad={vendedoresCad}
             equipamentosCad={equipamentosCad}
