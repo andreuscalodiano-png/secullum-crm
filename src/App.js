@@ -4527,17 +4527,98 @@ function ModalConfirmacaoFinanceira({tipo,cliente,onConfirmar,onCancelar}){
 function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
   const [subAba,setSubAba]=useState('dashboard');
   const [filtroStatus,setFiltroStatus]=useState('Todos');
+  // Dados em tempo real via API Asaas
+  const [dadosApi,setDadosApi]=useState(null); // {recebido,pendente,vencido,mrr,totalClientes}
+  const [cobrancasApi,setCobrancasApi]=useState([]); // lista de pagamentos do Asaas
+  const [loadingApi,setLoadingApi]=useState(false);
+  const [erroApi,setErroApi]=useState('');
+  const [ultimaAtualizacao,setUltimaAtualizacao]=useState(null);
 
-  // Clientes com Asaas vinculado (novos)
-  const comAsaas=clientes.filter(c=>c.asaas_id);
-  const semAsaas=clientes.filter(c=>!c.asaas_id&&!c._base);
-  const emDia=comAsaas.filter(c=>c.asaas_status==='RECEIVED'||c.asaas_status==='CONFIRMED');
-  const pendentes=comAsaas.filter(c=>c.asaas_status==='PENDING');
-  const vencidos=comAsaas.filter(c=>c.asaas_status==='OVERDUE');
-  const cancelados=comAsaas.filter(c=>c.asaas_status==='CANCELED');
-  const mrr=emDia.reduce((s,c)=>s+(c.vS||0),0)+pendentes.reduce((s,c)=>s+(c.vS||0),0);
+  // ── FIX: Status do Firestore unificado por cliente ──────────────────────────
+  // O webhook atualiza asaas_status_sistema, asaas_status_equip, asaas_status_impl
+  // Precisamos derivar o status "real" olhando todos os campos, não só asaas_status
+  function getStatusReal(c){
+    const statuses=[
+      c.asaas_status_sistema,
+      c.asaas_status_equip,
+      c.asaas_status_impl,
+      c.asaas_status,
+    ].filter(Boolean);
+    if(!statuses.length) return c.asaas_id ? 'PENDING' : '';
+    if(statuses.includes('OVERDUE')) return 'OVERDUE';
+    if(statuses.includes('PENDING')) return 'PENDING';
+    if(statuses.some(s=>s==='RECEIVED'||s==='CONFIRMED')) return 'RECEIVED';
+    if(statuses.includes('CANCELED')) return 'CANCELED';
+    return statuses[0];
+  }
+
+  const comAsaas=clientes.filter(c=>c.asaas_id&&!c._base);
+  const semAsaas=clientes.filter(c=>!c.asaas_id&&!c._base&&(parseFloat(c.vI)>0||parseFloat(c.vE)>0||parseFloat(c.vS)>0));
+
+  // FIX: usa getStatusReal em vez de asaas_status direto
+  const emDia=comAsaas.filter(c=>{const s=getStatusReal(c);return s==='RECEIVED'||s==='CONFIRMED';});
+  const pendentes=comAsaas.filter(c=>getStatusReal(c)==='PENDING');
+  const vencidos=comAsaas.filter(c=>getStatusReal(c)==='OVERDUE');
+  const cancelados=comAsaas.filter(c=>getStatusReal(c)==='CANCELED');
+
+  // MRR = soma vS de quem tem sistema ativo (em dia ou pendente)
+  const mrr=comAsaas.filter(c=>{const s=getStatusReal(c);return s==='RECEIVED'||s==='CONFIRMED'||s==='PENDING';}).reduce((s,c)=>s+(c.vS||0),0);
   const recebidoMes=emDia.reduce((s,c)=>s+(c.vS||0),0);
   const inadimplencia=vencidos.reduce((s,c)=>s+(c.vS||0),0);
+
+  // ── Busca dados em tempo real da API Asaas ──────────────────────────────────
+  async function buscarDadosAsaas(){
+    setLoadingApi(true);setErroApi('');
+    try{
+      // 1. Buscar pagamentos recentes (último mês)
+      const hoje=new Date();
+      const inicio=new Date(hoje.getFullYear(),hoje.getMonth(),1);
+      const fmtDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      
+      const [respPag,respSub,respVenc]=await Promise.all([
+        // Pagamentos confirmados este mês
+        chamarProxy('/payments?status=CONFIRMED&paymentDate[ge]='+fmtDate(inicio)+'&limit=100','GET'),
+        // Assinaturas ativas
+        chamarProxy('/subscriptions?status=ACTIVE&limit=100','GET'),
+        // Cobranças vencidas
+        chamarProxy('/payments?status=OVERDUE&limit=100','GET'),
+      ]);
+
+      const pagamentos=respPag?.data||[];
+      const assinaturas=respSub?.data||[];
+      const cobrancasVencidas=respVenc?.data||[];
+
+      const recebidoApiMes=pagamentos.reduce((s,p)=>s+(p.value||0),0);
+      const mrrApi=assinaturas.reduce((s,a)=>s+(a.value||0),0);
+      const totalVencido=cobrancasVencidas.reduce((s,p)=>s+(p.value||0),0);
+
+      setDadosApi({
+        recebido:recebidoApiMes,
+        mrr:mrrApi,
+        vencido:totalVencido,
+        totalPagamentos:pagamentos.length,
+        totalAssinaturas:assinaturas.length,
+        totalVencidos:cobrancasVencidas.length,
+      });
+
+      // Cobranças recentes para tabela
+      const todasCobrancas=[...pagamentos,...cobrancasVencidas].slice(0,50);
+      setCobrancasApi(todasCobrancas);
+      setUltimaAtualizacao(new Date());
+    }catch(e){
+      setErroApi('Erro ao buscar dados do Asaas: '+e.message);
+      console.error('AsaasView API error:',e);
+    }
+    setLoadingApi(false);
+  }
+
+  // Busca ao montar e a cada 5 minutos
+  useEffect(()=>{
+    buscarDadosAsaas();
+    const interval=setInterval(buscarDadosAsaas,5*60*1000);
+    return()=>clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   const listaFiltrada=()=>{
     if(filtroStatus==='OVERDUE')return vencidos;
@@ -4567,12 +4648,33 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
       {/* DASHBOARD */}
       {subAba==='dashboard'&&(
         <div>
-          {/* Cards de topo */}
+          {/* Barra de status da API */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,padding:'6px 12px',background:'#f8f9fa',borderRadius:6,border:'1px solid #e8eaed'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{width:7,height:7,borderRadius:'50%',background:loadingApi?'#f5a623':erroApi?'#e74c3c':'#27ae60',animation:loadingApi?'pulse 1s infinite':''}}/>
+              <span style={{fontSize:10,color:'#7f8c8d',fontWeight:600}}>
+                {loadingApi?'Sincronizando com Asaas...'
+                  :erroApi?'Erro na API — usando dados locais'
+                  :ultimaAtualizacao?`Atualizado ${ultimaAtualizacao.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`
+                  :'Fonte: Firestore (tempo real)'}
+              </span>
+            </div>
+            <button onClick={buscarDadosAsaas} disabled={loadingApi} style={{padding:'3px 10px',borderRadius:4,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#3498db',fontWeight:700}}>
+              {loadingApi?'..':'🔄 Atualizar'}
+            </button>
+          </div>
+
+          {erroApi&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:11,color:'#c53030'}}>{erroApi}</div>}
+
+          {/* Cards — API tem prioridade sobre Firestore */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
             <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #27ae60'}}>
               <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>💚 Recebido este mês</div>
-              <div style={{fontSize:22,fontWeight:700,color:'#27ae60'}}>{moeda(recebidoMes)}</div>
-              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{emDia.length} assinaturas em dia</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#27ae60'}}>{moeda(dadosApi?dadosApi.recebido:recebidoMes)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>
+                {dadosApi?`${dadosApi.totalPagamentos} pagamentos confirmados`:`${emDia.length} assinaturas em dia`}
+              </div>
+              {dadosApi&&<div style={{fontSize:9,color:'#27ae60',marginTop:2}}>● via API Asaas</div>}
             </div>
             <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #f5a623'}}>
               <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>⏳ Pendente</div>
@@ -4581,26 +4683,35 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
             </div>
             <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #e74c3c'}}>
               <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>🔴 Inadimplentes</div>
-              <div style={{fontSize:22,fontWeight:700,color:'#e74c3c'}}>{moeda(inadimplencia)}</div>
-              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{vencidos.length} em atraso</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#e74c3c'}}>{moeda(dadosApi?dadosApi.vencido:inadimplencia)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>
+                {dadosApi?`${dadosApi.totalVencidos} cobranças vencidas`:`${vencidos.length} em atraso`}
+              </div>
+              {dadosApi&&<div style={{fontSize:9,color:'#e74c3c',marginTop:2}}>● via API Asaas</div>}
             </div>
             <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #3498db'}}>
               <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>📈 MRR total</div>
-              <div style={{fontSize:22,fontWeight:700,color:'#3498db'}}>{moeda(mrr)}</div>
-              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{comAsaas.length} assinaturas ativas</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#3498db'}}>{moeda(dadosApi?dadosApi.mrr:mrr)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>
+                {dadosApi?`${dadosApi.totalAssinaturas} assinaturas ativas`:`${comAsaas.length} vinculados ao Asaas`}
+              </div>
+              {dadosApi&&<div style={{fontSize:9,color:'#3498db',marginTop:2}}>● via API Asaas</div>}
             </div>
           </div>
 
-          {/* Gráfico de barras MRR (visual) */}
+          {/* Distribuição — baseada no Firestore (tempo real via onSnapshot) */}
           <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:16}}>
-            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Distribuição de assinaturas</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Distribuição de clientes</div>
+              <div style={{fontSize:9,color:'#27ae60',fontWeight:700}}>● Firestore tempo real</div>
+            </div>
             <div style={{display:'flex',gap:6,alignItems:'flex-end',height:80}}>
               {[
                 {l:'Em dia',v:emDia.length,c:'#27ae60'},
                 {l:'Pendente',v:pendentes.length,c:'#f5a623'},
                 {l:'Vencido',v:vencidos.length,c:'#e74c3c'},
                 {l:'Cancelado',v:cancelados.length,c:'#7f8c8d'},
-                {l:'Sem fat.',v:semAsaas.length,c:'#3498db'},
+                {l:'Sem Asaas',v:semAsaas.length,c:'#3498db'},
               ].map((d,i)=>{
                 const max=Math.max(emDia.length,pendentes.length,vencidos.length,cancelados.length,semAsaas.length,1);
                 return(
@@ -4614,11 +4725,39 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
             </div>
           </div>
 
-          {/* Clientes aguardando faturamento */}
+          {/* Pagamentos recentes da API */}
+          {dadosApi&&cobrancasApi.length>0&&(
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Cobranças recentes</div>
+                <div style={{fontSize:9,color:'#27ae60',fontWeight:700}}>● via API Asaas</div>
+              </div>
+              {cobrancasApi.slice(0,8).map((p,i)=>{
+                const corStatus=p.status==='CONFIRMED'||p.status==='RECEIVED'?'#27ae60':p.status==='OVERDUE'?'#e74c3c':'#f5a623';
+                const cliente=clientes.find(c=>c.asaas_id&&c.asaas_id.toLowerCase()===p.customer?.toLowerCase());
+                return(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:'1px solid #f8f9fa'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11,fontWeight:600,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {cliente?cliente.nome:p.description||p.customer}
+                      </div>
+                      <div style={{fontSize:9,color:'#7f8c8d'}}>{p.dueDate} • {p.billingType}</div>
+                    </div>
+                    <div style={{textAlign:'right',flexShrink:0,marginLeft:12}}>
+                      <div style={{fontSize:12,fontWeight:700,color:corStatus}}>{moeda(p.value)}</div>
+                      <span style={{fontSize:9,background:corStatus+'22',color:corStatus,padding:'1px 5px',borderRadius:4,fontWeight:700}}>{p.status}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Clientes sem Asaas */}
           {semAsaas.length>0&&(
             <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',border:'2px solid #f5a623'}}>
-              <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:10,textTransform:'uppercase'}}>⏰ Aguardando faturamento no Asaas ({semAsaas.length})</div>
-              {semAsaas.slice(0,5).map(c=>(
+              <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:10,textTransform:'uppercase'}}>⏰ Aguardando vincular ao Asaas ({semAsaas.length})</div>
+              {semAsaas.slice(0,6).map(c=>(
                 <div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #f8f9fa'}}>
                   <div>
                     <div style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{c.nome}</div>
@@ -4627,7 +4766,7 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
                   <AsaasBadge status="SEM_FATURAMENTO" size="small"/>
                 </div>
               ))}
-              {semAsaas.length>5&&<div style={{fontSize:11,color:'#7f8c8d',marginTop:8}}>+{semAsaas.length-5} mais</div>}
+              {semAsaas.length>6&&<div style={{fontSize:11,color:'#7f8c8d',marginTop:8}}>+{semAsaas.length-6} mais</div>}
             </div>
           )}
         </div>
