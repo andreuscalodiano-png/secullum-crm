@@ -4758,6 +4758,190 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
 const _chatMsgs={};
 const _chatInput={};
 
+// TABELA AGUARDANDO FATURAMENTO
+function TabelaAguardandoFaturamento({agd,totAgd,setClienteSel}){
+  const [busca,setBusca]=useState('');
+  const [sortCol,setSortCol]=useState('data');
+  const [sortDir,setSortDir]=useState('desc');
+  const [vendFil,setVendFil]=useState('Todos');
+  const [planoFil,setPlanoFil]=useState('Todos');
+
+  if(!agd||agd.length===0)return null;
+
+  const vendedores=['Todos',...new Set(agd.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
+  const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff'};
+
+  function getPendencias(c){
+    const p=[];
+    if(parseFloat(c.vI)>0){
+      const st=c.asaas_status_impl||'';
+      if(!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'impl',label:'Implantação',valor:parseFloat(c.vI),forma:c.pagamentoI||'Boleto',parcelas:c.parcelasI||1,status:st||'SEM_LINK'});
+    }
+    if(parseFloat(c.vE)>0){
+      const st=c.asaas_status_equip||'';
+      if(!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'equip',label:'Equipamento',valor:parseFloat(c.vE),forma:c.pagamentoE||'Boleto',parcelas:c.parcelasE||1,status:st||'SEM_LINK'});
+    }
+    if(parseFloat(c.vS)>0){
+      const st=c.asaas_status_sistema||c.asaas_status||'';
+      if(!c.asaas_id||!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'sistema',label:'Sistema',valor:parseFloat(c.vS),forma:'Boleto',parcelas:1,status:st||'SEM_FATURAMENTO',recorrente:true});
+    }
+    return p;
+  }
+
+  function badgeAsaasInline(st){
+    const s=ASAAS_STATUS[st]||ASAAS_STATUS.SEM_FATURAMENTO;
+    return<span style={{background:s.color+'22',color:s.color,border:`1px solid ${s.color}44`,borderRadius:8,padding:'1px 5px',fontSize:9,fontWeight:700,whiteSpace:'nowrap'}}>{s.emoji} {s.label}</span>;
+  }
+
+  function badgePend(p){
+    const cores={SEM_LINK:'#95a5a6',SEM_FATURAMENTO:'#3498db',PENDING:'#f5a623',OVERDUE:'#e74c3c'};
+    const labels={SEM_LINK:'Sem link',SEM_FATURAMENTO:'Sem faturamento',PENDING:'Pendente',OVERDUE:'Vencido'};
+    const emojis={SEM_LINK:'⬜',SEM_FATURAMENTO:'🔵',PENDING:'🟡',OVERDUE:'🔴'};
+    const cor=cores[p.status]||'#95a5a6';
+    return<span style={{background:cor+'22',color:cor,border:`1px solid ${cor}44`,borderRadius:6,padding:'1px 5px',fontSize:9,fontWeight:700,whiteSpace:'nowrap'}}>{emojis[p.status]||'?'} {labels[p.status]||p.status}</span>;
+  }
+
+  function toggleSort(col){
+    if(sortCol===col)setSortDir(d=>d==='asc'?'desc':'asc');
+    else{setSortCol(col);setSortDir('asc');}
+  }
+  function SortTh({col,children,align}){
+    align=align||'left';
+    const ativo=sortCol===col;
+    return<th onClick={()=>toggleSort(col)} style={{padding:'8px 10px',textAlign:align,fontSize:10,color:ativo?C.blue:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap',cursor:'pointer',userSelect:'none'}}>
+      {children}{ativo?(sortDir==='asc'?' up':' down'):''}
+    </th>;
+  }
+
+  const lista=agd.filter(c=>{
+    if(vendFil!=='Todos'&&c.vendedor!==vendFil)return false;
+    if(planoFil!=='Todos'&&c.plano!==planoFil)return false;
+    if(busca.trim()){
+      const b=busca.toLowerCase();
+      if(!c.nome?.toLowerCase().includes(b)&&!c.cnpj?.includes(b)&&!c.contato?.toLowerCase().includes(b))return false;
+    }
+    return true;
+  });
+
+  const sorted=[...lista].sort((a,b)=>{
+    let va,vb;
+    if(sortCol==='nome'){va=a.nome||'';vb=b.nome||'';}
+    else if(sortCol==='vendedor'){va=a.vendedor||'';vb=b.vendedor||'';}
+    else if(sortCol==='total'){va=a.total||0;vb=b.total||0;}
+    else if(sortCol==='vS'){va=a.vS||0;vb=b.vS||0;}
+    else if(sortCol==='vI'){va=a.vI||0;vb=b.vI||0;}
+    else if(sortCol==='vE'){va=a.vE||0;vb=b.vE||0;}
+    else{va=getDataTs(a);vb=getDataTs(b);}
+    if(va<vb)return sortDir==='asc'?-1:1;
+    if(va>vb)return sortDir==='asc'?1:-1;
+    return 0;
+  });
+
+  return(
+    <div style={{background:C.card,borderRadius:8,boxShadow:'0 1px 3px rgba(0,0,0,.08)',border:'2px solid '+C.orange,overflow:'hidden'}}>
+      <div style={{background:'#fef9e7',padding:'10px 16px',borderBottom:'1px solid #fad7a0',display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+        <span style={{fontWeight:700,fontSize:12,color:C.orange,textTransform:'uppercase'}}>Aguardando faturamento</span>
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar..." style={{...fi,padding:'4px 8px',fontSize:11,width:160}}/>
+          <select value={vendFil} onChange={e=>setVendFil(e.target.value)} style={{...fi,padding:'4px 8px',fontSize:11}}>{vendedores.map(v=><option key={v}>{v}</option>)}</select>
+          <select value={planoFil} onChange={e=>setPlanoFil(e.target.value)} style={{...fi,padding:'4px 8px',fontSize:11}}>
+            <option value="Todos">Todos planos</option>{PLANOS.map(p=><option key={p}>{p}</option>)}
+          </select>
+          {(busca||vendFil!=='Todos'||planoFil!=='Todos')&&(
+            <button onClick={()=>{setBusca('');setVendFil('Todos');setPlanoFil('Todos');}} style={{padding:'4px 8px',borderRadius:5,border:'none',background:'#ecf0f1',cursor:'pointer',fontSize:11}}>X</button>
+          )}
+          <span style={{fontSize:11,fontWeight:700,color:C.orange}}>{sorted.length} cliente(s) - {moeda(sorted.reduce((s,c)=>s+(c.total||0),0))}</span>
+        </div>
+      </div>
+      <div style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',minWidth:900}}>
+          <thead>
+            <tr style={{background:'#f8f9fa'}}>
+              <SortTh col="nome">Empresa</SortTh>
+              <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>CNPJ</th>
+              <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Contato</th>
+              <SortTh col="vendedor">Vendedor</SortTh>
+              <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Plano</th>
+              <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Asaas</th>
+              <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>O que falta</th>
+              <SortTh col="vI" align="right">Impl.</SortTh>
+              <SortTh col="vE" align="right">Equip.</SortTh>
+              <SortTh col="vS" align="right">Sist./mes</SortTh>
+              <SortTh col="total" align="right">Total</SortTh>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length===0&&(
+              <tr><td colSpan={11} style={{padding:'20px',textAlign:'center',color:C.textMuted,fontSize:12}}>Nenhum cliente encontrado.</td></tr>
+            )}
+            {sorted.map((c,i)=>{
+              const pends=getPendencias(c);
+              const temVencido=c.asaas_status_impl==='OVERDUE'||c.asaas_status_equip==='OVERDUE'||c.asaas_status_sistema==='OVERDUE';
+              const rowBg=temVencido?'#fff8f8':i%2===0?'#fff':'#fffef5';
+              return(
+                <tr key={c.id} onClick={()=>setClienteSel(c)} style={{borderTop:'1px solid '+C.border,cursor:'pointer',background:rowBg}}
+                  onMouseEnter={e=>e.currentTarget.style.background='#fffbf0'}
+                  onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
+                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.text,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {temVencido&&<span style={{color:'#e74c3c',marginRight:4}}>!</span>}{c.nome}
+                  </td>
+                  <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>{c.cnpj||'--'}</td>
+                  <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>
+                    <div style={{fontWeight:600,color:C.text,fontSize:11}}>{c.contato||'--'}</div>
+                    <div style={{fontSize:9,color:C.textMuted}}>{c.fone||c.tel||''}</div>
+                  </td>
+                  <td style={{padding:'7px 10px',fontSize:11,color:C.textMuted,whiteSpace:'nowrap'}}>{c.vendedor&&c.vendedor!=='--'?c.vendedor:'--'}</td>
+                  <td style={{padding:'7px 10px'}}>
+                    <span style={{background:c.plano==='Ultimate'?'#ebf5fb':c.plano==='Pro'?'#e8f8f5':'#fef9f0',color:c.plano==='Ultimate'?C.blue:c.plano==='Pro'?C.teal:C.orange,padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700}}>{c.plano||'--'}</span>
+                  </td>
+                  <td style={{padding:'7px 10px'}}>
+                    {c.asaas_id?(
+                      <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                        {parseFloat(c.vI)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#b45309',fontWeight:700,minWidth:22}}>Impl</span>{badgeAsaasInline(c.asaas_status_impl||'SEM_FATURAMENTO')}</div>}
+                        {parseFloat(c.vE)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#276749',fontWeight:700,minWidth:22}}>Eq.</span>{badgeAsaasInline(c.asaas_status_equip||'SEM_FATURAMENTO')}</div>}
+                        {parseFloat(c.vS)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#2b6cb0',fontWeight:700,minWidth:22}}>Sist</span>{badgeAsaasInline(c.asaas_status_sistema||c.asaas_status||'SEM_FATURAMENTO')}</div>}
+                      </div>
+                    ):(
+                      <span style={{fontSize:10,color:'#95a5a6'}}>Sem Asaas</span>
+                    )}
+                  </td>
+                  <td style={{padding:'7px 10px',minWidth:200}}>
+                    <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                      {pends.map((p,pi)=>(
+                        <div key={pi} style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap'}}>
+                          <span style={{fontSize:10,fontWeight:700,color:p.tipo==='impl'?'#b45309':p.tipo==='equip'?'#276749':'#2b6cb0',minWidth:70}}>{p.label}</span>
+                          <span style={{fontSize:10,fontWeight:700,color:C.blue}}>{moeda(p.valor)}</span>
+                          {p.parcelas>1&&<span style={{fontSize:9,color:C.textMuted}}>{p.parcelas}x</span>}
+                          <span style={{fontSize:9,color:'#7f8c8d',background:'#f0f0f0',borderRadius:4,padding:'0 4px'}}>{p.forma}</span>
+                          {badgePend(p)}
+                        </div>
+                      ))}
+                      {pends.length===0&&<span style={{fontSize:10,color:'#27ae60'}}>OK</span>}
+                    </div>
+                  </td>
+                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vI)>0?C.orange:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vI)>0?moeda(c.vI):'--'}</td>
+                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vE)>0?C.teal:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vE)>0?moeda(c.vE):'--'}</td>
+                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vS)>0?C.purple:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vS)>0?moeda(c.vS):'--'}</td>
+                  <td style={{padding:'7px 10px',fontSize:12,fontWeight:700,color:C.orange,textAlign:'right',whiteSpace:'nowrap'}}>{moeda(c.total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {sorted.length>0&&(
+        <div style={{background:'#fef9e7',borderTop:'1px solid #fad7a0',padding:'8px 14px',display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.orange}}>{sorted.length} cliente(s)</span>
+          <span style={{fontSize:11,color:C.orange}}>Impl: <strong>{moeda(sorted.reduce((s,c)=>s+(c.vI||0),0))}</strong></span>
+          <span style={{fontSize:11,color:C.teal}}>Equip: <strong>{moeda(sorted.reduce((s,c)=>s+(c.vE||0),0))}</strong></span>
+          <span style={{fontSize:11,color:C.purple}}>Sist/mes: <strong>{moeda(sorted.reduce((s,c)=>s+(c.vS||0),0))}</strong></span>
+          <span style={{fontSize:12,fontWeight:700,color:C.orange}}>Total: <strong>{moeda(sorted.reduce((s,c)=>s+(c.total||0),0))}</strong></span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WidgetFinanceiro({currentUser,clientes,todos}){
   const [aberto,setAberto]=useState(false);
   const [aba,setAba]=useState('chat');
@@ -5457,25 +5641,7 @@ export default function App(){
                   </div>;
                 })}
               </div>
-              {agd.length>0&&(
-                <div style={{background:C.card,borderRadius:8,boxShadow:'0 1px 3px rgba(0,0,0,.08)',border:`2px solid ${C.orange}`,overflow:'hidden'}}>
-                  <div style={{background:'#fef9e7',padding:'10px 16px',borderBottom:`1px solid #fad7a0`,display:'flex',justifyContent:'space-between'}}>
-                    <span style={{fontWeight:700,fontSize:12,color:C.orange,textTransform:'uppercase'}}>⏳ Aguardando faturamento</span>
-                    <span style={{fontWeight:700,color:C.orange}}>{moeda(totAgd)}</span>
-                  </div>
-                  <table style={{width:'100%',borderCollapse:'collapse'}}>
-                    <thead><tr style={{background:'#f8f9fa'}}>{['Empresa','Vendedor','Plano','Valor'].map(h=><th key={h} style={{padding:'7px 14px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}</tr></thead>
-                    <tbody>{sortRecente(agd).map((c,i)=>(
-                      <tr key={c.id} onClick={()=>setClienteSel(c)} style={{borderTop:`1px solid ${C.border}`,cursor:'pointer',background:i%2===0?'#fff':'#fffef5'}}>
-                        <td style={{padding:'8px 14px',fontSize:12,fontWeight:600,color:C.text,maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
-                        <td style={{padding:'8px 14px',fontSize:11,color:C.textMuted}}>{c.vendedor}</td>
-                        <td style={{padding:'8px 14px'}}><span style={{background:'#ebf5fb',color:C.blue,padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
-                        <td style={{padding:'8px 14px',fontSize:12,fontWeight:700,color:C.orange}}>{moeda(c.total)}</td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              )}
+              <TabelaAguardandoFaturamento agd={agd} totAgd={totAgd} setClienteSel={setClienteSel}/>
             </div>
           )}
 
