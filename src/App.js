@@ -331,26 +331,108 @@ function RelatoriosView({todos,implantacoes}){
   const [vendRel,setVendRel]=useState('Todos');
   const [planoRel,setPlanoRel]=useState('Todos');
   const [statusRel,setStatusRel]=useState('Todos');
+  const [busca,setBusca]=useState('');
+  const [abaRel,setAbaRel]=useState('pendentes'); // 'pendentes' | 'todos'
+  const [sortCol,setSortCol]=useState('data');
+  const [sortDir,setSortDir]=useState('desc');
+
   const anosDisp=[...new Set(todos.map(c=>c.ano).filter(Boolean))].sort();
   const vendedores=['Todos',...new Set(todos.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff'};
-  const dadosFiltrados=todos.filter(c=>{
+
+  // Apenas clientes reais (não base histórica)
+  const reais=todos.filter(c=>!c._base);
+
+  const dadosFiltrados=reais.filter(c=>{
     if(anoRel!=='Todos'&&c.ano!==+anoRel)return false;
     if(mesRel!=='Todos'&&c.mes!==+mesRel)return false;
     if(vendRel!=='Todos'&&c.vendedor!==vendRel)return false;
     if(planoRel!=='Todos'&&c.plano!==planoRel)return false;
     if(statusRel!=='Todos'&&c.status!==statusRel)return false;
+    if(busca.trim()){
+      const b=busca.toLowerCase();
+      if(!c.nome?.toLowerCase().includes(b)&&!c.cnpj?.includes(b)&&!c.contato?.toLowerCase().includes(b)&&!c.vendedor?.toLowerCase().includes(b))return false;
+    }
     return true;
   });
-  const totFatR=dadosFiltrados.filter(c=>c.status==='Faturado').reduce((s,c)=>s+c.total,0);
-  const totAgdR=dadosFiltrados.filter(c=>c.status==='Aguardando').reduce((s,c)=>s+c.total,0);
-  const totSistR=dadosFiltrados.reduce((s,c)=>s+(c.vS||0),0);
-  const totImplR=dadosFiltrados.reduce((s,c)=>s+(c.vI||0),0);
-  const totEquipR=dadosFiltrados.reduce((s,c)=>s+(c.vE||0),0);
-  const porEtapa=ETAPAS.map(e=>{
-    const cs=todos.filter(c=>{const impl=implantacoes[c.id]||{};return impl.etapa===e.id;});
-    return{...e,qtd:cs.length,clientes:cs};
-  }).filter(e=>e.qtd>0);
+
+  // Pendentes = qualquer cobrança ainda não totalmente resolvida
+  function getPendencias(c){
+    const p=[];
+    // Implantação
+    if(parseFloat(c.vI)>0){
+      const st=c.asaas_status_impl||'';
+      if(!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'impl',label:'Implantação',valor:parseFloat(c.vI),forma:c.pagamentoI||'Boleto',parcelas:c.parcelasI||1,status:st||'SEM_LINK'});
+    }
+    // Equipamento
+    if(parseFloat(c.vE)>0){
+      const st=c.asaas_status_equip||'';
+      if(!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'equip',label:'Equipamento',valor:parseFloat(c.vE),forma:c.pagamentoE||'Boleto',parcelas:c.parcelasE||1,status:st||'SEM_LINK'});
+    }
+    // Sistema
+    if(parseFloat(c.vS)>0){
+      const st=c.asaas_status_sistema||c.asaas_status||'';
+      if(!c.asaas_id||!st||st==='PENDING'||st==='OVERDUE'||st==='')p.push({tipo:'sistema',label:'Sistema',valor:parseFloat(c.vS),forma:'Boleto',parcelas:1,status:st||'SEM_FATURAMENTO',recorrente:true});
+    }
+    return p;
+  }
+
+  const pendentes=dadosFiltrados.filter(c=>getPendencias(c).length>0);
+  const inadimplentes=dadosFiltrados.filter(c=>c.status==='Inadimplente'||(c.asaas_status_sistema==='OVERDUE'||c.asaas_status_impl==='OVERDUE'||c.asaas_status_equip==='OVERDUE'));
+  const semAsaas=dadosFiltrados.filter(c=>!c.asaas_id&&(parseFloat(c.vI)>0||parseFloat(c.vE)>0||parseFloat(c.vS)>0));
+  const aguardBoleto=dadosFiltrados.filter(c=>c.status==='Aguardando');
+  const linksEnviados=dadosFiltrados.filter(c=>c.status==='Links enviados');
+
+  const totPendentes=pendentes.reduce((s,c)=>s+getPendencias(c).reduce((a,p)=>a+p.valor,0),0);
+  const totInadimpl=inadimplentes.reduce((s,c)=>s+(c.vS||0),0);
+
+  function sortDados(arr){
+    return [...arr].sort((a,b)=>{
+      let va,vb;
+      if(sortCol==='nome'){va=a.nome||'';vb=b.nome||'';}
+      else if(sortCol==='vendedor'){va=a.vendedor||'';vb=b.vendedor||'';}
+      else if(sortCol==='total'){va=a.total||0;vb=b.total||0;}
+      else if(sortCol==='status'){va=a.status||'';vb=b.status||'';}
+      else if(sortCol==='vS'){va=a.vS||0;vb=b.vS||0;}
+      else if(sortCol==='vI'){va=a.vI||0;vb=b.vI||0;}
+      else if(sortCol==='vE'){va=a.vE||0;vb=b.vE||0;}
+      else{va=getDataTs(a);vb=getDataTs(b);}
+      if(va<vb)return sortDir==='asc'?-1:1;
+      if(va>vb)return sortDir==='asc'?1:-1;
+      return 0;
+    });
+  }
+
+  function toggleSort(col){
+    if(sortCol===col)setSortDir(d=>d==='asc'?'desc':'asc');
+    else{setSortCol(col);setSortDir('asc');}
+  }
+
+  function SortTh({col,children,style={}}){
+    const ativo=sortCol===col;
+    return(
+      <th onClick={()=>toggleSort(col)} style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:ativo?C.blue:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap',cursor:'pointer',userSelect:'none',...style}}>
+        {children}{ativo?(sortDir==='asc'?' ↑':' ↓'):''}
+      </th>
+    );
+  }
+
+  function badgeAsaas(st,size='small'){
+    const s=ASAAS_STATUS[st]||ASAAS_STATUS.SEM_FATURAMENTO;
+    const p=size==='small'?'1px 5px':'2px 8px';
+    return<span style={{background:s.color+'22',color:s.color,border:`1px solid ${s.color}44`,borderRadius:8,padding:p,fontSize:9,fontWeight:700,whiteSpace:'nowrap'}}>{s.emoji} {s.label}</span>;
+  }
+
+  function badgePendencia(p){
+    const cores={SEM_LINK:'#95a5a6',SEM_FATURAMENTO:'#3498db',PENDING:'#f5a623',OVERDUE:'#e74c3c'};
+    const labels={SEM_LINK:'Sem link',SEM_FATURAMENTO:'Sem faturamento',PENDING:'Pendente',OVERDUE:'Vencido'};
+    const emojis={SEM_LINK:'⬜',SEM_FATURAMENTO:'🔵',PENDING:'🟡',OVERDUE:'🔴'};
+    const cor=cores[p.status]||'#95a5a6';
+    const lbl=labels[p.status]||p.status;
+    const em=emojis[p.status]||'❓';
+    return<span style={{background:cor+'22',color:cor,border:`1px solid ${cor}44`,borderRadius:6,padding:'1px 5px',fontSize:9,fontWeight:700,whiteSpace:'nowrap'}}>{em} {lbl}</span>;
+  }
+
   function nomeArq(){
     const p=['relatorio'];
     if(anoRel!=='Todos')p.push(anoRel);
@@ -360,77 +442,223 @@ function RelatoriosView({todos,implantacoes}){
     if(statusRel!=='Todos')p.push(statusRel);
     return p.join('_');
   }
+
+  const porEtapa=ETAPAS.map(e=>{
+    const cs=todos.filter(c=>{const impl=implantacoes[c.id]||{};return impl.etapa===e.id;});
+    return{...e,qtd:cs.length,clientes:cs};
+  }).filter(e=>e.qtd>0);
+
+  const listaOrdenada=sortDados(abaRel==='pendentes'?pendentes:dadosFiltrados);
+
   return(
     <div>
-      <div style={{background:C.card,borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:14}}>
-        <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>Filtros do relatório</div>
+      {/* ── CARDS DE ALERTA ── */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:14}}>
+        <div onClick={()=>{setAbaRel('pendentes');setStatusRel('Todos');}} style={{background:'#fffbeb',border:'2px solid #f5a623',borderRadius:8,padding:'12px 14px',cursor:'pointer',transition:'box-shadow .15s'}}
+          onMouseEnter={e=>e.currentTarget.style.boxShadow='0 2px 8px rgba(245,166,35,.3)'}
+          onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
+          <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>⏳ Com pendência</div>
+          <div style={{fontSize:22,fontWeight:700,color:'#b45309'}}>{pendentes.length}</div>
+          <div style={{fontSize:10,color:'#b45309',marginTop:2}}>{moeda(totPendentes)}</div>
+        </div>
+        <div onClick={()=>{setAbaRel('pendentes');setStatusRel('Inadimplente');}} style={{background:'#fff5f5',border:'2px solid #e74c3c',borderRadius:8,padding:'12px 14px',cursor:'pointer',transition:'box-shadow .15s'}}
+          onMouseEnter={e=>e.currentTarget.style.boxShadow='0 2px 8px rgba(231,76,60,.3)'}
+          onMouseLeave={e=>e.currentTarget.style.boxShadow='none'}>
+          <div style={{fontSize:10,color:'#c0392b',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔴 Inadimplentes</div>
+          <div style={{fontSize:22,fontWeight:700,color:'#c0392b'}}>{inadimplentes.length}</div>
+          <div style={{fontSize:10,color:'#c0392b',marginTop:2}}>{moeda(totInadimpl)}/mês em risco</div>
+        </div>
+        <div onClick={()=>{setAbaRel('pendentes');setStatusRel('Aguardando');}} style={{background:'#fef9f0',border:'1px solid #f39c12',borderRadius:8,padding:'12px 14px',cursor:'pointer'}}>
+          <div style={{fontSize:10,color:'#e67e22',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>📄 Aguard. boleto</div>
+          <div style={{fontSize:22,fontWeight:700,color:'#e67e22'}}>{aguardBoleto.length}</div>
+        </div>
+        <div onClick={()=>{setAbaRel('pendentes');setStatusRel('Links enviados');}} style={{background:'#eef6ff',border:'1px solid #3498db',borderRadius:8,padding:'12px 14px',cursor:'pointer'}}>
+          <div style={{fontSize:10,color:'#2980b9',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>⚡ Links enviados</div>
+          <div style={{fontSize:22,fontWeight:700,color:'#2980b9'}}>{linksEnviados.length}</div>
+        </div>
+        <div style={{background:'#f8f9fa',border:'1px solid #dde1e7',borderRadius:8,padding:'12px 14px'}}>
+          <div style={{fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔵 Sem Asaas</div>
+          <div style={{fontSize:22,fontWeight:700,color:C.textMuted}}>{semAsaas.length}</div>
+        </div>
+        <div style={{background:'#f0fff4',border:'1px solid #27ae60',borderRadius:8,padding:'12px 14px'}}>
+          <div style={{fontSize:10,color:'#27ae60',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>✅ Faturados</div>
+          <div style={{fontSize:22,fontWeight:700,color:'#27ae60'}}>{dadosFiltrados.filter(c=>c.status==='Faturado').length}</div>
+        </div>
+      </div>
+
+      {/* ── FILTROS ── */}
+      <div style={{background:C.card,borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:14}}>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="🔍 Buscar empresa, CNPJ, contato..." style={{...fi,minWidth:220,flex:1}}/>
           <select value={anoRel} onChange={e=>setAnoRel(e.target.value)} style={fi}><option value="Todos">Todos os anos</option>{anosDisp.map(a=><option key={a}>{a}</option>)}</select>
           <select value={mesRel} onChange={e=>setMesRel(e.target.value)} style={fi}><option value="Todos">Todos os meses</option>{MESES.map((m,i)=><option key={i} value={i}>{m}</option>)}</select>
           <select value={vendRel} onChange={e=>setVendRel(e.target.value)} style={fi}>{vendedores.map(v=><option key={v}>{v}</option>)}</select>
           <select value={planoRel} onChange={e=>setPlanoRel(e.target.value)} style={fi}><option value="Todos">Todos os planos</option>{PLANOS.map(p=><option key={p}>{p}</option>)}</select>
-          <select value={statusRel} onChange={e=>setStatusRel(e.target.value)} style={fi}><option value="Todos">Todos os status</option><option value="Faturado">✅ Faturado</option><option value="Aguardando">⏳ Aguardando</option></select>
-          <span style={{fontSize:11,color:C.textMuted}}>{dadosFiltrados.length} cliente(s)</span>
+          <select value={statusRel} onChange={e=>setStatusRel(e.target.value)} style={fi}>
+            <option value="Todos">Todos os status</option>
+            {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          {(busca||anoRel!=='Todos'||mesRel!=='Todos'||vendRel!=='Todos'||planoRel!=='Todos'||statusRel!=='Todos')&&(
+            <button onClick={()=>{setBusca('');setAnoRel('Todos');setMesRel('Todos');setVendRel('Todos');setPlanoRel('Todos');setStatusRel('Todos');}} style={{padding:'6px 12px',borderRadius:5,border:'none',background:'#ecf0f1',cursor:'pointer',fontSize:11,color:C.text}}>✕ Limpar</button>
+          )}
         </div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:10,marginBottom:14}}>
-        <StatCard icon="ti-users" label="Clientes" value={dadosFiltrados.length} color={C.blue}/>
-        <StatCard icon="ti-check" label="Faturado" value={moeda(totFatR)} sub={dadosFiltrados.filter(c=>c.status==='Faturado').length+' clientes'} color={C.green}/>
-        <StatCard icon="ti-clock" label="A faturar" value={moeda(totAgdR)} sub={dadosFiltrados.filter(c=>c.status==='Aguardando').length+' clientes'} color={C.orange}/>
-        <StatCard icon="ti-code" label="Sistema/mês" value={moeda(totSistR)} color={C.purple}/>
-        <StatCard icon="ti-device-laptop" label="Equipamentos" value={moeda(totEquipR)} color={C.teal}/>
-        <StatCard icon="ti-tools" label="Implantações" value={moeda(totImplR)} color={C.orange}/>
-      </div>
-      <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap'}}>
-        <button onClick={()=>exportarExcel(dadosFiltrados,nomeArq()+'_clientes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-          <i className="ti ti-file-spreadsheet"/> Exportar clientes (.csv)
-        </button>
-        <button onClick={()=>{const rows=porEtapa.flatMap(e=>e.clientes.map(c=>({...c})));exportarExcel(rows,nomeArq()+'_implantacao');}} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 18px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-          <i className="ti ti-file-spreadsheet"/> Exportar implantação (.csv)
-        </button>
-      </div>
-      <div style={{background:C.card,borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:14}}>
-        <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>Implantações por etapa</div>
-        {porEtapa.length===0&&<div style={{color:C.textMuted,fontSize:12,textAlign:'center',padding:'16px 0'}}>Nenhuma implantação registrada.</div>}
-        {porEtapa.map(e=>(
-          <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
-            <div style={{width:10,height:10,borderRadius:2,background:e.color,flexShrink:0}}/>
-            <div style={{flex:1,fontSize:12,color:C.text,fontWeight:600}}>{e.label}</div>
-            <div style={{height:8,borderRadius:4,background:'#ecf0f1',width:140,flexShrink:0}}>
-              <div style={{height:'100%',borderRadius:4,background:e.color,width:Math.min(Math.round((e.qtd/Math.max(todos.length,1))*400),100)+'%'}}/>
-            </div>
-            <div style={{fontSize:12,fontWeight:700,color:C.text,width:28,textAlign:'right'}}>{e.qtd}</div>
-          </div>
+
+      {/* ── ABAS ── */}
+      <div style={{display:'flex',gap:0,marginBottom:0,borderBottom:'2px solid '+C.border}}>
+        {[['pendentes',`⏳ Com pendência (${pendentes.length})`],['todos',`📋 Todos os clientes (${dadosFiltrados.length})`]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setAbaRel(id)} style={{padding:'9px 18px',border:'none',borderBottom:`2px solid ${abaRel===id?C.blue:'transparent'}`,background:'transparent',cursor:'pointer',fontSize:12,fontWeight:abaRel===id?700:400,color:abaRel===id?C.blue:C.textMuted,marginBottom:'-2px'}}>
+            {lbl}
+          </button>
         ))}
-      </div>
-      <div style={{background:C.card,borderRadius:8,boxShadow:'0 1px 3px rgba(0,0,0,.08)',overflow:'hidden'}}>
-        <div style={{padding:'12px 16px',borderBottom:'1px solid '+C.border}}>
-          <span style={{fontWeight:700,fontSize:13,color:C.text}}>Detalhamento — {dadosFiltrados.length} registros</span>
+        <div style={{flex:1}}/>
+        <div style={{display:'flex',gap:8,alignItems:'center',paddingBottom:4}}>
+          <button onClick={()=>exportarExcel(abaRel==='pendentes'?pendentes:dadosFiltrados,nomeArq()+'_clientes')} style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+            <i className="ti ti-file-spreadsheet"/> Exportar .csv
+          </button>
         </div>
+      </div>
+
+      {/* ── TABELA PRINCIPAL ── */}
+      <div style={{background:C.card,borderRadius:'0 0 8px 8px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',overflow:'hidden',marginBottom:14}}>
         <div style={{overflowX:'auto'}}>
-          <table style={{width:'100%',borderCollapse:'collapse',minWidth:700}}>
-            <thead><tr style={{background:'#f8f9fa'}}>
-              {['Empresa','CNPJ','Plano','Vendedor','Status','Sistema','Implantação','Equip.','Total'].map(h=>(
-                <th key={h} style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>{h}</th>
-              ))}
-            </tr></thead>
+          <table style={{width:'100%',borderCollapse:'collapse',minWidth:900}}>
+            <thead>
+              <tr style={{background:'#f8f9fa'}}>
+                <SortTh col="nome">Empresa</SortTh>
+                <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>CNPJ</th>
+                <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Contato / Tel</th>
+                <SortTh col="vendedor">Vendedor</SortTh>
+                <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Plano</th>
+                <SortTh col="status">Status CRM</SortTh>
+                <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>Asaas</th>
+                {abaRel==='pendentes'&&<th style={{padding:'8px 10px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase',whiteSpace:'nowrap'}}>O que falta</th>}
+                <SortTh col="vI" style={{textAlign:'right'}}>Impl.</SortTh>
+                <SortTh col="vE" style={{textAlign:'right'}}>Equip.</SortTh>
+                <SortTh col="vS" style={{textAlign:'right'}}>Sist./mês</SortTh>
+                <SortTh col="total" style={{textAlign:'right'}}>Total</SortTh>
+              </tr>
+            </thead>
             <tbody>
-              {sortRecente(dadosFiltrados).slice(0,300).map((c,i)=>(
-                <tr key={c.id} style={{borderTop:'1px solid '+C.border,background:i%2===0?'#fff':'#fdfdfd'}}>
-                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:600,color:C.text,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</td>
-                  <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>{c.cnpj}</td>
-                  <td style={{padding:'7px 10px'}}><span style={{background:'#ebf5fb',color:C.blue,padding:'1px 6px',borderRadius:8,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
-                  <td style={{padding:'7px 10px',fontSize:11,color:C.textMuted}}>{c.vendedor}</td>
-                  <td style={{padding:'7px 10px'}}><span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700}}>{labelStatus(c.status)}</span></td>
-                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.purple}}>{moeda(c.vS)}</td>
-                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.orange}}>{moeda(c.vI)}</td>
-                  <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.teal}}>{moeda(c.vE)}</td>
-                  <td style={{padding:'7px 10px',fontSize:12,fontWeight:700,color:C.blue}}>{moeda(c.total)}</td>
-                </tr>
-              ))}
+              {listaOrdenada.length===0&&(
+                <tr><td colSpan={abaRel==='pendentes'?12:11} style={{padding:'24px',textAlign:'center',color:C.textMuted,fontSize:12}}>
+                  {abaRel==='pendentes'?'✅ Nenhuma pendência financeira encontrada!':'Nenhum cliente encontrado com os filtros aplicados.'}
+                </td></tr>
+              )}
+              {listaOrdenada.slice(0,500).map((c,i)=>{
+                const pends=getPendencias(c);
+                const asaasGeral=c.asaas_status_sistema||c.asaas_status||'';
+                const temVencido=c.asaas_status_impl==='OVERDUE'||c.asaas_status_equip==='OVERDUE'||c.asaas_status_sistema==='OVERDUE';
+                const rowBg=temVencido?'#fff8f8':i%2===0?'#fff':'#fdfdfd';
+                return(
+                  <tr key={c.id} style={{borderTop:'1px solid '+C.border,background:rowBg}}>
+                    {/* Empresa */}
+                    <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.text,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {temVencido&&<span style={{color:'#e74c3c',marginRight:4}}>⚠</span>}
+                      {c.nome}
+                    </td>
+                    {/* CNPJ */}
+                    <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>{c.cnpj||'—'}</td>
+                    {/* Contato */}
+                    <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>
+                      <div style={{fontWeight:600,color:C.text,fontSize:11}}>{c.contato||'—'}</div>
+                      <div style={{fontSize:9,color:C.textMuted}}>{c.fone||c.tel||''}</div>
+                    </td>
+                    {/* Vendedor */}
+                    <td style={{padding:'7px 10px',fontSize:11,color:C.textMuted,whiteSpace:'nowrap'}}>{c.vendedor&&c.vendedor!=='—'?c.vendedor:'—'}</td>
+                    {/* Plano */}
+                    <td style={{padding:'7px 10px'}}>
+                      <span style={{background:c.plano==='Ultimate'?'#ebf5fb':c.plano==='Pro'?'#e8f8f5':'#fef9f0',color:c.plano==='Ultimate'?C.blue:c.plano==='Pro'?C.teal:C.orange,padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700}}>{c.plano||'—'}</span>
+                    </td>
+                    {/* Status CRM */}
+                    <td style={{padding:'7px 10px'}}>
+                      <span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>{labelStatus(c.status)}</span>
+                    </td>
+                    {/* Asaas */}
+                    <td style={{padding:'7px 10px'}}>
+                      {c.asaas_id?(
+                        <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                          {parseFloat(c.vI)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#b45309',fontWeight:700,minWidth:22}}>Impl</span>{badgeAsaas(c.asaas_status_impl||'SEM_FATURAMENTO')}</div>}
+                          {parseFloat(c.vE)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#276749',fontWeight:700,minWidth:22}}>Eq.</span>{badgeAsaas(c.asaas_status_equip||'SEM_FATURAMENTO')}</div>}
+                          {parseFloat(c.vS)>0&&<div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:'#2b6cb0',fontWeight:700,minWidth:22}}>Sist</span>{badgeAsaas(c.asaas_status_sistema||asaasGeral||'SEM_FATURAMENTO')}</div>}
+                        </div>
+                      ):(
+                        <span style={{fontSize:10,color:'#95a5a6'}}>🔵 Sem Asaas</span>
+                      )}
+                    </td>
+                    {/* O que falta (só aba pendentes) */}
+                    {abaRel==='pendentes'&&(
+                      <td style={{padding:'7px 10px',minWidth:200}}>
+                        <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                          {pends.map((p,pi)=>(
+                            <div key={pi} style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap'}}>
+                              <span style={{fontSize:10,fontWeight:700,color:p.tipo==='impl'?'#b45309':p.tipo==='equip'?'#276749':'#2b6cb0',minWidth:70}}>{p.label}</span>
+                              <span style={{fontSize:10,fontWeight:700,color:C.blue}}>{moeda(p.valor)}</span>
+                              {p.parcelas>1&&<span style={{fontSize:9,color:C.textMuted}}>{p.parcelas}x</span>}
+                              <span style={{fontSize:9,color:'#7f8c8d',background:'#f0f0f0',borderRadius:4,padding:'0 4px'}}>{p.forma}</span>
+                              {badgePendencia(p)}
+                            </div>
+                          ))}
+                          {pends.length===0&&<span style={{fontSize:10,color:'#27ae60'}}>✅ OK</span>}
+                        </div>
+                      </td>
+                    )}
+                    {/* Valores */}
+                    <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vI)>0?C.orange:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vI)>0?moeda(c.vI):'—'}</td>
+                    <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vE)>0?C.teal:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vE)>0?moeda(c.vE):'—'}</td>
+                    <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:parseFloat(c.vS)>0?C.purple:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>{parseFloat(c.vS)>0?moeda(c.vS):'—'}</td>
+                    <td style={{padding:'7px 10px',fontSize:12,fontWeight:700,color:C.blue,textAlign:'right',whiteSpace:'nowrap'}}>{moeda(c.total)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          {dadosFiltrados.length>300&&<div style={{padding:'10px',textAlign:'center',fontSize:11,color:C.textMuted}}>Mostrando 300 de {dadosFiltrados.length}. Exporte para ver todos.</div>}
+          {listaOrdenada.length>500&&<div style={{padding:'10px',textAlign:'center',fontSize:11,color:C.textMuted}}>Mostrando 500 de {listaOrdenada.length}. Use os filtros ou exporte para ver todos.</div>}
+        </div>
+        {/* Rodapé de totais */}
+        {listaOrdenada.length>0&&(
+          <div style={{background:'#f8f9fa',borderTop:'2px solid '+C.border,padding:'10px 14px',display:'flex',gap:20,flexWrap:'wrap',alignItems:'center'}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.text}}>{listaOrdenada.length} cliente(s)</span>
+            <span style={{fontSize:11,color:C.orange}}>Impl: <strong>{moeda(listaOrdenada.reduce((s,c)=>s+(c.vI||0),0))}</strong></span>
+            <span style={{fontSize:11,color:C.teal}}>Equip: <strong>{moeda(listaOrdenada.reduce((s,c)=>s+(c.vE||0),0))}</strong></span>
+            <span style={{fontSize:11,color:C.purple}}>Sist/mês: <strong>{moeda(listaOrdenada.reduce((s,c)=>s+(c.vS||0),0))}</strong></span>
+            <span style={{fontSize:12,fontWeight:700,color:C.blue}}>Total: <strong>{moeda(listaOrdenada.reduce((s,c)=>s+(c.total||0),0))}</strong></span>
+          </div>
+        )}
+      </div>
+
+      {/* ── IMPLANTAÇÕES POR ETAPA ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+        <div style={{background:C.card,borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>📊 Implantações por etapa</div>
+          {porEtapa.length===0&&<div style={{color:C.textMuted,fontSize:12,textAlign:'center',padding:'16px 0'}}>Nenhuma implantação registrada.</div>}
+          {porEtapa.map(e=>(
+            <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <div style={{width:10,height:10,borderRadius:2,background:e.color,flexShrink:0}}/>
+              <div style={{flex:1,fontSize:12,color:C.text,fontWeight:600}}>{e.label}</div>
+              <div style={{height:8,borderRadius:4,background:'#ecf0f1',width:100,flexShrink:0}}>
+                <div style={{height:'100%',borderRadius:4,background:e.color,width:Math.min(Math.round((e.qtd/Math.max(todos.length,1))*400),100)+'%'}}/>
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color:C.text,width:28,textAlign:'right'}}>{e.qtd}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:C.card,borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>💾 Exportar relatórios</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <button onClick={()=>exportarExcel(pendentes,nomeArq()+'_pendentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:'#fff8ee',color:'#b45309',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #f5a623'}}>
+              <i className="ti ti-file-spreadsheet"/> Exportar pendências ({pendentes.length})
+            </button>
+            <button onClick={()=>exportarExcel(dadosFiltrados,nomeArq()+'_clientes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              <i className="ti ti-file-spreadsheet"/> Exportar todos os clientes ({dadosFiltrados.length})
+            </button>
+            <button onClick={()=>{const rows=porEtapa.flatMap(e=>e.clientes.map(c=>({...c})));exportarExcel(rows,nomeArq()+'_implantacao');}} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              <i className="ti ti-file-spreadsheet"/> Exportar implantações
+            </button>
+            <button onClick={()=>exportarExcel(inadimplentes,nomeArq()+'_inadimplentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:'#fff5f5',color:'#c0392b',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #e74c3c'}}>
+              <i className="ti ti-file-spreadsheet"/> Exportar inadimplentes ({inadimplentes.length})
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1473,6 +1701,36 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
     asaas_ultimo_pagamento:c.asaas_ultimo_pagamento||'',
   });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  // FIX CRÍTICO: Sincroniza campos Asaas do estado local quando o Firestore
+  // atualizar via webhook. Sem isso, o badge fica travado no valor do mount
+  // mesmo após o onSnapshot disparar e o componente pai re-renderizar com c novo.
+  // Só sincroniza campos financeiros (não sobrescreve campos que o usuário pode estar editando)
+  useEffect(()=>{
+    setF(prev=>({
+      ...prev,
+      asaas_id:          c.asaas_id||prev.asaas_id,
+      asaas_status:      c.asaas_status||prev.asaas_status,
+      asaas_status_impl: c.asaas_status_impl||prev.asaas_status_impl,
+      asaas_status_equip:c.asaas_status_equip||prev.asaas_status_equip,
+      asaas_status_sistema:c.asaas_status_sistema||prev.asaas_status_sistema,
+      asaas_link_impl:   c.asaas_link_impl||prev.asaas_link_impl,
+      asaas_link_equip:  c.asaas_link_equip||prev.asaas_link_equip,
+      asaas_link_impl_id:c.asaas_link_impl_id||prev.asaas_link_impl_id,
+      asaas_link_equip_id:c.asaas_link_equip_id||prev.asaas_link_equip_id,
+      asaas_link_impl_expira:c.asaas_link_impl_expira||prev.asaas_link_impl_expira,
+      asaas_link_equip_expira:c.asaas_link_equip_expira||prev.asaas_link_equip_expira,
+      asaas_ultimo_pagamento:c.asaas_ultimo_pagamento||prev.asaas_ultimo_pagamento,
+      status:            c.status||prev.status,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[
+    c.asaas_id, c.asaas_status,
+    c.asaas_status_impl, c.asaas_status_equip, c.asaas_status_sistema,
+    c.asaas_link_impl, c.asaas_link_equip,
+    c.asaas_ultimo_pagamento, c.status,
+  ]);
+
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const fiView={padding:'7px 10px',borderRadius:5,border:'1px solid #ecf0f1',fontSize:13,color:'#555',background:'#f8f9fa',width:'100%',boxSizing:'border-box',minHeight:34};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
@@ -3938,6 +4196,26 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   const [linkEquip,setLinkEquip]=useState(cliente.asaas_link_equip||'');
   const [statusImpl,setStatusImpl]=useState(cliente.asaas_status_impl||'');
   const [statusEquip,setStatusEquip]=useState(cliente.asaas_status_equip||'');
+
+  // FIX: Sincroniza estados locais quando Firestore atualizar via webhook
+  // Sem isso, o badge fica travado no valor do mount mesmo após o onSnapshot disparar
+  useEffect(()=>{
+    // Só atualiza se o novo valor do Firestore for diferente e mais "evoluído"
+    // (evita sobrescrever um RECEIVED recém-gerado com PENDING vindo do cache)
+    const statusPriority={RECEIVED:4,CONFIRMED:4,OVERDUE:3,PENDING:2,CANCELED:1,REFUNDED:1,CHARGEBACK:1,'':0};
+    const novoImpl=cliente.asaas_status_impl||'';
+    const novoEquip=cliente.asaas_status_equip||'';
+    if((statusPriority[novoImpl]||0)>=(statusPriority[statusImpl]||0)){
+      setStatusImpl(novoImpl);
+    }
+    if((statusPriority[novoEquip]||0)>=(statusPriority[statusEquip]||0)){
+      setStatusEquip(novoEquip);
+    }
+    // Links sempre sincronizam (podem ter sido gerados externamente)
+    if(cliente.asaas_link_impl&&cliente.asaas_link_impl!==linkImpl)setLinkImpl(cliente.asaas_link_impl);
+    if(cliente.asaas_link_equip&&cliente.asaas_link_equip!==linkEquip)setLinkEquip(cliente.asaas_link_equip);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[cliente.asaas_status_impl,cliente.asaas_status_equip,cliente.asaas_link_impl,cliente.asaas_link_equip]);
 
   async function gerarNovoLinkImpl(){
     if(cliente.pagamentoI==='Boleto')return;
