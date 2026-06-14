@@ -3783,9 +3783,22 @@ async function asaasCriarAssinatura(customerId,valor,dtBoleto){
     value:valor,nextDueDate:nd,cycle:'MONTHLY',description:'Sistema Secullum — mensalidade'});
 }
 async function asaasCriarLinkPagamento(customerId,valor,billingType,desc){
-  return asaasReq('/paymentLinks','POST',{
-    name:desc,billingType,chargeType:'DETACHED',value:valor,description:desc,
+  const hoje=new Date();
+  const amanha=new Date(hoje);amanha.setDate(hoje.getDate()+1);
+  const dueDate=`${amanha.getFullYear()}-${String(amanha.getMonth()+1).padStart(2,'0')}-${String(amanha.getDate()).padStart(2,'0')}`;
+
+  if(billingType==='PIX'){
+    // Pix: cobrança direta com vencimento amanhã
+    const r=await asaasReq('/payments','POST',{
+      customer:customerId,billingType:'PIX',value:valor,dueDate,description:desc,
+    });
+    return{url:r.invoiceUrl||r.bankSlipUrl||'',id:r.id||''};
+  }
+  // Cartão: link de pagamento
+  const r=await asaasReq('/paymentLinks','POST',{
+    name:desc,billingType:'CREDIT_CARD',chargeType:'DETACHED',value:valor,description:desc,
   });
+  return{url:r.url||r.shortUrl||'',id:r.id||''};
 }
 async function asaasBuscarStatusCliente(customerId){
   try{
@@ -4380,8 +4393,19 @@ Situação atual:
 - Links Pix pendentes: ${pendentePix.length}
 - Aguardando faturamento: ${semFaturamento.length}
 - Total clientes Asaas: ${clientes.filter(c=>c.asaas_id).length}
+
+CLIENTES VENCIDOS (dados reais):
+${vencidos.map(c=>`- ${c.nome} | Tel: ${c.tel||'sem tel'} | Email: ${c.email||'sem email'} | Valor: ${moeda(c.vS||0)}/mês | Status: ${c.asaas_status||'OVERDUE'}`).join('\n')||'Nenhum'}
+
+CLIENTES COM PIX PENDENTE:
+${pendentePix.map(c=>`- ${c.nome} | Tel: ${c.tel||'sem tel'} | Valor: ${moeda(c.vS||0)}/mês`).join('\n')||'Nenhum'}
+
+CLIENTES AGUARDANDO FATURAMENTO:
+${semFaturamento.map(c=>`- ${c.nome} | Vendedor: ${c.vendedor||'—'} | Total: ${moeda(c.total||0)}`).join('\n')||'Nenhum'}
+
 Tom: consultivo, direto, como um gerente experiente ajudando seu financeiro.
-Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
+Use os dados reais dos clientes para dar sugestões específicas.
+Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas, inclua o nome do cliente.`;
     try{
       const resposta=await chamadaIA({
         max_tokens:800,
@@ -4412,7 +4436,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     <>
       {/* Ícone flutuante */}
       <div onClick={()=>setAberto(a=>!a)} style={{
-        position:'fixed',bottom:24,right:24,width:52,height:52,borderRadius:'50%',
+        position:'fixed',bottom:24,left:24,width:52,height:52,borderRadius:'50%',
         background:corWidget,boxShadow:'0 4px 16px rgba(0,0,0,.25)',
         display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
         zIndex:998,transition:'all .2s',
@@ -4427,7 +4451,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
       </div>
 
       {aberto&&(
-        <div style={{position:'fixed',bottom:88,right:24,width:380,height:'65vh',background:'#fff',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,.2)',zIndex:997,display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'sans-serif'}}>
+        <div style={{position:'fixed',bottom:88,left:24,width:380,height:'65vh',background:'#fff',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,.2)',zIndex:997,display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'sans-serif'}}>
           {/* Header */}
           <div style={{background:'#2c3e50',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
             <div>
