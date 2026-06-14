@@ -3924,6 +3924,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   const [statusEquip,setStatusEquip]=useState(cliente.asaas_status_equip||'');
 
   async function gerarNovoLinkImpl(){
+    if(cliente.pagamentoI==='Boleto')return; // Boleto é processado pelo financeiro
     setGerandoImpl(true);setErro('');
     try{
       let asaasId=cliente.asaas_id;
@@ -3934,14 +3935,14 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
       const billingType=cliente.pagamentoI==='Pix'?'PIX':'CREDIT_CARD';
       const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vI)||0,billingType,`Implantação — ${cliente.nome}`);
       const url=link.url||'';
-      console.log('[gerarNovoLinkImpl] url=',url,'link=',link);
       setLinkImpl(url);setStatusImpl('PENDING');
       await onUpdate({...cliente,asaas_id:asaasId,asaas_link_impl:url,asaas_link_impl_id:link.id||'',asaas_status_impl:'PENDING'});
-    }catch(e){setErro('Erro ao gerar link: '+e.message);console.error(e);}
+    }catch(e){setErro('Erro ao gerar link: '+e.message);}
     setGerandoImpl(false);
   }
 
   async function gerarNovoLinkEquip(){
+    if(cliente.pagamentoE==='Boleto')return; // Boleto é processado pelo financeiro
     setGerandoEquip(true);setErro('');
     try{
       let asaasId=cliente.asaas_id;
@@ -3952,10 +3953,9 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
       const billingType=cliente.pagamentoE==='Pix'?'PIX':'CREDIT_CARD';
       const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vE)||0,billingType,`Equipamento — ${cliente.nome}`);
       const url=link.url||'';
-      console.log('[gerarNovoLinkEquip] url=',url,'link=',link);
       setLinkEquip(url);setStatusEquip('PENDING');
       await onUpdate({...cliente,asaas_id:asaasId,asaas_link_equip:url,asaas_link_equip_id:link.id||'',asaas_status_equip:'PENDING'});
-    }catch(e){setErro('Erro ao gerar link: '+e.message);console.error(e);}
+    }catch(e){setErro('Erro ao gerar link: '+e.message);}
     setGerandoEquip(false);
   }
 
@@ -4912,6 +4912,11 @@ export default function App(){
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{position:'absolute',left:10,pointerEvents:'none',zIndex:1}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input value={busca} onChange={e=>setBusca(e.target.value.toUpperCase())} placeholder="BUSCAR CLIENTE..." style={{paddingLeft:32,paddingRight:busca?28:10,height:34,borderRadius:7,border:'1.5px solid #e8eaed',background:'#f5f6fa',color:'#4a4a4a',fontSize:12,width:220,outline:'none',boxSizing:'border-box',fontFamily:'inherit'}}/>
               {busca&&<button onClick={()=>setBusca('')} style={{position:'absolute',right:6,background:'none',border:'none',cursor:'pointer',color:'#aaa',fontSize:16,lineHeight:1,padding:0,display:'flex',alignItems:'center'}}>×</button>}
+            </div>
+            {/* Versão / build */}
+            <div style={{fontSize:10,color:'#bdc3c7',borderLeft:'1px solid #e8eaed',paddingLeft:12,lineHeight:1.4,display:'flex',flexDirection:'column',alignItems:'flex-end'}}>
+              <span style={{color:'#27ae60',fontWeight:700}}>● ao vivo</span>
+              <span>{new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleDateString('pt-BR')} {new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
             </div>
             {/* Avatar + nome usuário */}
             <div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid #e8eaed',paddingLeft:16}}>
