@@ -3375,7 +3375,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
     const historico=(orc.followup||[]).map(f=>`- ${new Date(f.data).toLocaleDateString('pt-BR')}: ${f.descricao}`).join('\n')||'Nenhum contato registrado ainda.';
     const {vE,vS}=extrairValores(orc);
     try{
-      const resposta=await chamadaClaude({
+      const resposta=await chamadaIA({
         max_tokens:1000,
         system:`Você é um co-piloto de vendas especialista em sistemas de ponto e RH da Secullum. 
 Seu papel é ajudar o vendedor ${nomeVendedor} a fechar orçamentos com linguagem direta, persuasiva, profissional mas informal — como um colega sênior experiente.
@@ -3819,30 +3819,34 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 // MÓDULO ASAAS — INTEGRAÇÃO FINANCEIRA COMPLETA
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CLAUDE_HEADERS={
-  'Content-Type':'application/json',
-  'anthropic-version':'2023-06-01',
-  'anthropic-dangerous-direct-browser-access':'true',
-};
+// ─── PROXIES VIA FIREBASE CLOUD FUNCTIONS ────────────────────────────────────
+// Substitui chamadas diretas às APIs (bloqueadas por CORS no browser)
+const FUNCTIONS_URL = 'https://us-central1-secullum-crm.cloudfunctions.net';
 
-// Wrapper para chamadas à API Claude com tratamento de erro unificado
-async function chamadaClaude({system,messages,max_tokens=800}){
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:CLAUDE_HEADERS,
-    body:JSON.stringify({
-      model:'claude-sonnet-4-6',
-      max_tokens,
-      system,
-      messages,
-    }),
+async function asaasReq(path, method='GET', body=null){
+  const resp = await fetch(`${FUNCTIONS_URL}/asaasProxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, method, body }),
   });
-  const data=await resp.json();
-  if(!resp.ok){
-    throw new Error(data?.error?.message||`Erro ${resp.status}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err?.errors?.[0]?.description || err?.error || `Erro ${resp.status}`);
   }
-  return data.content?.[0]?.text||'';
+  return resp.json();
 }
+
+async function chamadaIA({ system, messages, max_tokens = 800 }) {
+  const resp = await fetch(`${FUNCTIONS_URL}/openaiProxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system, messages, max_tokens }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data?.error || `Erro ${resp.status}`);
+  return data.text || '';
+}
+// ─── FIM PROXIES ──────────────────────────────────────────────────────────────
 // Chave configurada em .env como REACT_APP_ASAAS_KEY
 const ASAAS_KEY=process.env.REACT_APP_ASAAS_KEY||'';
 const ASAAS_URL='https://sandbox.asaas.com/api/v3'; // trocar para api.asaas.com em produção
@@ -4484,7 +4488,7 @@ Situação atual:
 Tom: consultivo, direto, como um gerente experiente ajudando seu financeiro.
 Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     try{
-      const resposta=await chamadaClaude({
+      const resposta=await chamadaIA({
         max_tokens:800,
         system:contexto,
         messages:novaMsgs.map(m=>({role:m.role,content:m.content})),
@@ -4499,7 +4503,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
   async function gerarMensagemCobranca(cliente){
     setClienteMsg(cliente);setIaLoading(true);setMensagemGerada('');
     try{
-      const resposta=await chamadaClaude({
+      const resposta=await chamadaIA({
         max_tokens:400,
         system:`Você é ${nomeFinanceiro} do financeiro da Guion Informática. Escreva mensagem de cobrança simpática e eficaz para WhatsApp. Máximo 4 linhas. Tom cordial.`,
         messages:[{role:'user',content:`Mensagem para ${cliente.contato||cliente.nome} da empresa ${cliente.nome}. Boleto vencido. Valor: ${moeda(cliente.vS||0)}/mês.`}],
