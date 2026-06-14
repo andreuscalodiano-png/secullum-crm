@@ -1097,10 +1097,12 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
 }
 
 // ─── FORMULÁRIO NOVO CLIENTE ──────────────────────────────────────────────────
-function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados}){
+function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados,currentUser}){
   const hoje=new Date();
   const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
   const hojeISO=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  // Preenche vendedor com usuário logado
+  const nomeLogado=currentUser?.nome||currentUser?.email?.split('@')[0]||'';
   const [f,setF]=useState({
     data:hojeISO,
     nome:dadosImportados?.nome||'',
@@ -1117,14 +1119,13 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     email:dadosImportados?.email||'',
     status:'Aguardando',
     plano:dadosImportados?.plano||'Basic',
-    vendedor:dadosImportados?.vendedor||'',
+    vendedor:dadosImportados?.vendedor||nomeLogado,
     nfe:dadosImportados?.nfe||'Não',
     renovacao:'',
     obs:dadosImportados?.obs||'',
-    equipPago:'Não se aplica',
+    despachado:'Não',
     equipRastreio:'',
     equipDataEnvio:'',
-    // Campos Asaas
     pagamentoI:dadosImportados?.pagamentoI||'Boleto',
     parcelasI:dadosImportados?.parcelasI||1,
     pagamentoE:dadosImportados?.pagamentoE||'Boleto',
@@ -1134,8 +1135,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
   const tot=(parseValor(f.vI)||0)+(parseValor(f.vE)||0)+(parseValor(f.vS)||0);
   const equipSel=equipamentosCad.find(e=>e.nome===f.equipTipo);
   const requerPag=equipSel?equipSel.requerPagamento:false;
-
   const [erros,setErros]=useState({});
+
   function validar(){
     const e={};
     if(!f.nome.trim())e.nome='Obrigatório';
@@ -1144,6 +1145,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     if(!f.email.trim())e.email='Obrigatório';
     if(!f.plano)e.plano='Obrigatório';
     if(!f.equipTipo)e.equipTipo='Obrigatório';
+    if(!f.vendedor||f.vendedor==='—')e.vendedor='Obrigatório';
     if(!f.vS&&parseValor(f.vS)===0)e.vS='Informe o valor';
     setErros(e);
     return Object.keys(e).length===0;
@@ -1152,12 +1154,20 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     if(!validar())return;
     const d=f.data?new Date(f.data+'T12:00:00'):null;
     const vI=parseValor(f.vI),vE=parseValor(f.vE),vS=parseValor(f.vS);
-    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,nome:f.nome.trim().toUpperCase(),cnpj:f.cnpj.trim().toUpperCase(),contato:f.contato.trim().toUpperCase(),tel:f.tel.trim().toUpperCase(),func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,renovacao:f.renovacao,obs:f.obs,equipPago:requerPag?f.equipPago:'Não se aplica',equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio});
+    onSave({_base:false,data:d,ano:d?d.getFullYear():null,mes:d?d.getMonth():null,
+      nome:f.nome.trim().toUpperCase(),cnpj:f.cnpj.trim().toUpperCase(),
+      contato:f.contato.trim().toUpperCase(),tel:f.tel.trim().toUpperCase(),
+      func:parseInt(f.func)||0,equipTipo:f.equipTipo,vI,vE,vS,total:vI+vE+vS,
+      pagamento:f.pagamento,dtBoleto:f.dtBoleto,email:f.email.trim(),
+      status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,
+      renovacao:f.renovacao,obs:f.obs,
+      despachado:f.despachado,equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio,
+      pagamentoI:f.pagamentoI,parcelasI:f.parcelasI,pagamentoE:f.pagamentoE,parcelasE:f.parcelasE,
+    });
   }
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const fiErr=(k)=>({...fi,border:erros[k]?'1px solid #e74c3c':'1px solid #dde1e7',background:erros[k]?'#fff5f5':'#fff'});
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
-  const lblReq=(k)=>(<label style={{...lbl,color:erros[k]?'#e74c3c':'#7f8c8d'}}>{erros[k]?'* '+erros[k]:lbl}</label>);
   const sec={background:C.card,borderRadius:8,padding:'16px',marginBottom:12,boxShadow:'0 1px 3px rgba(0,0,0,.06)'};
   const listaVendedores=vendedoresCad.length>0?vendedoresCad.map(v=>v.nome):[...new Set(CLIENTES_BASE.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
   const listaEquips=equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS;
@@ -1179,22 +1189,26 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
           </div>
         </div>
       )}
+
+      {/* Dados da empresa */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={fiErr('nome')} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
+          <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={{...fiErr('nome'),textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())}/></div>
           <div><label style={lbl}>Data da venda</label><input style={fi} type="date" value={f.data} onChange={e=>up('data',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={fiErr('cnpj')} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
+          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={{...fiErr('cnpj'),textTransform:'uppercase'}} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())}/></div>
           <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-          <div><label style={lbl}>Contato</label><input style={fi} value={f.contato} onChange={e=>up('contato',e.target.value.toUpperCase())} style={{...fi,textTransform:'uppercase'}}/></div>
+          <div><label style={lbl}>Contato</label><input style={{...fi,textTransform:'uppercase'}} value={f.contato} onChange={e=>up('contato',e.target.value.toUpperCase())}/></div>
           <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Telefone — '+erros.tel:'Telefone *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
           <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
         </div>
       </div>
+
+      {/* Produtos e valores */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#e67e22',marginBottom:12,textTransform:'uppercase'}}>Produtos e valores</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -1205,63 +1219,125 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
               {listaEquips.map(e=><option key={e}>{e}</option>)}
             </select>
           </div>
-          <div><label style={lbl}>Implantação (R$)</label><input style={fi} type="number" step="0.01" value={f.vI} onChange={e=>up('vI',e.target.value)}/></div>
+          <div><label style={lbl}>Implantação (R$)</label><input style={fi} type="number" step="0.01" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/></div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Equipamento (R$)</label><input style={fi} type="number" step="0.01" value={f.vE} onChange={e=>up('vE',e.target.value)}/></div>
-          <div><label style={{...lbl,color:erros.vS?'#e74c3c':'#7f8c8d'}}>{erros.vS?'Sistema/mês — '+erros.vS:'Sistema/mês (R$) *'}</label><input style={fiErr('vS')} type="number" step="0.01" value={f.vS} onChange={e=>up('vS',e.target.value)}/></div>
+          <div><label style={lbl}>Equipamento (R$)</label><input style={fi} type="number" step="0.01" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/></div>
+          <div><label style={{...lbl,color:erros.vS?'#e74c3c':'#7f8c8d'}}>{erros.vS?'Sistema/mês — '+erros.vS:'Sistema/mês (R$) *'}</label><input style={fiErr('vS')} type="number" step="0.01" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/></div>
         </div>
-        {/* Pagamento do equipamento */}
-        {requerPag&&(
-          <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:6,padding:'12px',marginBottom:10}}>
-            <div style={{fontWeight:700,fontSize:11,color:C.orange,marginBottom:8,textTransform:'uppercase'}}>📦 Pagamento do equipamento</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-              <div><label style={lbl}>Status do pagamento</label>
-                <select style={fi} value={f.equipPago} onChange={e=>up('equipPago',e.target.value)}>
-                  <option value="Não pago">❌ Não pago</option>
-                  <option value="Pago">✅ Pago</option>
-                  <option value="Não se aplica">— Não se aplica</option>
-                </select>
-              </div>
-              {f.equipPago==='Pago'&&<>
-                <div><label style={lbl}>Nº rastreio (Sedex)</label><input style={fi} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value)} placeholder="XX000000000BR"/></div>
-                <div><label style={lbl}>Data de envio</label><input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/></div>
-              </>}
-            </div>
-          </div>
-        )}
         <div style={{background:'#ebf5fb',borderRadius:6,padding:'10px 14px',display:'flex',justifyContent:'space-between'}}>
           <span style={{fontSize:13,color:C.textMuted,fontWeight:600}}>TOTAL</span>
           <span style={{fontSize:18,fontWeight:700,color:'#3498db'}}>{moeda(tot)}</span>
         </div>
       </div>
+
+      {/* Pagamento por cobrança */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase'}}>💳 Formas de pagamento</div>
+
+        {/* Implantação */}
+        {parseValor(f.vI)>0&&(
+          <div style={{background:'#fff8ee',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #fde68a'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#b45309',marginBottom:8}}>🔧 Implantação — {moeda(parseValor(f.vI))}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={lbl}>Forma</label>
+                <select style={fi} value={f.pagamentoI} onChange={e=>{up('pagamentoI',e.target.value);if(e.target.value==='Pix')up('parcelasI',1);}}>
+                  {FORMAS_ASAAS.map(x=><option key={x}>{x}</option>)}
+                </select>
+              </div>
+              <div><label style={lbl}>Parcelas</label>
+                <select style={fi} value={f.parcelasI} onChange={e=>up('parcelasI',+e.target.value)} disabled={f.pagamentoI==='Pix'}>
+                  {[1,2,3].map(n=><option key={n} value={n}>{n}x</option>)}
+                </select>
+              </div>
+            </div>
+            {f.pagamentoI==='Boleto'&&<div style={{marginTop:8,fontSize:11,color:'#b45309',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #fde68a'}}>📄 Financeiro gera o boleto</div>}
+            {(f.pagamentoI==='Pix'||f.pagamentoI==='Cartão')&&<div style={{marginTop:8,fontSize:11,color:'#27ae60',background:'#f0fff4',borderRadius:5,padding:'6px 10px',border:'1px solid #9ae6b4'}}>⚡ Você gera o link ao salvar</div>}
+          </div>
+        )}
+
+        {/* Equipamento */}
+        {parseValor(f.vE)>0&&(
+          <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #9ae6b4'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8}}>💻 Equipamento — {moeda(parseValor(f.vE))}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={lbl}>Forma</label>
+                <select style={fi} value={f.pagamentoE} onChange={e=>{up('pagamentoE',e.target.value);if(e.target.value==='Pix')up('parcelasE',1);}}>
+                  {FORMAS_ASAAS.map(x=><option key={x}>{x}</option>)}
+                </select>
+              </div>
+              <div><label style={lbl}>Parcelas</label>
+                <select style={fi} value={f.parcelasE} onChange={e=>up('parcelasE',+e.target.value)} disabled={f.pagamentoE==='Pix'}>
+                  {[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>{n}x</option>)}
+                </select>
+              </div>
+            </div>
+            {f.pagamentoE==='Boleto'&&<div style={{marginTop:8,fontSize:11,color:'#276749',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #9ae6b4'}}>📄 Financeiro gera o boleto</div>}
+            {(f.pagamentoE==='Pix'||f.pagamentoE==='Cartão')&&<div style={{marginTop:8,fontSize:11,color:'#27ae60',background:'#f0fff4',borderRadius:5,padding:'6px 10px',border:'1px solid #9ae6b4'}}>⚡ Você gera o link ao salvar</div>}
+          </div>
+        )}
+
+        {/* Sistema */}
+        {parseValor(f.vS)>0&&(
+          <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',border:'1px solid #bee3f8'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',marginBottom:8}}>🔄 Sistema — {moeda(parseValor(f.vS))}/mês</div>
+            <div><label style={lbl}>Data 1º vencimento *</label><input style={fi} type="date" value={f.dtBoleto} onChange={e=>up('dtBoleto',e.target.value)}/></div>
+            <div style={{marginTop:8,fontSize:11,color:'#2b6cb0',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #bee3f8'}}>📄 Boleto recorrente mensal — Financeiro processa</div>
+          </div>
+        )}
+      </div>
+
+      {/* Contrato */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Forma pagamento</label><select style={fi} value={f.pagamento} onChange={e=>up('pagamento',e.target.value)}>{FORMAS.map(x=><option key={x}>{x}</option>)}</select></div>
-          <div><label style={lbl}>Data 1º boleto</label><input style={fi} type="date" value={f.dtBoleto} onChange={e=>up('dtBoleto',e.target.value)}/></div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.plano?'#e74c3c':'#7f8c8d'}}>{erros.plano?'Plano — '+erros.plano:'Plano *'}</label>
-            <select style={fiErr('plano')} value={f.plano} onChange={e=>up('plano',e.target.value)}>{PLANOS.map(p=><option key={p}>{p}</option>)}</select></div>
-          <div><label style={lbl}>Vendedor</label>
-            <select style={fi} value={f.vendedor} onChange={e=>up('vendedor',e.target.value)}>
+          <div>
+            <label style={{...lbl,color:erros.vendedor?'#e74c3c':'#7f8c8d'}}>{erros.vendedor?'Vendedor — '+erros.vendedor:'Vendedor *'}</label>
+            <select style={fiErr('vendedor')} value={f.vendedor} onChange={e=>up('vendedor',e.target.value)}>
               <option value="">— Selecione —</option>
               {listaVendedores.map(v=><option key={v}>{v}</option>)}
             </select>
           </div>
-          <div><label style={lbl}>Status</label><select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}><option value="Faturado">Faturado</option><option value="Aguardando">Aguardando</option></select></div>
-          <div><label style={lbl}>Emitir NFE</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
+          <div><label style={{...lbl,color:erros.plano?'#e74c3c':'#7f8c8d'}}>{erros.plano?'Plano — '+erros.plano:'Plano *'}</label>
+            <select style={fiErr('plano')} value={f.plano} onChange={e=>up('plano',e.target.value)}>{PLANOS.map(p=><option key={p}>{p}</option>)}</select>
+          </div>
         </div>
-        <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())} style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}}/></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Status</label><select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}><option value="Aguardando">⏳ Aguardando</option><option value="Faturado">✓ Faturado</option></select></div>
+          <div><label style={lbl}>Emitir NF-e</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
+        </div>
+        <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/></div>
       </div>
+
+      {/* Despacho do equipamento */}
+      {requerPag&&(
+        <div style={{...sec,borderLeft:`4px solid ${C.orange}`}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Equipamento</div>
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:f.despachado==='Sim'?12:0}}>
+            <label style={lbl}>Despachado?</label>
+            <div style={{display:'flex',gap:6}}>
+              {['Não','Sim'].map(v=>(
+                <button key={v} onClick={()=>up('despachado',v)} style={{padding:'6px 18px',borderRadius:6,border:`2px solid ${f.despachado===v?(v==='Sim'?C.green:C.red):'#dde1e7'}`,background:f.despachado===v?(v==='Sim'?'#f0fff4':'#fff5f5'):'#fff',color:f.despachado===v?(v==='Sim'?C.green:C.red):C.textMuted,fontWeight:700,cursor:'pointer',fontSize:12}}>
+                  {v==='Sim'?'✅ Sim':'❌ Não'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {f.despachado==='Sim'&&(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+              <div><label style={lbl}>Nº rastreio (Sedex)</label><input style={{...fi,textTransform:'uppercase'}} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value.toUpperCase())} placeholder="XX000000000BR"/></div>
+              <div><label style={lbl}>Data de envio</label><input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/></div>
+            </div>
+          )}
+        </div>
+      )}
+
       <button onClick={salvar} style={{width:'100%',padding:'12px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
         <i className="ti ti-device-floppy"/> Salvar cliente
       </button>
     </div>
   );
 }
-
 // ─── DETALHE CLIENTE ──────────────────────────────────────────────────────────
 // ─── CAMPO HELPER (fora de DetalheCliente para evitar perda de foco) ──────────
 function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
@@ -1321,6 +1397,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
     equipPago:c.equipPago||'Não se aplica',
     equipRastreio:c.equipRastreio||'',
     equipDataEnvio:c.equipDataEnvio||'',
+    despachado:c.despachado||'Não',
   });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -1394,7 +1471,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
               <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>{l}</div>
               {editMode
                 ? <input style={{...fi,textAlign:'center',fontSize:14,fontWeight:700,padding:'4px 6px'}} type="number" step="0.01" value={f[k]} onChange={e=>up(k,e.target.value)}/>
-                : <div style={{fontSize:15,fontWeight:700}}>{moeda(c[k])}</div>
+                : <div style={{fontSize:15,fontWeight:700,color:'#2c3e50'}}>{moeda(parseValor(String(c[k]||0)))}</div>
               }
             </div>
           ))}
@@ -1435,74 +1512,59 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Observações" field="obs" type="textarea" span={2}/>
       </div>
 
-      {/* Pagamento do equipamento */}
+      {/* Despacho do equipamento */}
       {(()=>{
         const equipSel=(equipamentosCad||[]).find(e=>e.nome===f.equipTipo);
-        const requerPag=equipSel?equipSel.requerPagamento:(f.equipPago&&f.equipPago!=='Não se aplica');
-        if(!requerPag&&f.equipPago==='Não se aplica')return null;
+        const requerPag=equipSel?equipSel.requerPagamento:(f.despachado&&f.despachado!=='Não');
+        if(!requerPag&&!f.despachado)return null;
         return(
           <div style={{...sec,borderLeft:`4px solid ${C.orange}`}}>
-            <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Pagamento do equipamento</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-              <div>
-                <label style={lbl}>Status</label>
-                {editMode
-                  ?<select style={fi} value={f.equipPago} onChange={e=>up('equipPago',e.target.value)}>
-                    <option value="Não pago">❌ Não pago</option>
-                    <option value="Pago">✅ Pago</option>
-                    <option value="Não se aplica">— Não se aplica</option>
-                  </select>
-                  :<div style={{...fiView,fontWeight:700,color:f.equipPago==='Pago'?C.green:f.equipPago==='Não pago'?C.red:C.textMuted}}>
-                    {f.equipPago==='Pago'?'✅ Pago':f.equipPago==='Não pago'?'❌ Não pago':'— Não se aplica'}
-                  </div>
-                }
-              </div>
-              <div>
-                <label style={lbl}>Nº rastreio (Sedex)</label>
-                {editMode
-                  ?<input style={{...fi,textTransform:'uppercase'}} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value.toUpperCase())} placeholder="XX000000000BR"/>
-                  :<div style={{display:'flex',alignItems:'center',gap:6}}>
-                    <div style={{...fiView,fontFamily:'monospace',letterSpacing:1,flex:1}}>{f.equipRastreio||'—'}</div>
-                    {f.equipRastreio&&<>
-                      <button title="Copiar código" onClick={()=>{navigator.clipboard.writeText(f.equipRastreio);}} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',color:C.blue,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4}}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                        Copiar
-                      </button>
-                      <a href={`https://rastreamento.correios.com.br/app/index.php?objetos=${f.equipRastreio}`} target="_blank" rel="noopener noreferrer" title="Rastrear nos Correios" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.teal,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none'}}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                        Correios
-                      </a>
-                      <a href={`mailto:${f.email}?subject=${encodeURIComponent('Seu equipamento foi despachado! 📦 — Guion Informática')}&body=${encodeURIComponent('Olá, '+((f.contato||f.nome)||'')+'!\n\nSeu equipamento foi despachado e já está a caminho!\n\nCódigo de rastreio: '+f.equipRastreio+'\n\nAcompanhe a entrega clicando no link abaixo:\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\nQualquer dúvida, estamos à disposição.\n\nAtenciosamente,\nGuion Informática\nfinanceiro@guionstore.com.br')}`} title={`Enviar email para ${f.email||'(sem email)'}`} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.orange,fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none',opacity:f.email?1:0.4,pointerEvents:f.email?'auto':'none'}}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                        Email
-                      </a>
-                      {(()=>{
-                        const waNum=telParaWa(f.tel||'');
-                        const waNome=(f.contato||f.nome||'').split(' ')[0];
-                        const waMsg=encodeURIComponent('Olá, '+waNome+'! 😊\n\nSeu equipamento foi despachado e já está a caminho!\n\n📦 *Código de rastreio:* '+f.equipRastreio+'\n\n🔍 Acompanhe a entrega pelo link:\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\nQualquer dúvida estamos à disposição!\n\n_Guion Informática_');
-                        return(
-                          <a href={waNum?`https://wa.me/${waNum}?text=${waMsg}`:'#'} target="_blank" rel="noopener noreferrer" title={waNum?`WhatsApp ${f.tel}`:'Telefone não cadastrado'} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:'#25D366',fontSize:11,fontWeight:700,flexShrink:0,display:'flex',alignItems:'center',gap:4,textDecoration:'none',opacity:waNum?1:0.4,pointerEvents:waNum?'auto':'none'}}>
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-                            WhatsApp
-                          </a>
-                        );
-                      })()}
-                    </>}
-                  </div>
-                }
-              </div>
-              <div>
-                <label style={lbl}>Data de envio</label>
-                {editMode
-                  ?<input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/>
-                  :<div style={fiView}>{f.equipDataEnvio?new Date(f.equipDataEnvio+'T12:00:00').toLocaleDateString('pt-BR'):'—'}</div>
-                }
-              </div>
+            <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Equipamento — Despacho</div>
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:(f.despachado==='Sim')?12:0}}>
+              <label style={{fontSize:11,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase'}}>Despachado?</label>
+              {editMode?(
+                <div style={{display:'flex',gap:6}}>
+                  {['Não','Sim'].map(v=>(
+                    <button key={v} onClick={()=>up('despachado',v)} style={{padding:'6px 18px',borderRadius:6,border:`2px solid ${f.despachado===v?(v==='Sim'?C.green:C.red):'#dde1e7'}`,background:f.despachado===v?(v==='Sim'?'#f0fff4':'#fff5f5'):'#fff',color:f.despachado===v?(v==='Sim'?C.green:C.red):C.textMuted,fontWeight:700,cursor:'pointer',fontSize:12}}>
+                      {v==='Sim'?'✅ Sim':'❌ Não'}
+                    </button>
+                  ))}
+                </div>
+              ):(
+                <span style={{fontWeight:700,color:f.despachado==='Sim'?C.green:C.red,fontSize:13}}>
+                  {f.despachado==='Sim'?'✅ Despachado':'❌ Não despachado'}
+                </span>
+              )}
             </div>
+            {(f.despachado==='Sim')&&(
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+                <div>
+                  <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Nº rastreio (Sedex)</label>
+                  {editMode
+                    ?<input style={{...fi,textTransform:'uppercase'}} value={f.equipRastreio} onChange={e=>up('equipRastreio',e.target.value.toUpperCase())} placeholder="XX000000000BR"/>
+                    :<div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <div style={{...fiView,fontFamily:'monospace',letterSpacing:1,flex:1}}>{f.equipRastreio||'—'}</div>
+                      {f.equipRastreio&&<>
+                        <button title="Copiar código" onClick={()=>{navigator.clipboard.writeText(f.equipRastreio);}} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',color:C.blue,fontSize:11,fontWeight:700,flexShrink:0}}>📋</button>
+                        <a href={`https://rastreamento.correios.com.br/app/index.php?objetos=${f.equipRastreio}`} target="_blank" rel="noopener noreferrer" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.teal,fontSize:11,fontWeight:700,flexShrink:0,textDecoration:'none'}}>📦 Correios</a>
+                        <a href={`mailto:${f.email}?subject=${encodeURIComponent('Seu equipamento foi despachado! 📦')}&body=${encodeURIComponent('Olá!\n\nSeu equipamento foi despachado!\n\nRastreio: '+f.equipRastreio+'\nhttps://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio)}`} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',color:C.orange,fontSize:11,fontWeight:700,flexShrink:0,textDecoration:'none',opacity:f.email?1:0.4}}>✉️</a>
+                        {(()=>{const waNum=telParaWa(f.tel||'');const waNome=(f.contato||f.nome||'').split(' ')[0];const waMsg=encodeURIComponent('Olá, '+waNome+'! 😊\n\nSeu equipamento foi despachado!\n\n📦 *Rastreio:* '+f.equipRastreio+'\n🔍 https://rastreamento.correios.com.br/app/index.php?objetos='+f.equipRastreio+'\n\n_Guion Informática_');return <a href={waNum?`https://wa.me/${waNum}?text=${waMsg}`:'#'} target="_blank" rel="noopener noreferrer" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',color:'#25D366',fontSize:11,fontWeight:700,flexShrink:0,textDecoration:'none',opacity:waNum?1:0.4}}>📲 WA</a>;})()}
+                      </>}
+                    </div>
+                  }
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Data de envio</label>
+                  {editMode
+                    ?<input style={fi} type="date" value={f.equipDataEnvio} onChange={e=>up('equipDataEnvio',e.target.value)}/>
+                    :<div style={fiView}>{f.equipDataEnvio?new Date(f.equipDataEnvio+'T12:00:00').toLocaleDateString('pt-BR'):'—'}</div>
+                  }
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
-
       {/* PAINEL ASAAS */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -1719,7 +1781,13 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
   function salvarOrdemMenu(){
     onMenuOrderChange(localOrder);
-    try{localStorage.setItem('crm_menu_order',JSON.stringify(localOrder));}catch(e){}
+    // Salva no Firestore vinculado ao usuário logado
+    try{
+      const uid=auth.currentUser?.uid;
+      if(uid){
+        setDoc(doc(db,'usuarios',uid),{menuOrder:localOrder},{merge:true});
+      }
+    }catch(e){}
   }
 
   function onDragStart(id){setDragMenuId(id);}
@@ -4245,45 +4313,98 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
 // ─── FIM MÓDULO ASAAS ────────────────────────────────────────────────────────
 
 // ─── WIDGET FINANCEIRO IA FLUTUANTE ──────────────────────────────────────────
+// Estado do chat mantido fora do componente para não perder ao re-render
+const _chatMsgs={};
+const _chatInput={};
+
 function WidgetFinanceiro({currentUser,clientes,todos}){
   const [aberto,setAberto]=useState(false);
-  const [aba,setAba]=useState('resumo');
+  const [aba,setAba]=useState('chat');
+  const [msgs,setMsgs]=useState([]);
+  const [input,setInput]=useState('');
   const [iaLoading,setIaLoading]=useState(false);
   const [mensagemGerada,setMensagemGerada]=useState('');
   const [clienteMsg,setClienteMsg]=useState(null);
+  const [iniciado,setIniciado]=useState(false);
+  const chatRef=useRef(null);
+  const inputRef=useRef(null);
   const nomeFinanceiro=currentUser?.nome?.split(' ')[0]||'Financeiro';
 
   const vencidos=clientes.filter(c=>c.asaas_status==='OVERDUE');
-  const pendentePix=clientes.filter(c=>c.asaas_link_impl||c.asaas_link_equip).filter(c=>c.asaas_status==='PENDING');
+  const pendentePix=clientes.filter(c=>(c.asaas_link_impl||c.asaas_link_equip)&&c.asaas_status==='PENDING');
   const semFaturamento=clientes.filter(c=>!c.asaas_id&&!c._base&&c.status==='Aguardando');
   const totalAberto=vencidos.reduce((s,c)=>s+(c.vS||0),0);
   const temAlertas=vencidos.length>0||pendentePix.length>0||semFaturamento.length>0;
-
-  // Cor do ícone
   const corWidget=vencidos.length>0?'#e74c3c':temAlertas?'#f5a623':'#27ae60';
 
-  async function gerarMensagem(cliente){
-    setClienteMsg(cliente);setIaLoading(true);setMensagemGerada('');
-    const diasAtraso=cliente.asaas_status==='OVERDUE'?'em atraso':
-      cliente.asaas_link_impl&&!cliente.asaas_status_impl==='RECEIVED'?'link Pix não pago':'pendente';
+  // Scroll automático no chat
+  useEffect(()=>{if(chatRef.current)chatRef.current.scrollTop=chatRef.current.scrollHeight;},[msgs]);
+
+  // Mensagem inicial proativa ao abrir pela primeira vez
+  useEffect(()=>{
+    if(aberto&&!iniciado){
+      setIniciado(true);
+      const briefing=[];
+      if(vencidos.length>0)briefing.push(`🔴 ${vencidos.length} cliente(s) com boleto vencido — total em atraso: ${moeda(totalAberto)}`);
+      if(pendentePix.length>0)briefing.push(`🟡 ${pendentePix.length} link(s) Pix aguardando pagamento`);
+      if(semFaturamento.length>0)briefing.push(`⏳ ${semFaturamento.length} cliente(s) aguardando faturamento`);
+      const resumo=briefing.length>0?briefing.join('\n'):'✅ Tudo em dia! Nenhuma ação urgente.';
+      enviarIA(`Olá! Sou o assistente financeiro. Aqui está seu briefing de hoje, ${nomeFinanceiro}:\n\n${resumo}\n\nComo posso te ajudar?`,true);
+    }
+  },[aberto]);
+
+  async function enviarIA(texto,isBot=false){
+    if(isBot){
+      setMsgs(m=>[...m,{role:'assistant',content:texto}]);
+      return;
+    }
+    if(!texto.trim())return;
+    const novaMsgs=[...msgs,{role:'user',content:texto}];
+    setMsgs(novaMsgs);setInput('');setIaLoading(true);
+    // Contexto financeiro
+    const contexto=`Você é um gerente financeiro consultivo da Guion Informática.
+Chame o usuário pelo nome: ${nomeFinanceiro}.
+Situação atual:
+- Clientes vencidos: ${vencidos.length} (${moeda(totalAberto)} em atraso)
+- Links Pix pendentes: ${pendentePix.length}
+- Aguardando faturamento: ${semFaturamento.length}
+- Total clientes Asaas: ${clientes.filter(c=>c.asaas_id).length}
+Tom: consultivo, direto, como um gerente experiente ajudando seu financeiro.
+Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     try{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          model:'claude-sonnet-4-6',
-          max_tokens:600,
-          system:`Você é ${nomeFinanceiro}, do financeiro da Guion Informática. 
-Escreva mensagens de cobrança profissionais, simpáticas e eficazes para WhatsApp.
-Tom: cordial, não agressivo, mas direto. Máximo 4 linhas. Use emojis com moderação.`,
-          messages:[{role:'user',content:`Gere uma mensagem de WhatsApp para ${cliente.contato||cliente.nome}, do financeiro da empresa ${cliente.nome}.
-Situação: boleto ${diasAtraso}. Valor: ${moeda(cliente.vS||0)}/mês.
-Meu nome é ${nomeFinanceiro}. Seja simpático mas eficaz em cobrar.`}],
+          model:'claude-sonnet-4-6',max_tokens:800,
+          system:contexto,
+          messages:novaMsgs.map(m=>({role:m.role,content:m.content})),
+        }),
+      });
+      const data=await resp.json();
+      const resposta=data.content?.[0]?.text||'Não consegui processar.';
+      setMsgs(m=>[...m,{role:'assistant',content:resposta}]);
+    }catch(e){
+      setMsgs(m=>[...m,{role:'assistant',content:'Erro de conexão. Tente novamente.'}]);
+    }
+    setIaLoading(false);
+  }
+
+  async function gerarMensagemCobranca(cliente){
+    setClienteMsg(cliente);setIaLoading(true);setMensagemGerada('');
+    try{
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-6',max_tokens:400,
+          system:`Você é ${nomeFinanceiro} do financeiro da Guion Informática. Escreva mensagem de cobrança simpática e eficaz para WhatsApp. Máximo 4 linhas. Tom cordial.`,
+          messages:[{role:'user',content:`Mensagem para ${cliente.contato||cliente.nome} da empresa ${cliente.nome}. Boleto vencido. Valor: ${moeda(cliente.vS||0)}/mês.`}],
         }),
       });
       const data=await resp.json();
       setMensagemGerada(data.content?.[0]?.text||'');
-    }catch(e){setMensagemGerada('Erro ao gerar mensagem.');}
+    }catch(e){setMensagemGerada('Erro ao gerar.');}
     setIaLoading(false);
   }
 
@@ -4305,106 +4426,111 @@ Meu nome é ${nomeFinanceiro}. Seja simpático mas eficaz em cobrar.`}],
         )}
       </div>
 
-      {/* Painel */}
       {aberto&&(
-        <div style={{position:'fixed',bottom:88,right:24,width:360,maxHeight:'70vh',background:'#fff',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,.2)',zIndex:997,display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'sans-serif'}}>
+        <div style={{position:'fixed',bottom:88,right:24,width:380,height:'65vh',background:'#fff',borderRadius:12,boxShadow:'0 8px 32px rgba(0,0,0,.2)',zIndex:997,display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'sans-serif'}}>
           {/* Header */}
-          <div style={{background:'#2c3e50',padding:'14px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{background:'#2c3e50',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',flexShrink:0}}>
             <div>
               <div style={{color:'#fff',fontWeight:700,fontSize:13}}>💰 Assistente Financeiro</div>
-              <div style={{color:'#7f8c8d',fontSize:11,marginTop:2}}>Oi {nomeFinanceiro}! Aqui seu resumo.</div>
+              <div style={{color:'#7f8c8d',fontSize:10,marginTop:1}}>Oi {nomeFinanceiro}!</div>
             </div>
             <button onClick={()=>setAberto(false)} style={{background:'none',border:'none',color:'#7f8c8d',fontSize:18,cursor:'pointer'}}>×</button>
           </div>
 
           {/* Abas */}
-          <div style={{display:'flex',borderBottom:'1px solid #e8eaed'}}>
-            {[['resumo','📊 Resumo'],['vencidos',`🔴 Vencidos (${vencidos.length})`],['pendentes',`🟡 Pix (${pendentePix.length})`],['faturar',`⏳ Faturar (${semFaturamento.length})`]].map(([id,l])=>(
-              <button key={id} onClick={()=>{setAba(id);setMensagemGerada('');setClienteMsg(null);}} style={{flex:1,padding:'8px 4px',border:'none',borderBottom:aba===id?'2px solid #f5a623':'2px solid transparent',background:'transparent',cursor:'pointer',fontSize:10,fontWeight:aba===id?700:400,color:aba===id?'#f5a623':'#7f8c8d'}}>{l}</button>
+          <div style={{display:'flex',borderBottom:'1px solid #e8eaed',flexShrink:0}}>
+            {[['chat','💬 Chat'],['vencidos',`🔴 (${vencidos.length})`],['pendentes',`🟡 (${pendentePix.length})`],['faturar',`⏳ (${semFaturamento.length})`]].map(([id,l])=>(
+              <button key={id} onClick={()=>setAba(id)} style={{flex:1,padding:'8px 4px',border:'none',borderBottom:aba===id?'2px solid #f5a623':'2px solid transparent',background:'transparent',cursor:'pointer',fontSize:10,fontWeight:aba===id?700:400,color:aba===id?'#f5a623':'#7f8c8d'}}>{l}</button>
             ))}
           </div>
 
-          <div style={{flex:1,overflowY:'auto',padding:'12px'}}>
-            {/* RESUMO */}
-            {aba==='resumo'&&(
-              <div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
-                  {[
-                    {l:'Vencidos',v:vencidos.length,c:'#e74c3c',sub:moeda(totalAberto)},
-                    {l:'Pix pendente',v:pendentePix.length,c:'#f5a623',sub:'links não pagos'},
-                    {l:'Sem faturamento',v:semFaturamento.length,c:'#3498db',sub:'aguardando'},
-                    {l:'Clientes Asaas',v:clientes.filter(c=>c.asaas_id).length,c:'#27ae60',sub:'ativos'},
-                  ].map((card,i)=>(
-                    <div key={i} style={{background:'#f8f9fa',borderRadius:8,padding:'10px',borderTop:`3px solid ${card.c}`}}>
-                      <div style={{fontSize:9,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700}}>{card.l}</div>
-                      <div style={{fontSize:20,fontWeight:700,color:card.c}}>{card.v}</div>
-                      <div style={{fontSize:10,color:'#7f8c8d'}}>{card.sub}</div>
-                    </div>
-                  ))}
+          {/* CHAT */}
+          {aba==='chat'&&(
+            <>
+              <div ref={chatRef} style={{flex:1,overflowY:'auto',padding:'12px',display:'flex',flexDirection:'column',gap:8}}>
+                {msgs.map((m,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:m.role==='user'?'flex-end':'flex-start'}}>
+                    <div style={{
+                      maxWidth:'85%',padding:'8px 12px',borderRadius:m.role==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',
+                      background:m.role==='user'?'#f5a623':'#f0f2f5',
+                      color:m.role==='user'?'#fff':'#2c3e50',
+                      fontSize:12,lineHeight:1.5,whiteSpace:'pre-wrap',
+                    }}>{m.content}</div>
+                  </div>
+                ))}
+                {iaLoading&&(
+                  <div style={{display:'flex',justifyContent:'flex-start'}}>
+                    <div style={{background:'#f0f2f5',borderRadius:'12px 12px 12px 2px',padding:'8px 12px',fontSize:12,color:'#7f8c8d'}}>⏳ Pensando...</div>
+                  </div>
+                )}
+              </div>
+              <div style={{padding:'10px 12px',borderTop:'1px solid #e8eaed',display:'flex',gap:8,flexShrink:0}}>
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={e=>setInput(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviarIA(input);}}}
+                  placeholder="Digite sua mensagem..."
+                  style={{flex:1,padding:'8px 12px',borderRadius:20,border:'1px solid #dde1e7',fontSize:12,outline:'none'}}
+                />
+                <button onClick={()=>enviarIA(input)} disabled={iaLoading||!input.trim()} style={{padding:'8px 16px',borderRadius:20,border:'none',background:iaLoading||!input.trim()?'#e8eaed':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
+                  Enviar
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* VENCIDOS */}
+          {aba==='vencidos'&&(
+            <div style={{flex:1,overflowY:'auto',padding:'12px'}}>
+              {vencidos.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum vencido!</div>}
+              {vencidos.map(c=>(
+                <div key={c.id} style={{background:'#fff5f5',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #feb2b2'}}>
+                  <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>{moeda(c.vS||0)}/mês</div>
+                  {clienteMsg?.id===c.id&&mensagemGerada&&(
+                    <div style={{background:'#fff',borderRadius:6,padding:'8px',marginBottom:6,fontSize:11,color:'#2c3e50',border:'1px solid #e8eaed',whiteSpace:'pre-wrap'}}>{mensagemGerada}</div>
+                  )}
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                    <button onClick={()=>gerarMensagemCobranca(c)} disabled={iaLoading&&clienteMsg?.id===c.id} style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10}}>
+                      {iaLoading&&clienteMsg?.id===c.id?'⏳':'🤖 Gerar msg'}
+                    </button>
+                    {mensagemGerada&&clienteMsg?.id===c.id&&<>
+                      <button onClick={()=>navigator.clipboard.writeText(mensagemGerada)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10}}>📋 Copiar</button>
+                      {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent(mensagemGerada)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,fontSize:10,textDecoration:'none'}}>📲 WA</a>}
+                    </>}
+                  </div>
                 </div>
-                {vencidos.length>0&&<div style={{background:'#fff5f5',borderRadius:8,padding:'10px',border:'1px solid #feb2b2',fontSize:12,color:'#c53030'}}>
-                  ⚠️ {nomeFinanceiro}, você tem {vencidos.length} cliente(s) com boleto vencido totalizando {moeda(totalAberto)}. Clique em "Vencidos" para agir!
-                </div>}
-                {vencidos.length===0&&semFaturamento.length===0&&<div style={{background:'#f0fff4',borderRadius:8,padding:'10px',border:'1px solid #9ae6b4',fontSize:12,color:'#276749'}}>
-                  ✅ {nomeFinanceiro}, tudo em dia! Nenhuma ação urgente necessária.
-                </div>}
-              </div>
-            )}
+              ))}
+            </div>
+          )}
 
-            {/* VENCIDOS */}
-            {aba==='vencidos'&&(
-              <div>
-                {vencidos.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum vencido!</div>}
-                {vencidos.map(c=>(
-                  <div key={c.id} style={{background:'#fff5f5',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #feb2b2'}}>
-                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
-                    <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>{moeda(c.vS||0)}/mês • {c.tel||'sem telefone'}</div>
-                    {clienteMsg?.id===c.id&&mensagemGerada&&(
-                      <div style={{background:'#fff',borderRadius:6,padding:'8px',marginBottom:6,fontSize:11,color:'#2c3e50',border:'1px solid #e8eaed',whiteSpace:'pre-wrap'}}>{mensagemGerada}</div>
-                    )}
-                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                      <button onClick={()=>gerarMensagem(c)} disabled={iaLoading&&clienteMsg?.id===c.id} style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10}}>
-                        {iaLoading&&clienteMsg?.id===c.id?'⏳':'🤖 Gerar msg'}
-                      </button>
-                      {mensagemGerada&&clienteMsg?.id===c.id&&(
-                        <>
-                          <button onClick={()=>navigator.clipboard.writeText(mensagemGerada)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10}}>📋 Copiar</button>
-                          {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent(mensagemGerada)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10,textDecoration:'none'}}>📲 WhatsApp</a>}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* PIX PENDENTE */}
+          {aba==='pendentes'&&(
+            <div style={{flex:1,overflowY:'auto',padding:'12px'}}>
+              {pendentePix.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum Pix pendente!</div>}
+              {pendentePix.map(c=>(
+                <div key={c.id} style={{background:'#fff8ee',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #fde68a'}}>
+                  <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>Link enviado — aguardando</div>
+                  {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent('Olá! Passando para lembrar do link de pagamento 😊')}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,fontSize:10,textDecoration:'none',display:'inline-block'}}>📲 Lembrar</a>}
+                </div>
+              ))}
+            </div>
+          )}
 
-            {/* PIX PENDENTE */}
-            {aba==='pendentes'&&(
-              <div>
-                {pendentePix.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Nenhum Pix pendente!</div>}
-                {pendentePix.map(c=>(
-                  <div key={c.id} style={{background:'#fff8ee',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #fde68a'}}>
-                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
-                    <div style={{fontSize:11,color:'#7f8c8d',marginBottom:6}}>Link enviado — aguardando pagamento</div>
-                    {c.tel&&<a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent('Olá! Passando para lembrar do link de pagamento que enviamos. Posso te ajudar com algo? 😊')}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10,textDecoration:'none',display:'inline-block'}}>📲 Lembrar via WhatsApp</a>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* SEM FATURAMENTO */}
-            {aba==='faturar'&&(
-              <div>
-                {semFaturamento.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Todos faturados!</div>}
-                {semFaturamento.map(c=>(
-                  <div key={c.id} style={{background:'#ebf8ff',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #bee3f8'}}>
-                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
-                    <div style={{fontSize:11,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.total)} • aguardando faturamento</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* FATURAR */}
+          {aba==='faturar'&&(
+            <div style={{flex:1,overflowY:'auto',padding:'12px'}}>
+              {semFaturamento.length===0&&<div style={{textAlign:'center',color:'#27ae60',padding:'20px',fontSize:12}}>✅ Todos faturados!</div>}
+              {semFaturamento.map(c=>(
+                <div key={c.id} style={{background:'#ebf8ff',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #bee3f8'}}>
+                  <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.total)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <style>{`@keyframes pulse{0%,100%{box-shadow:0 4px 16px rgba(0,0,0,.25)}50%{box-shadow:0 4px 24px rgba(231,76,60,.5)}}`}</style>
@@ -4437,7 +4563,7 @@ export default function App(){
   const [orcFormas,setOrcFormas]=useState([]);
   const [orcTemplates,setOrcTemplates]=useState([]);
   const [dadosImportados,setDadosImportados]=useState(null);
-  const [menuOrder,setMenuOrder]=useState(()=>{try{const s=localStorage.getItem('crm_menu_order');return s?JSON.parse(s):null;}catch(e){return null;}});
+  const [menuOrder,setMenuOrder]=useState(null);
   const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
   const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
   function salvarMetaSistema(v){setMetaSistema(v);try{localStorage.setItem('crm_meta_sistema',String(v));}catch(e){}}
@@ -4471,8 +4597,13 @@ export default function App(){
           const snap=await getDocs(collection(db,'usuarios'));
           const perfis={};
           snap.forEach(d=>perfis[d.id]={id:d.id,...d.data()});
-          setUserProfile(perfis[user.uid]||{email:user.email,perfil:'admin',nome:user.email});
+          const perfil=perfis[user.uid]||{email:user.email,perfil:'admin',nome:user.email};
+          setUserProfile(perfil);
           setUsuarios(Object.values(perfis));
+          // Carregar ordem do menu do Firestore
+          if(perfil.menuOrder&&perfil.menuOrder.length){
+            setMenuOrder(perfil.menuOrder);
+          }
         }catch(e){setUserProfile({email:user.email,perfil:'admin',nome:user.email});}
       }
       setAuthLoading(false);
@@ -4709,6 +4840,7 @@ export default function App(){
             vendedoresCad={vendedoresCad}
             equipamentosCad={equipamentosCad}
             dadosImportados={dadosImportados}
+            currentUser={userProfile}
           />}
 
           {/* DETALHE */}
