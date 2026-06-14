@@ -3142,6 +3142,114 @@ function OrcamentoPreview({cli,itens,det,template,subtotal}){
 }
 
 // ─── LISTA DE ORÇAMENTOS ──────────────────────────────────────────────────────
+// ─── PAINEL LATERAL ORÇAMENTO (fora do OrcamentosView para evitar perda de foco) ───
+function PainelLateral({painelOrc,orcamentos,currentUser,nomeVendedor,followInput,setFollowInput,iaResposta,setIaResposta,iaLoading,setIaLoading,iaAberta,setIaAberta,onFechar,onAbrirVenda,onEditar,registrarFollowup,consultarIA,diasDesde,corFollowup,extrairValores}){
+  if(!painelOrc)return null;
+  const orc=orcamentos.find(o=>o.id===painelOrc.id)||painelOrc;
+  const [desc,setDesc]=useState('');
+  const [proxData,setProxData]=useState(orc.proximoContato||'');
+  const [salvando,setSalvando]=useState(false);
+  const dias=diasDesde(orc.criadoEm);
+  const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
+  const corFup=corFollowup(orc);
+  const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+  const {vE,vS}=extrairValores(orc);
+  const nomeExibido=currentUser?.nome?.split(' ')[0]||nomeVendedor;
+
+  async function salvarFollowup(){
+    if(!desc.trim())return;
+    setSalvando(true);
+    await registrarFollowup(orc,desc,proxData);
+    setDesc('');setSalvando(false);
+  }
+
+  const fraseAbertura=(()=>{
+    if(diasSemContato>=7)return`${nomeExibido}, esse cliente esfriou muito — ${diasSemContato} dias sem contato! Bora reagir ou mover para perdido?`;
+    if(!orc.followup?.length)return`${nomeExibido}, esse orçamento ainda não tem nenhum contato registrado. Me conta como foi?`;
+    if(orc.proximoContato&&corFup==='#e74c3c')return`${nomeExibido}, o prazo de contato com esse cliente venceu! O que aconteceu?`;
+    return`${nomeExibido}, como está esse cliente? Pode me contar e eu te ajudo a fechar! 💪`;
+  })();
+
+  return(
+    <div style={{position:'fixed',top:0,right:0,width:400,height:'100vh',background:'#fff',boxShadow:'-4px 0 24px rgba(0,0,0,.15)',zIndex:1000,display:'flex',flexDirection:'column',fontFamily:'sans-serif'}}>
+      <div style={{background:'#2c3e50',padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div>
+          <div style={{color:'#fff',fontWeight:700,fontSize:14,marginBottom:4}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            <span style={{background:st.color+'33',color:st.color,border:`1px solid ${st.color}`,borderRadius:10,padding:'1px 8px',fontSize:10,fontWeight:700}}>{st.label}</span>
+            <span style={{color:'#7f8c8d',fontSize:10}}>⏱ {dias}d no pipeline</span>
+            {vE>0&&<span style={{color:'#9ae6b4',fontSize:10}}>💻 {moeda(vE)}</span>}
+            {vS>0&&<span style={{color:'#bee3f8',fontSize:10}}>🔄 {moeda(vS)}/mês</span>}
+          </div>
+        </div>
+        <button onClick={onFechar} style={{background:'none',border:'none',color:'#7f8c8d',fontSize:20,cursor:'pointer',lineHeight:1}}>×</button>
+      </div>
+
+      <div style={{flex:1,overflowY:'auto',padding:'16px'}}>
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12,border:`2px solid ${corFup}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:corFup,marginBottom:6,textTransform:'uppercase'}}>📅 Próximo contato</div>
+          <input type="date" value={proxData} onChange={e=>setProxData(e.target.value)}
+            style={{padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:'100%',boxSizing:'border-box'}}/>
+        </div>
+
+        <div style={{background:'#1a1a2e',borderRadius:8,padding:'12px',marginBottom:12}}>
+          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+            <span style={{fontSize:16}}>🤖</span>
+            <span style={{color:'#f5a623',fontWeight:700,fontSize:12}}>Co-piloto de Vendas</span>
+          </div>
+          {!iaAberta&&<div style={{color:'#a0aec0',fontSize:12,marginBottom:8,lineHeight:1.5}}>{fraseAbertura}</div>}
+          <textarea
+            value={followInput}
+            onChange={e=>setFollowInput(e.target.value)}
+            placeholder="Conta o que rolou com esse cliente..."
+            style={{width:'100%',boxSizing:'border-box',padding:'8px 10px',borderRadius:6,border:'1px solid #2d3748',background:'#2d3748',color:'#e2e8f0',fontSize:12,resize:'vertical',minHeight:70,outline:'none'}}
+          />
+          <button onClick={()=>consultarIA(orc)} disabled={iaLoading||!followInput.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:iaLoading?'#4a5568':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {iaLoading?'⏳ Analisando...':'✨ Pedir sugestão da IA'}
+          </button>
+          {iaResposta&&(
+            <div style={{marginTop:10,background:'#2d3748',borderRadius:6,padding:'10px',color:'#e2e8f0',fontSize:12,lineHeight:1.6,whiteSpace:'pre-wrap',maxHeight:280,overflowY:'auto'}}>
+              {iaResposta}
+            </div>
+          )}
+        </div>
+
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📝 Registrar contato</div>
+          <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="O que foi feito/combinado com o cliente?"
+            style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,resize:'vertical',minHeight:60}}/>
+          <button onClick={salvarFollowup} disabled={salvando||!desc.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:salvando?'#e8eaed':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {salvando?'Salvando...':'💾 Registrar'}
+          </button>
+        </div>
+
+        {(orc.followup||[]).length>0&&(
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📋 Histórico de contatos</div>
+            {[...(orc.followup||[])].reverse().map((f,i)=>(
+              <div key={i} style={{background:'#fff',borderRadius:6,padding:'8px 10px',marginBottom:6,border:'1px solid #e8eaed',borderLeft:'3px solid #3498db'}}>
+                <div style={{fontSize:10,color:'#7f8c8d',marginBottom:3}}>{new Date(f.data).toLocaleDateString('pt-BR')} {new Date(f.data).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} • {f.usuario}</div>
+                <div style={{fontSize:12,color:'#2c3e50'}}>{f.descricao}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{padding:'12px 16px',borderTop:'1px solid #e8eaed',display:'flex',gap:8}}>
+        {(orc.status==='enviado'||orc.status==='negociacao')&&(
+          <button onClick={()=>onAbrirVenda(orc)} style={{flex:1,padding:'10px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            🤝 Fechar Venda
+          </button>
+        )}
+        <button onClick={()=>onEditar(orc)} style={{flex:1,padding:'10px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#4a4a4a'}}>
+          ✏️ Editar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM,currentUser}){
   const [subAba,setSubAba]=useState('lista');
   const [visao,setVisao]=useState('lista'); // 'lista' | 'kanban'
@@ -3247,10 +3355,8 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
   }
 
   // Co-piloto IA vendas
-  async function consultarIA(){
-    if(!followInput.trim()||!painelOrc)return;
-    setIaLoading(true);setIaResposta('');setIaAberta(true);
-    const orc=painelOrc;
+  async function consultarIA(orc){
+    if(!followInput.trim()||!orc)return;
     const dias=diasDesde(orc.criadoEm);
     const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
     const historico=(orc.followup||[]).map(f=>`- ${new Date(f.data).toLocaleDateString('pt-BR')}: ${f.descricao}`).join('\n')||'Nenhum contato registrado ainda.';
@@ -3258,7 +3364,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
     try{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:CLAUDE_HEADERS,
         body:JSON.stringify({
           model:'claude-sonnet-4-6',
           max_tokens:1000,
@@ -3293,121 +3399,6 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
     }
     setIaLoading(false);
   }
-
-  // ─── PAINEL LATERAL ───────────────────────────────────────────────────────
-  const PainelLateral=()=>{
-    if(!painelOrc)return null;
-    const orc=orcamentos.find(o=>o.id===painelOrc.id)||painelOrc;
-    const [desc,setDesc]=useState('');
-    const [proxData,setProxData]=useState(orc.proximoContato||'');
-    const [salvando,setSalvando]=useState(false);
-    const dias=diasDesde(orc.criadoEm);
-    const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
-    const corFup=corFollowup(orc);
-    const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
-    const {vE,vS}=extrairValores(orc);
-    const nomeExibido=currentUser?.nome?.split(' ')[0]||nomeVendedor;
-
-    async function salvarFollowup(){
-      if(!desc.trim())return;
-      setSalvando(true);
-      await registrarFollowup(orc,desc,proxData);
-      setDesc('');setSalvando(false);
-    }
-
-    // Frase de abertura contextual
-    const fraseAbertura=(()=>{
-      if(diasSemContato>=7)return`${nomeExibido}, esse cliente esfriou muito — ${diasSemContato} dias sem contato! Bora reagir ou mover para perdido?`;
-      if(!orc.followup?.length)return`${nomeExibido}, esse orçamento ainda não tem nenhum contato registrado. Me conta como foi?`;
-      if(orc.proximoContato&&corFup==='#e74c3c')return`${nomeExibido}, o prazo de contato com esse cliente venceu! O que aconteceu?`;
-      return`${nomeExibido}, como está esse cliente? Pode me contar e eu te ajudo a fechar! 💪`;
-    })();
-
-    return(
-      <div style={{position:'fixed',top:0,right:0,width:400,height:'100vh',background:'#fff',boxShadow:'-4px 0 24px rgba(0,0,0,.15)',zIndex:1000,display:'flex',flexDirection:'column',fontFamily:'sans-serif'}}>
-        {/* Header */}
-        <div style={{background:'#2c3e50',padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:14,marginBottom:4}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
-            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              <span style={{background:st.color+'33',color:st.color,border:`1px solid ${st.color}`,borderRadius:10,padding:'1px 8px',fontSize:10,fontWeight:700}}>{st.label}</span>
-              <span style={{color:'#7f8c8d',fontSize:10}}>⏱ {dias}d no pipeline</span>
-              {vE>0&&<span style={{color:'#9ae6b4',fontSize:10}}>💻 {moeda(vE)}</span>}
-              {vS>0&&<span style={{color:'#bee3f8',fontSize:10}}>🔄 {moeda(vS)}/mês</span>}
-            </div>
-          </div>
-          <button onClick={()=>{setPainelOrc(null);setIaResposta('');setIaAberta(false);}} style={{background:'none',border:'none',color:'#7f8c8d',fontSize:20,cursor:'pointer',lineHeight:1}}>×</button>
-        </div>
-
-        <div style={{flex:1,overflowY:'auto',padding:'16px'}}>
-          {/* Próximo contato */}
-          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12,border:`2px solid ${corFup}`}}>
-            <div style={{fontSize:11,fontWeight:700,color:corFup,marginBottom:6,textTransform:'uppercase'}}>📅 Próximo contato</div>
-            <input type="date" value={proxData} onChange={e=>setProxData(e.target.value)}
-              style={{padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:'100%',boxSizing:'border-box'}}/>
-          </div>
-
-          {/* Co-piloto IA */}
-          <div style={{background:'#1a1a2e',borderRadius:8,padding:'12px',marginBottom:12}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
-              <span style={{fontSize:16}}>🤖</span>
-              <span style={{color:'#f5a623',fontWeight:700,fontSize:12}}>Co-piloto de Vendas</span>
-            </div>
-            {!iaAberta&&<div style={{color:'#a0aec0',fontSize:12,marginBottom:8,lineHeight:1.5}}>{fraseAbertura}</div>}
-            <textarea
-              value={followInput}
-              onChange={e=>setFollowInput(e.target.value)}
-              placeholder="Conta o que rolou com esse cliente..."
-              style={{width:'100%',boxSizing:'border-box',padding:'8px 10px',borderRadius:6,border:'1px solid #2d3748',background:'#2d3748',color:'#e2e8f0',fontSize:12,resize:'vertical',minHeight:70,outline:'none'}}
-            />
-            <button onClick={consultarIA} disabled={iaLoading||!followInput.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:iaLoading?'#4a5568':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-              {iaLoading?'⏳ Analisando...':'✨ Pedir sugestão da IA'}
-            </button>
-            {iaResposta&&(
-              <div style={{marginTop:10,background:'#2d3748',borderRadius:6,padding:'10px',color:'#e2e8f0',fontSize:12,lineHeight:1.6,whiteSpace:'pre-wrap',maxHeight:280,overflowY:'auto'}}>
-                {iaResposta}
-              </div>
-            )}
-          </div>
-
-          {/* Registrar contato */}
-          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12}}>
-            <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📝 Registrar contato</div>
-            <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="O que foi feito/combinado com o cliente?"
-              style={{width:'100%',boxSizing:'border-box',padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,resize:'vertical',minHeight:60}}/>
-            <button onClick={salvarFollowup} disabled={salvando||!desc.trim()} style={{width:'100%',marginTop:8,padding:'8px',borderRadius:6,border:'none',background:salvando?'#e8eaed':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-              {salvando?'Salvando...':'💾 Registrar'}
-            </button>
-          </div>
-
-          {/* Histórico */}
-          {(orc.followup||[]).length>0&&(
-            <div>
-              <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>📋 Histórico de contatos</div>
-              {[...(orc.followup||[])].reverse().map((f,i)=>(
-                <div key={i} style={{background:'#fff',borderRadius:6,padding:'8px 10px',marginBottom:6,border:'1px solid #e8eaed',borderLeft:'3px solid #3498db'}}>
-                  <div style={{fontSize:10,color:'#7f8c8d',marginBottom:3}}>{new Date(f.data).toLocaleDateString('pt-BR')} {new Date(f.data).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} • {f.usuario}</div>
-                  <div style={{fontSize:12,color:'#2c3e50'}}>{f.descricao}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Footer ações */}
-        <div style={{padding:'12px 16px',borderTop:'1px solid #e8eaed',display:'flex',gap:8}}>
-          {(orc.status==='enviado'||orc.status==='negociacao')&&(
-            <button onClick={()=>abrirModalVenda(orc)} style={{flex:1,padding:'10px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-              🤝 Fechar Venda
-            </button>
-          )}
-          <button onClick={()=>{setEditando(true);setOrcSel(painelOrc);setPainelOrc(null);}} style={{flex:1,padding:'10px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#4a4a4a'}}>
-            ✏️ Editar
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   // ─── MODAL VENDA FECHADA ─────────────────────────────────────────────────
   const ModalVendaFechada=()=>{
@@ -3544,7 +3535,28 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 
   return(
     <div>
-      {painelOrc&&<PainelLateral/>}
+      {painelOrc&&<PainelLateral
+        painelOrc={painelOrc}
+        orcamentos={orcamentos}
+        currentUser={currentUser}
+        nomeVendedor={nomeVendedor}
+        followInput={followInput}
+        setFollowInput={setFollowInput}
+        iaResposta={iaResposta}
+        setIaResposta={setIaResposta}
+        iaLoading={iaLoading}
+        setIaLoading={setIaLoading}
+        iaAberta={iaAberta}
+        setIaAberta={setIaAberta}
+        onFechar={()=>{setPainelOrc(null);setIaResposta('');setIaAberta(false);}}
+        onAbrirVenda={abrirModalVenda}
+        onEditar={orc=>{setEditando(true);setOrcSel(orc);setPainelOrc(null);}}
+        registrarFollowup={registrarFollowup}
+        consultarIA={consultarIA}
+        diasDesde={diasDesde}
+        corFollowup={corFollowup}
+        extrairValores={extrairValores}
+      />}
       {modalVenda&&<ModalVendaFechada/>}
 
       {/* Toolbar */}
@@ -3800,7 +3812,11 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 // MÓDULO ASAAS — INTEGRAÇÃO FINANCEIRA COMPLETA
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ─── ASAAS API ────────────────────────────────────────────────────────────────
+const CLAUDE_HEADERS={
+  'Content-Type':'application/json',
+  'anthropic-version':'2023-06-01',
+  'anthropic-dangerous-direct-browser-access':'true',
+};
 // Chave configurada em .env como REACT_APP_ASAAS_KEY
 const ASAAS_KEY=process.env.REACT_APP_ASAAS_KEY||'';
 const ASAAS_URL='https://sandbox.asaas.com/api/v3'; // trocar para api.asaas.com em produção
@@ -4374,7 +4390,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     try{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:CLAUDE_HEADERS,
         body:JSON.stringify({
           model:'claude-sonnet-4-6',max_tokens:800,
           system:contexto,
@@ -4395,7 +4411,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     try{
       const resp=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:CLAUDE_HEADERS,
         body:JSON.stringify({
           model:'claude-sonnet-4-6',max_tokens:400,
           system:`Você é ${nomeFinanceiro} do financeiro da Guion Informática. Escreva mensagem de cobrança simpática e eficaz para WhatsApp. Máximo 4 linhas. Tom cordial.`,
