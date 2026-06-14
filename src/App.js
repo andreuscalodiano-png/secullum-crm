@@ -4959,7 +4959,9 @@ export default function App(){
               <span style={{color:'#27ae60',fontWeight:700}}>● ao vivo</span>
               <span>{(()=>{
                 const t=process.env.REACT_APP_BUILD_TIME;
-                const d=t?new Date(t):new Date();
+                // Força parse como UTC adicionando Z se necessário
+                const iso=t?(t.includes('Z')||t.includes('+'))?t:t+'Z':null;
+                const d=iso?new Date(iso):new Date();
                 return d.toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
               })()}</span>
             </div>
