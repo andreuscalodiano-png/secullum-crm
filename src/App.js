@@ -1536,18 +1536,38 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         <ModalGerarFaturamento
           cliente={f}
           onConfirmar={async(checks)=>{
-            // Simula criação no Asaas (substituir por chamada real quando API Key disponível)
-            const asaasId='asaas_'+Date.now();
-            await onUpdate({...c,asaas_id:asaasId,asaas_status:'PENDING',status:'Faturado'});
-            // Registra histórico
-            await setDoc(doc(collection(db,'historico_cliente')),{
-              clienteId:c.id,clienteNome:c.nome,
-              tipo:'faturamento_gerado',
-              descricao:`Faturamento gerado no Asaas. Implantação: ${checks.impl}, Equipamento: ${checks.equip}, Sistema: ${checks.sistema}`,
-              usuario:auth.currentUser?.email||'—',
-              data:new Date().toISOString(),
-            });
-            setModalFaturamento(false);
+            try{
+              // 1. Criar/buscar cliente no Asaas
+              const asaasCliente=await asaasCriarOuBuscarCliente(f);
+              const asaasId=asaasCliente.id;
+              const hoje=new Date();
+              const dueDatePadrao=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()+3).padStart(2,'0')}`;
+
+              // 2. Cobrança implantação boleto
+              if(checks.impl&&f.vI>0){
+                await asaasCriarCobranca(asaasId,f.vI,f.parcelasI||1,'BOLETO',dueDatePadrao,'Implantação Secullum');
+              }
+              // 3. Cobrança equipamento boleto
+              if(checks.equip&&f.vE>0){
+                await asaasCriarCobranca(asaasId,f.vE,f.parcelasE||1,'BOLETO',dueDatePadrao,'Equipamento Secullum');
+              }
+              // 4. Assinatura mensal sistema
+              if(checks.sistema&&f.vS>0){
+                await asaasCriarAssinatura(asaasId,f.vS,f.dtBoleto);
+              }
+              // 5. Salvar asaas_id e atualizar status
+              await onUpdate({...c,asaas_id:asaasId,asaas_status:'PENDING',status:'Faturado'});
+              // 6. Histórico
+              await setDoc(doc(collection(db,'historico_cliente')),{
+                clienteId:c.id,clienteNome:c.nome,tipo:'faturamento_gerado',
+                descricao:`Faturamento gerado no Asaas. ID: ${asaasId}. Impl: ${checks.impl}, Equip: ${checks.equip}, Sistema: ${checks.sistema}`,
+                usuario:auth.currentUser?.email||'—',data:new Date().toISOString(),
+              });
+              setModalFaturamento(false);
+              alert('✅ Faturamento gerado com sucesso no Asaas!');
+            }catch(err){
+              alert('❌ Erro ao gerar faturamento: '+err.message);
+            }
           }}
           onCancelar={()=>setModalFaturamento(false)}
         />
@@ -3812,6 +3832,62 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 // MÓDULO ASAAS — INTEGRAÇÃO FINANCEIRA COMPLETA
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ─── ASAAS API ────────────────────────────────────────────────────────────────
+// Chave configurada em .env como REACT_APP_ASAAS_KEY
+const ASAAS_KEY=process.env.REACT_APP_ASAAS_KEY||'';
+const ASAAS_URL='https://sandbox.asaas.com/api/v3'; // trocar para api.asaas.com em produção
+
+async function asaasReq(path,method='GET',body=null){
+  const opts={method,headers:{'Content-Type':'application/json','access_token':ASAAS_KEY}};
+  if(body)opts.body=JSON.stringify(body);
+  const resp=await fetch(ASAAS_URL+path,opts);
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err?.errors?.[0]?.description||`Erro Asaas ${resp.status}`);}
+  return resp.json();
+}
+async function asaasBuscarClientePorCNPJ(cnpj){
+  const cpfCnpj=(cnpj||'').replace(/\D/g,'');if(!cpfCnpj)return null;
+  try{const r=await asaasReq(`/customers?cpfCnpj=${cpfCnpj}`);return r.data?.[0]||null;}catch(e){return null;}
+}
+async function asaasCriarOuBuscarCliente(c){
+  const existente=await asaasBuscarClientePorCNPJ(c.cnpj||'');
+  if(existente)return existente;
+  return asaasReq('/customers','POST',{
+    name:c.nome,cpfCnpj:(c.cnpj||'').replace(/\D/g,''),
+    email:c.email||undefined,mobilePhone:(c.tel||'').replace(/\D/g,'')||undefined,
+    notificationDisabled:false,
+  });
+}
+async function asaasCriarCobranca(customerId,valor,parcelas,billingType,dueDate,desc){
+  if(parcelas>1){
+    return asaasReq('/payments','POST',{customer:customerId,billingType,totalValue:valor,
+      installmentCount:parcelas,installmentValue:+(valor/parcelas).toFixed(2),dueDate,description:desc});
+  }
+  return asaasReq('/payments','POST',{customer:customerId,billingType,value:valor,dueDate,description:desc});
+}
+async function asaasCriarAssinatura(customerId,valor,dtBoleto){
+  const dia=dtBoleto?new Date(dtBoleto+'T12:00:00').getDate():10;
+  const hoje=new Date();
+  const prox=new Date(hoje.getFullYear(),hoje.getMonth(),dia);
+  if(prox<=hoje)prox.setMonth(prox.getMonth()+1);
+  const nd=`${prox.getFullYear()}-${String(prox.getMonth()+1).padStart(2,'0')}-${String(prox.getDate()).padStart(2,'0')}`;
+  return asaasReq('/subscriptions','POST',{customer:customerId,billingType:'BOLETO',
+    value:valor,nextDueDate:nd,cycle:'MONTHLY',description:'Sistema Secullum — mensalidade'});
+}
+async function asaasCriarLinkPagamento(customerId,valor,billingType,desc){
+  return asaasReq('/paymentLinks','POST',{
+    name:desc,billingType,chargeType:'DETACHED',value:valor,description:desc,
+  });
+}
+async function asaasBuscarStatusCliente(customerId){
+  try{
+    const r=await asaasReq(`/subscriptions?customer=${customerId}&limit=1`);
+    const sub=r.data?.[0];
+    if(!sub)return'PENDING';
+    return sub.status==='ACTIVE'?'RECEIVED':sub.status==='OVERDUE'?'OVERDUE':'PENDING';
+  }catch(e){return'PENDING';}
+}
+// ─── FIM API ASAAS ────────────────────────────────────────────────────────────
+
 // Badge de status Asaas reutilizável
 function AsaasBadge({status,size='normal'}){
   const s=ASAAS_STATUS[status]||ASAAS_STATUS.SEM_FATURAMENTO;
@@ -3976,7 +4052,7 @@ function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
           <button onClick={onCancelar} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
           <button onClick={confirmar} disabled={!temAlgo||loading} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(!temAlgo||loading)?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:(!temAlgo||loading)?'default':'pointer',fontSize:13}}>
-            {loading?'Processando...':'✅ Confirmar e Faturar'}
+            {loading?'Processando no Asaas...':'✅ Confirmar e Faturar'}
           </button>
         </div>
       </div>
