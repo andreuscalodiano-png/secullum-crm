@@ -1580,7 +1580,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
 }
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange}){
+function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
   const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true});
@@ -1865,6 +1865,12 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             )}
           </div>
         </div>
+      </div>
+
+      {/* Orçamento — Serviços, Formas de pagamento e Templates */}
+      <div style={{...sec,borderTop:`3px solid #f5a623`}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:12,textTransform:'uppercase'}}>⚙️ Configurações de orçamento</div>
+        <OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>
       </div>
 
       {/* Ordenação do menu */}
@@ -3265,7 +3271,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
       {modalVenda&&<ModalVendaFechada/>}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-          {[{id:'lista',l:`Orçamentos (${orcamentos.length})`},{id:'novo',l:'+ Novo'},{id:'config',l:'⚙️ Configurações'}].map(a=>(
+          {[{id:'lista',l:`Orçamentos (${orcamentos.length})`},{id:'novo',l:'+ Novo'}].map(a=>(
             <button key={a.id} onClick={()=>setSubAba(a.id)} style={{padding:'8px 16px',borderRadius:6,border:'none',background:subAba===a.id?'#f5a623':'#ecf0f1',color:subAba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:subAba===a.id?700:400}}>{a.l}</button>
           ))}
         </div>
@@ -3275,7 +3281,6 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
       </div>
 
       {subAba==='novo'&&<OrcamentoForm orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} equipamentosCad={equipamentosCad} vendedoresCad={vendedoresCad} onSalvar={()=>setSubAba('lista')} onCancelar={()=>setSubAba('lista')}/>}
-      {subAba==='config'&&<OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>}
       {subAba==='lista'&&(
         <div>
           {orcamentos.length===0&&(
@@ -4080,7 +4085,7 @@ export default function App(){
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
 
           {/* CONFIGURAÇÕES */}
-          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}}/>}
+          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>}
 
           {/* DASHBOARD */}
           {!clienteSel&&page==='dashboard'&&<DashboardView
