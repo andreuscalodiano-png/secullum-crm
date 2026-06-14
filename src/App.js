@@ -91,6 +91,20 @@ const C={
   accent:'#f5a623',accentLight:'#fff8ee',
 };
 
+// Status do cliente — automáticos baseados no processo
+const STATUS_CLIENTE=[
+  {id:'Novo',             label:'🆕 Novo',              color:'#95a5a6'},
+  {id:'Links enviados',   label:'⚡ Links enviados',     color:'#3498db'},
+  {id:'Aguardando',       label:'⏳ Aguard. boletos',    color:'#f5a623'},
+  {id:'Faturado parcial', label:'💰 Faturado parcial',  color:'#f39c12'},
+  {id:'Faturado',         label:'✅ Faturado',           color:'#27ae60'},
+  {id:'Inadimplente',     label:'🔴 Inadimplente',      color:'#e74c3c'},
+  {id:'Cancelado',        label:'⚫ Cancelado',          color:'#7f8c8d'},
+];
+function getStatusCliente(s){return STATUS_CLIENTE.find(x=>x.id===s)||STATUS_CLIENTE[0];}
+function corStatus(s){return getStatusCliente(s).color;}
+function labelStatus(s){return getStatusCliente(s).label;}
+
 // --- HELPERS -----------------------------------------------------------------
 function parseDate(s){
   if(!s)return null;
@@ -407,7 +421,7 @@ function RelatoriosView({todos,implantacoes}){
                   <td style={{padding:'7px 10px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>{c.cnpj}</td>
                   <td style={{padding:'7px 10px'}}><span style={{background:'#ebf5fb',color:C.blue,padding:'1px 6px',borderRadius:8,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
                   <td style={{padding:'7px 10px',fontSize:11,color:C.textMuted}}>{c.vendedor}</td>
-                  <td style={{padding:'7px 10px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fef9e7',color:c.status==='Faturado'?C.green:C.orange,padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
+                  <td style={{padding:'7px 10px'}}><span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'1px 7px',borderRadius:8,fontSize:10,fontWeight:700}}>{labelStatus(c.status)}</span></td>
                   <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.purple}}>{moeda(c.vS)}</td>
                   <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.orange}}>{moeda(c.vI)}</td>
                   <td style={{padding:'7px 10px',fontSize:11,fontWeight:700,color:C.teal}}>{moeda(c.vE)}</td>
@@ -1341,7 +1355,11 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
           </div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Status</label><select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}><option value="Aguardando">⏳ Aguardando</option><option value="Faturado">✓ Faturado</option></select></div>
+          <div><label style={lbl}>Status</label>
+            <select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}>
+              {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
           <div><label style={lbl}>Emitir NF-e</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
         </div>
         <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/></div>
@@ -1519,8 +1537,8 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
           <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
             <span style={{background:'#ebf5fb',color:C.blue,padding:'2px 10px',borderRadius:20,fontSize:11,fontWeight:700}}>{f.plano}</span>
-            <span style={{background:f.status==='Faturado'?'#d5f5e3':'#fef9e7',color:f.status==='Faturado'?C.green:C.orange,padding:'2px 10px',borderRadius:20,fontSize:11,fontWeight:700}}>
-              {f.status==='Faturado'?'✓ Faturado':'⏳ Aguardando'}
+            <span style={{background:corStatus(f.status)+'22',color:corStatus(f.status),padding:'2px 10px',borderRadius:20,fontSize:11,fontWeight:700}}>
+              {labelStatus(f.status)}
             </span>
           </div>
           <div style={{fontWeight:700,fontSize:22,color:C.blue}}>{moeda(editMode?totEdit:c.total)}</div>
@@ -1584,7 +1602,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Plano" field="plano" opts={PLANOS}/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Status" field="status" opts={[{v:'Faturado',l:'✓ Faturado'},{v:'Aguardando',l:'⏳ Aguardando'}]}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Status" field="status" opts={STATUS_CLIENTE.map(s=>({v:s.id,l:s.label}))}/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -3924,48 +3942,68 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   const [statusEquip,setStatusEquip]=useState(cliente.asaas_status_equip||'');
 
   async function gerarNovoLinkImpl(){
-    if(cliente.pagamentoI==='Boleto')return; // Boleto é processado pelo financeiro
+    if(cliente.pagamentoI==='Boleto')return;
+    // Bloquear se link ainda válido (não expirado)
+    if(linkImpl&&cliente.asaas_link_impl_expira){
+      if(new Date(cliente.asaas_link_impl_expira)>new Date()){return;}
+    }
     setGerandoImpl(true);setErro('');
     try{
       let asaasId=cliente.asaas_id;
-      if(!asaasId){
-        const ac=await asaasCriarOuBuscarCliente(cliente);
-        asaasId=ac.id;
-      }
+      if(!asaasId){const ac=await asaasCriarOuBuscarCliente(cliente);asaasId=ac.id;}
       const billingType=cliente.pagamentoI==='Pix'?'PIX':'CREDIT_CARD';
       const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vI)||0,billingType,`Implantação — ${cliente.nome}`);
       const url=link.url||'';
+      // Expira em 48h (dueDate amanhã + 24h tolerância)
+      const expira=new Date();expira.setHours(expira.getHours()+48);
       setLinkImpl(url);setStatusImpl('PENDING');
-      await onUpdate({...cliente,asaas_id:asaasId,asaas_link_impl:url,asaas_link_impl_id:link.id||'',asaas_status_impl:'PENDING'});
+      await onUpdate({...cliente,asaas_id:asaasId,
+        asaas_link_impl:url,asaas_link_impl_id:link.id||'',
+        asaas_link_impl_expira:expira.toISOString(),
+        asaas_status_impl:'PENDING',
+        status:'Links enviados',
+      });
     }catch(e){setErro('Erro ao gerar link: '+e.message);}
     setGerandoImpl(false);
   }
 
   async function gerarNovoLinkEquip(){
-    if(cliente.pagamentoE==='Boleto')return; // Boleto é processado pelo financeiro
+    if(cliente.pagamentoE==='Boleto')return;
+    if(linkEquip&&cliente.asaas_link_equip_expira){
+      if(new Date(cliente.asaas_link_equip_expira)>new Date())return;
+    }
     setGerandoEquip(true);setErro('');
     try{
       let asaasId=cliente.asaas_id;
-      if(!asaasId){
-        const ac=await asaasCriarOuBuscarCliente(cliente);
-        asaasId=ac.id;
-      }
+      if(!asaasId){const ac=await asaasCriarOuBuscarCliente(cliente);asaasId=ac.id;}
       const billingType=cliente.pagamentoE==='Pix'?'PIX':'CREDIT_CARD';
       const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vE)||0,billingType,`Equipamento — ${cliente.nome}`);
       const url=link.url||'';
+      const expira=new Date();expira.setHours(expira.getHours()+48);
       setLinkEquip(url);setStatusEquip('PENDING');
-      await onUpdate({...cliente,asaas_id:asaasId,asaas_link_equip:url,asaas_link_equip_id:link.id||'',asaas_status_equip:'PENDING'});
+      await onUpdate({...cliente,asaas_id:asaasId,
+        asaas_link_equip:url,asaas_link_equip_id:link.id||'',
+        asaas_link_equip_expira:expira.toISOString(),
+        asaas_status_equip:'PENDING',
+        status:'Links enviados',
+      });
     }catch(e){setErro('Erro ao gerar link: '+e.message);}
     setGerandoEquip(false);
   }
 
-  function LinkBox({label,link,tipo,status,waMsg,onGerarNovo,gerando,cor,corBg}){
+  function LinkBox({label,link,tipo,status,waMsg,onGerarNovo,gerando,cor,corBg,expira}){
     const temLink=!!(link&&link.length>0);
+    const expirado=expira?new Date(expira)<new Date():false;
+    const horasRestantes=expira&&!expirado?Math.round((new Date(expira)-new Date())/3600000):0;
     return(
       <div style={{padding:'10px',background:corBg,borderRadius:6,border:`1px solid ${cor}44`,marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
           <span style={{fontSize:10,color:cor,fontWeight:700,textTransform:'uppercase'}}>{label}</span>
-          <AsaasBadge status={status||'PENDING'} size="small"/>
+          <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            {temLink&&!expirado&&horasRestantes>0&&<span style={{fontSize:9,color:'#7f8c8d'}}>⏰ {horasRestantes}h restantes</span>}
+            {expirado&&<span style={{fontSize:9,color:'#e74c3c',fontWeight:700}}>⚠ Expirado</span>}
+            <AsaasBadge status={status||'PENDING'} size="small"/>
+          </div>
         </div>
         {temLink?(
           <>
@@ -3985,9 +4023,11 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
             <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
               <button onClick={()=>navigator.clipboard.writeText(link)} style={{padding:'5px 10px',borderRadius:5,border:`1px solid ${cor}`,background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:cor}}>📋 Copiar</button>
               <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent(waMsg+' '+link)}`} target="_blank" rel="noopener noreferrer" style={{padding:'5px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
-              <button onClick={onGerarNovo} disabled={gerando} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #7f8c8d',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#7f8c8d'}}>
-                {gerando?'⏳':'🔄 Novo link'}
-              </button>
+              {(expirado||!expira)&&(
+                <button onClick={onGerarNovo} disabled={gerando} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #7f8c8d',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#7f8c8d'}}>
+                  {gerando?'⏳':'🔄 Novo link'}
+                </button>
+              )}
             </div>
           </>
         ):(
@@ -4025,6 +4065,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
             gerando={gerandoImpl}
             cor="#b45309"
             corBg="#fff8ee"
+            expira={cliente.asaas_link_impl_expira}
           />
         )}
 
@@ -4040,6 +4081,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
             gerando={gerandoEquip}
             cor="#276749"
             corBg="#f0fff4"
+            expira={cliente.asaas_link_equip_expira}
           />
         )}
 
@@ -4666,6 +4708,7 @@ export default function App(){
   const [authUser,setAuthUser]=useState(null);
   const [authLoading,setAuthLoading]=useState(true);
   const [userProfile,setUserProfile]=useState(null);
+  useEffect(()=>{document.title='Guion - CRM';},[]);
   const [clientes,setClientes]=useState([]);
   const [overrides,setOverrides]=useState({});
   const [implantacoes,setImplantacoes]=useState({});
