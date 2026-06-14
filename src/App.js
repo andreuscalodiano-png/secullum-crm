@@ -1936,12 +1936,21 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         </div>
         <PainelAsaasCliente cliente={f} perfil={perfil} onUpdate={async u=>{await onUpdate(u);setF(u);}}/>
 
-        {/* Botão Gerar Faturamento — só financeiro/admin e sem asaas_id ainda */}
-        {(perfil==='financeiro'||perfil==='admin')&&!c.asaas_id&&(
-          <button onClick={()=>setModalFaturamento(true)} style={{width:'100%',marginTop:12,padding:'12px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-            🚀 Gerar Faturamento no Asaas
-          </button>
-        )}
+        {/* Botão Gerar Faturamento — financeiro/admin
+            Aparece quando nao tem asaas_id OU tem pendencias de boleto a processar */}
+        {(perfil==='financeiro'||perfil==='admin')&&(()=>{
+          const temImplBoleto=parseFloat(c.vI)>0&&(c.pagamentoI==='Boleto'||!c.pagamentoI)&&(!c.asaas_status_impl||c.asaas_status_impl==='');
+          const temEquipBoleto=parseFloat(c.vE)>0&&(c.pagamentoE==='Boleto'||!c.pagamentoE)&&(!c.asaas_status_equip||c.asaas_status_equip==='');
+          const temSistema=parseFloat(c.vS)>0&&(!c.asaas_status_sistema||c.asaas_status_sistema==='')&&c.status!=='Cancelado';
+          const precisaFaturar=!c.asaas_id||(temImplBoleto||temEquipBoleto||temSistema);
+          if(!precisaFaturar)return null;
+          return(
+            <button onClick={()=>setModalFaturamento(true)} style={{width:'100%',marginTop:12,padding:'12px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              <span>Gerar Faturamento no Asaas</span>
+              {c.asaas_id&&<span style={{fontSize:10,fontWeight:400,opacity:.85}}>(processar pendencias)</span>}
+            </button>
+          );
+        })()}
 
         {/* Ações edição/cancelamento — só financeiro/admin e com asaas_id */}
         {(perfil==='financeiro'||perfil==='admin')&&c.asaas_id&&c.asaas_status!=='CANCELED'&&(
@@ -4385,10 +4394,16 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
 
 // Modal Gerar Faturamento (financeiro)
 function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
-  const [checks,setChecks]=useState({impl:cliente.vI>0&&cliente.pagamentoI==='Boleto',equip:cliente.vE>0&&cliente.pagamentoE==='Boleto',sistema:cliente.vS>0});
+  // Determina o que ainda está pendente de processar
+  const implPendente=parseFloat(cliente.vI)>0&&(cliente.pagamentoI==='Boleto'||!cliente.pagamentoI)&&(!cliente.asaas_status_impl||cliente.asaas_status_impl==='');
+  const equipPendente=parseFloat(cliente.vE)>0&&(cliente.pagamentoE==='Boleto'||!cliente.pagamentoE)&&(!cliente.asaas_status_equip||cliente.asaas_status_equip==='');
+  const sistemaPendente=parseFloat(cliente.vS)>0&&(!cliente.asaas_status_sistema||cliente.asaas_status_sistema==='');
+
+  const [checks,setChecks]=useState({impl:implPendente,equip:equipPendente,sistema:sistemaPendente});
   const [loading,setLoading]=useState(false);
   const toggleCheck=k=>setChecks(c=>({...c,[k]:!c[k]}));
   const temAlgo=checks.impl||checks.equip||checks.sistema;
+  const diaVenc=cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—';
 
   async function confirmar(){
     setLoading(true);
@@ -4398,71 +4413,100 @@ function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
-      <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:480,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
-        <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>🚀 Gerar Faturamento</div>
-        <div style={{fontSize:12,color:'#7f8c8d',marginBottom:16}}>Selecione as cobranças para processar no Asaas</div>
-
-        {/* Resumo cliente */}
-        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:16}}>
-          <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{cliente.nome}</div>
-          <div style={{fontSize:11,color:'#7f8c8d'}}>{cliente.cnpj}</div>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:500,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>Gerar Faturamento no Asaas</div>
+        <div style={{fontSize:12,color:'#7f8c8d',marginBottom:16}}>
+          {cliente.asaas_id?'Cliente já vinculado — selecione as pendências a processar':'Novo faturamento — selecione as cobranças'}
         </div>
 
-        {/* Checkboxes */}
-        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
-          {cliente.vI>0&&cliente.pagamentoI==='Boleto'&&(
+        {/* Resumo cliente */}
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 14px',marginBottom:16,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{cliente.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>{cliente.cnpj}</div>
+          </div>
+          {cliente.asaas_id&&<div style={{fontSize:9,color:'#27ae60',fontWeight:700,background:'#f0fff4',padding:'3px 8px',borderRadius:6,border:'1px solid #c6f6d5'}}>Asaas: {cliente.asaas_id}</div>}
+        </div>
+
+        {/* Cobranças pendentes de processar (checkboxes) */}
+        <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>Pendentes para processar</div>
+
+          {implPendente?(
             <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.impl?'#f5a623':'#e8eaed'}`,cursor:'pointer',background:checks.impl?'#fff8ee':'#fff'}}>
               <input type="checkbox" checked={checks.impl} onChange={()=>toggleCheck('impl')} style={{width:16,height:16}}/>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:12,color:'#b45309'}}>🔧 Implantação</div>
-                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vI)} • Boleto {cliente.parcelasI||1}x</div>
+                <div style={{fontWeight:700,fontSize:12,color:'#b45309'}}>Implantacao</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(parseFloat(cliente.vI))} • Boleto {cliente.parcelasI||1}x</div>
               </div>
+              <span style={{fontSize:10,background:'#fff8ee',color:'#b45309',border:'1px solid #fde68a',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Pendente</span>
             </label>
-          )}
-          {cliente.vE>0&&cliente.pagamentoE==='Boleto'&&(
+          ):(parseFloat(cliente.vI)>0&&(
+            <div style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1fae5',background:'#f0fff4',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:11,color:'#276749'}}>Implantacao</div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>
+                  {cliente.pagamentoI!=='Boleto'?`${cliente.pagamentoI} — link gerado pelo vendedor`:`${moeda(parseFloat(cliente.vI))} • status: ${cliente.asaas_status_impl}`}
+                </div>
+              </div>
+              <span style={{fontSize:10,background:'#d1fae5',color:'#276749',border:'1px solid #6ee7b7',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Ja processado</span>
+            </div>
+          ))}
+
+          {equipPendente?(
             <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.equip?'#27ae60':'#e8eaed'}`,cursor:'pointer',background:checks.equip?'#f0fff4':'#fff'}}>
               <input type="checkbox" checked={checks.equip} onChange={()=>toggleCheck('equip')} style={{width:16,height:16}}/>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:12,color:'#276749'}}>💻 Equipamento</div>
-                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vE)} • Boleto {cliente.parcelasE||1}x</div>
+                <div style={{fontWeight:700,fontSize:12,color:'#276749'}}>Equipamento</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(parseFloat(cliente.vE))} • Boleto {cliente.parcelasE||1}x</div>
               </div>
+              <span style={{fontSize:10,background:'#fff8ee',color:'#b45309',border:'1px solid #fde68a',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Pendente</span>
             </label>
-          )}
-          {cliente.vS>0&&(
+          ):(parseFloat(cliente.vE)>0&&(
+            <div style={{padding:'8px 14px',borderRadius:8,border:'1px solid #d1fae5',background:'#f0fff4',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:11,color:'#276749'}}>Equipamento</div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>
+                  {cliente.pagamentoE!=='Boleto'?`${cliente.pagamentoE} — link gerado pelo vendedor`:`${moeda(parseFloat(cliente.vE))} • status: ${cliente.asaas_status_equip}`}
+                </div>
+              </div>
+              <span style={{fontSize:10,background:'#d1fae5',color:'#276749',border:'1px solid #6ee7b7',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Ja processado</span>
+            </div>
+          ))}
+
+          {sistemaPendente?(
             <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.sistema?'#3498db':'#e8eaed'}`,cursor:'pointer',background:checks.sistema?'#ebf8ff':'#fff'}}>
               <input type="checkbox" checked={checks.sistema} onChange={()=>toggleCheck('sistema')} style={{width:16,height:16}}/>
               <div style={{flex:1}}>
-                <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0'}}>🔄 Sistema SaaS recorrente</div>
-                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vS)}/mês • vence dia {cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—'}</div>
+                <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0'}}>Sistema SaaS — recorrencia mensal</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(parseFloat(cliente.vS))}/mes • boleto vence dia {diaVenc} todo mes</div>
               </div>
+              <span style={{fontSize:10,background:'#ebf8ff',color:'#2b6cb0',border:'1px solid #bee3f8',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Sem faturamento</span>
             </label>
-          )}
-          {/* Links já gerados pelo vendedor (info) */}
-          {cliente.vI>0&&cliente.pagamentoI!=='Boleto'&&(
-            <div style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dde1e7',background:'#f8f9fa',display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:16}}>{cliente.asaas_link_impl?'✅':'⚡'}</span>
+          ):(parseFloat(cliente.vS)>0&&(
+            <div style={{padding:'8px 14px',borderRadius:8,border:'1px solid #bee3f8',background:'#ebf8ff',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div>
-                <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a'}}>🔧 Implantação — {cliente.pagamentoI}</div>
-                <div style={{fontSize:10,color:'#7f8c8d'}}>{cliente.asaas_link_impl?'Link gerado pelo vendedor ✅':'Aguardando vendedor gerar link'}</div>
+                <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0'}}>Sistema SaaS</div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>{moeda(parseFloat(cliente.vS))}/mes • vence dia {diaVenc} • status: {cliente.asaas_status_sistema||'ativo'}</div>
               </div>
+              <span style={{fontSize:10,background:'#d1fae5',color:'#276749',border:'1px solid #6ee7b7',borderRadius:5,padding:'2px 6px',fontWeight:700}}>Recorrencia ativa</span>
             </div>
-          )}
-          {cliente.vE>0&&cliente.pagamentoE!=='Boleto'&&(
-            <div style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dde1e7',background:'#f8f9fa',display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:16}}>{cliente.asaas_link_equip?'✅':'⚡'}</span>
-              <div>
-                <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a'}}>💻 Equipamento — {cliente.pagamentoE}</div>
-                <div style={{fontSize:10,color:'#7f8c8d'}}>{cliente.asaas_link_equip?'Link gerado pelo vendedor ✅':'Aguardando vendedor gerar link'}</div>
-              </div>
+          ))}
+
+          {!implPendente&&!equipPendente&&!sistemaPendente&&(
+            <div style={{textAlign:'center',padding:'16px',color:'#27ae60',fontWeight:700,fontSize:13,background:'#f0fff4',borderRadius:8,border:'1px solid #c6f6d5'}}>
+              Todas as cobranças ja foram processadas!
             </div>
           )}
         </div>
 
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <button onClick={onCancelar} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
-          <button onClick={confirmar} disabled={!temAlgo||loading} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(!temAlgo||loading)?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:(!temAlgo||loading)?'default':'pointer',fontSize:13}}>
-            {loading?'Processando no Asaas...':'✅ Confirmar e Faturar'}
-          </button>
+          <button onClick={onCancelar} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Fechar</button>
+          {temAlgo&&(
+            <button onClick={confirmar} disabled={loading} style={{padding:'10px 24px',borderRadius:7,border:'none',background:loading?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:loading?'default':'pointer',fontSize:13}}>
+              {loading?'Processando no Asaas...':'Confirmar e Faturar'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -5315,8 +5359,8 @@ export default function App(){
   const [page,setPage]=useState('dashboard');
   const [clienteSel,setClienteSel]=useState(null);
   const [busca,setBusca]=useState('');
-  const [filtroAno,setFiltroAno]=useState('Todos');
-  const [filtroMes,setFiltroMes]=useState('Todos');
+  const [filtroAno,setFiltroAno]=useState(String(new Date().getFullYear()));
+  const [filtroMes,setFiltroMes]=useState(String(new Date().getMonth()));
   const [filtroVendedor,setFiltroVendedor]=useState('Todos');
   const [filtroPlano,setFiltroPlano]=useState('Todos');
   const [filtroStatus,setFiltroStatus]=useState('Todos');
