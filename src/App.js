@@ -3871,17 +3871,24 @@ async function asaasCriarLinkPagamento(customerId,valor,billingType,desc){
   const dueDate=`${amanha.getFullYear()}-${String(amanha.getMonth()+1).padStart(2,'0')}-${String(amanha.getDate()).padStart(2,'0')}`;
 
   if(billingType==='PIX'){
-    // Pix: cobrança direta com vencimento amanhã
     const r=await asaasReq('/payments','POST',{
       customer:customerId,billingType:'PIX',value:valor,dueDate,description:desc,
     });
-    return{url:r.invoiceUrl||r.bankSlipUrl||'',id:r.id||''};
+    console.log('[Asaas PIX response]',JSON.stringify(r));
+    // invoiceUrl é a URL completa do boleto/pix ex: https://sandbox.asaas.com/i/xxx
+    const pixUrl=r.invoiceUrl||r.bankSlipUrl||
+      (r.id?`https://sandbox.asaas.com/i/${r.id}`:'');
+    return{url:pixUrl,id:r.id||''};
   }
-  // Cartão: link de pagamento
+
+  // Cartão: tenta paymentLinks primeiro
   const r=await asaasReq('/paymentLinks','POST',{
     name:desc,billingType:'CREDIT_CARD',chargeType:'DETACHED',value:valor,description:desc,
   });
-  return{url:r.url||r.shortUrl||'',id:r.id||''};
+  console.log('[Asaas CARTAO response]',JSON.stringify(r));
+  const url=r.url||r.shortUrl||r.invoiceUrl||r.paymentUrl||
+    (r.id?`https://sandbox.asaas.com/p/${r.id}`:'');
+  return{url,id:r.id||''};
 }
 async function asaasBuscarStatusCliente(customerId){
   try{
@@ -3944,7 +3951,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   }
 
   function LinkBox({label,link,tipo,status,waMsg,onGerarNovo,gerando,cor,corBg}){
-    const temLink=!!link;
+    const temLink=!!(link&&link.length>0);
     return(
       <div style={{padding:'10px',background:corBg,borderRadius:6,border:`1px solid ${cor}44`,marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
