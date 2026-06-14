@@ -3917,6 +3917,11 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   const [gerandoImpl,setGerandoImpl]=useState(false);
   const [gerandoEquip,setGerandoEquip]=useState(false);
   const [erro,setErro]=useState('');
+  // Estado local para refletir links gerados sem depender do pai re-renderizar
+  const [linkImpl,setLinkImpl]=useState(cliente.asaas_link_impl||'');
+  const [linkEquip,setLinkEquip]=useState(cliente.asaas_link_equip||'');
+  const [statusImpl,setStatusImpl]=useState(cliente.asaas_status_impl||'');
+  const [statusEquip,setStatusEquip]=useState(cliente.asaas_status_equip||'');
 
   async function gerarNovoLinkImpl(){
     setGerandoImpl(true);setErro('');
@@ -3927,10 +3932,12 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         asaasId=ac.id;
       }
       const billingType=cliente.pagamentoI==='Pix'?'PIX':'CREDIT_CARD';
-      const link=await asaasCriarLinkPagamento(asaasId,cliente.vI,billingType,`Implantação — ${cliente.nome}`);
-      const url=link.url||link.invoiceUrl||link.paymentLink||'';
+      const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vI)||0,billingType,`Implantação — ${cliente.nome}`);
+      const url=link.url||'';
+      console.log('[gerarNovoLinkImpl] url=',url,'link=',link);
+      setLinkImpl(url);setStatusImpl('PENDING');
       await onUpdate({...cliente,asaas_id:asaasId,asaas_link_impl:url,asaas_link_impl_id:link.id||'',asaas_status_impl:'PENDING'});
-    }catch(e){setErro('Erro ao gerar link: '+e.message);}
+    }catch(e){setErro('Erro ao gerar link: '+e.message);console.error(e);}
     setGerandoImpl(false);
   }
 
@@ -3943,10 +3950,12 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         asaasId=ac.id;
       }
       const billingType=cliente.pagamentoE==='Pix'?'PIX':'CREDIT_CARD';
-      const link=await asaasCriarLinkPagamento(asaasId,cliente.vE,billingType,`Equipamento — ${cliente.nome}`);
-      const url=link.url||link.invoiceUrl||link.paymentLink||'';
+      const link=await asaasCriarLinkPagamento(asaasId,parseFloat(cliente.vE)||0,billingType,`Equipamento — ${cliente.nome}`);
+      const url=link.url||'';
+      console.log('[gerarNovoLinkEquip] url=',url,'link=',link);
+      setLinkEquip(url);setStatusEquip('PENDING');
       await onUpdate({...cliente,asaas_id:asaasId,asaas_link_equip:url,asaas_link_equip_id:link.id||'',asaas_status_equip:'PENDING'});
-    }catch(e){setErro('Erro ao gerar link: '+e.message);}
+    }catch(e){setErro('Erro ao gerar link: '+e.message);console.error(e);}
     setGerandoEquip(false);
   }
 
@@ -4008,9 +4017,9 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         {parseFloat(cliente.vI)>0&&(
           <LinkBox
             label={`🔧 Implantação — ${moeda(parseFloat(cliente.vI))} • ${cliente.parcelasI||1}x`}
-            link={cliente.asaas_link_impl}
+            link={linkImpl}
             tipo={cliente.pagamentoI||'Boleto'}
-            status={cliente.asaas_status_impl}
+            status={statusImpl||'PENDING'}
             waMsg="Olá! Segue o link para pagamento da implantação:"
             onGerarNovo={gerarNovoLinkImpl}
             gerando={gerandoImpl}
@@ -4023,9 +4032,9 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         {parseFloat(cliente.vE)>0&&(
           <LinkBox
             label={`💻 Equipamento — ${moeda(parseFloat(cliente.vE))} • ${cliente.parcelasE||1}x`}
-            link={cliente.asaas_link_equip}
+            link={linkEquip}
             tipo={cliente.pagamentoE||'Boleto'}
-            status={cliente.asaas_status_equip}
+            status={statusEquip||'PENDING'}
             waMsg="Olá! Segue o link para pagamento do equipamento:"
             onGerarNovo={gerarNovoLinkEquip}
             gerando={gerandoEquip}
