@@ -14,8 +14,19 @@ import { db, auth } from "./firebase";
 // ─── CONSTANTES ──────────────────────────────────────────────────────────────
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
-const FORMAS=['Boleto','Pix','Cartão de crédito','Link de pagamento','A vista','Transferência','Dinheiro','Outro'];
+// Formas de pagamento espelhadas do Asaas
+const FORMAS_ASAAS=['Boleto','Pix','Cartão'];
+const FORMAS=FORMAS_ASAAS; // apenas formas que o Asaas suporta
 const EQUIPS=['Evo40','Tablet','Celular','Control ID','TopData InnerRep','Já possui','Nenhum','Outro'];
+// Status Asaas → badge visual
+const ASAAS_STATUS={
+  SEM_FATURAMENTO:{label:'Sem faturamento', color:'#3498db',   emoji:'🔵'},
+  PENDING:         {label:'Pendente',        color:'#f5a623',   emoji:'🟡'},
+  RECEIVED:        {label:'Em dia',          color:'#27ae60',   emoji:'🟢'},
+  CONFIRMED:       {label:'Em dia',          color:'#27ae60',   emoji:'🟢'},
+  OVERDUE:         {label:'Vencido',         color:'#e74c3c',   emoji:'🔴'},
+  CANCELED:        {label:'Cancelado',       color:'#7f8c8d',   emoji:'⚫'},
+};
 const ETAPAS=[
   {id:'venda_fechada',      label:'Venda Fechada',          color:'#3498db'},
   {id:'aguardando_retorno', label:'Aguardando Retorno',     color:'#e67e22'},
@@ -35,6 +46,7 @@ const NAV_ITEMS_BASE=[
   {id:'dashboard',     icon:'ti-layout-dashboard', label:'Dashboard',      perfis:['admin','financeiro','colaborador']},
   {id:'vendas',        icon:'ti-chart-bar',         label:'Vendas',         perfis:['admin','financeiro']},
   {id:'financeiro',    icon:'ti-currency-dollar',   label:'Financeiro',     perfis:['admin','financeiro']},
+  {id:'asaas',         icon:'ti-building-bank',     label:'Asaas',          perfis:['admin','financeiro']},
   {id:'clientes',      icon:'ti-users',             label:'Clientes',       perfis:['admin','colaborador']},
   {id:'novo',          icon:'ti-plus',              label:'Novo cliente',   perfis:['admin','colaborador']},
   {id:'implantacao',   icon:'ti-rocket',            label:'Implantação',    perfis:['admin','colaborador']},
@@ -973,16 +985,43 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
                     {cols.map(c=>{
                       const prazoD=c.impl.prazo?new Date(c.impl.prazo):null;
                       const atrasado=prazoD&&prazoD<hoje;
+                      const faturado=!!c.asaas_id;
+                      // Dias na etapa atual
+                      const diasNaEtapa=(()=>{
+                        if(!c.impl.etapaData)return null;
+                        const diff=Math.floor((Date.now()-new Date(c.impl.etapaData).getTime())/(1000*60*60*24));
+                        return diff;
+                      })();
+                      const alerta7dias=diasNaEtapa!==null&&diasNaEtapa>=7;
                       return(
                         <div key={c.id}
                           draggable
                           onDragStart={e=>{setDragId(c.id);e.dataTransfer.effectAllowed='move';}}
                           onDragEnd={()=>{setDragId(null);setDragOver(null);}}
                           onClick={()=>setClienteKanban(c)}
-                          style={{background:'#fff',borderRadius:6,padding:'10px',cursor:'grab',boxShadow:dragId===c.id?'0 4px 12px rgba(0,0,0,.2)':'0 1px 3px rgba(0,0,0,.08)',borderLeft:`3px solid ${etapa.color}`,opacity:dragId===c.id?.5:1}}>
+                          style={{
+                            background:faturado?'#fff5f5':'#fff',
+                            borderRadius:6,
+                            padding:'10px',
+                            cursor:'grab',
+                            boxShadow:dragId===c.id?'0 4px 12px rgba(0,0,0,.2)':'0 1px 3px rgba(0,0,0,.08)',
+                            borderLeft:`3px solid ${faturado?'#e74c3c':etapa.color}`,
+                            border:faturado?'2px solid #e74c3c':`1px solid transparent`,
+                            opacity:dragId===c.id?.5:1
+                          }}>
+                          {faturado&&(
+                            <div style={{background:'#e74c3c',color:'#fff',borderRadius:4,padding:'2px 6px',fontSize:9,fontWeight:700,marginBottom:4,display:'inline-block'}}>
+                              ⚡ FATURADO — PRIORIDADE TOTAL
+                            </div>
+                          )}
                           <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:3,lineHeight:1.3}}>{c.nome}</div>
                           {c.vendedor!=='—'&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2}}>👤 {c.vendedor}</div>}
                           {c.impl.prazo&&<div style={{fontSize:10,color:atrasado?'#e74c3c':'#27ae60',fontWeight:600}}>📅 {new Date(c.impl.prazo+'T12:00:00').toLocaleDateString('pt-BR')}{atrasado?' ⚠':''}</div>}
+                          {diasNaEtapa!==null&&(
+                            <div style={{fontSize:9,color:alerta7dias?'#e74c3c':'#7f8c8d',fontWeight:alerta7dias?700:400,marginTop:2}}>
+                              {alerta7dias?'⚠ ':'⏱ '}{diasNaEtapa}d nesta etapa
+                            </div>
+                          )}
                           {(c.impl.comentarios||[]).length>0&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:2}}>💬 {c.impl.comentarios.length}</div>}
                           <div style={{fontSize:9,color:'#bdc3c7',marginTop:3,textAlign:'right'}}>⠿ arrastar</div>
                         </div>
@@ -1058,11 +1097,39 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
 }
 
 // ─── FORMULÁRIO NOVO CLIENTE ──────────────────────────────────────────────────
-function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
+function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados}){
   const hoje=new Date();
   const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
   const hojeISO=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
-  const [f,setF]=useState({data:hojeISO,nome:'',cnpj:'',contato:'',tel:'',func:'',equipTipo:equipDefault,vI:'',vE:'',vS:'',pagamento:'Boleto',dtBoleto:'',email:'',status:'Faturado',plano:'Basic',vendedor:'',nfe:'Não',renovacao:'',obs:'',equipPago:'Não se aplica',equipRastreio:'',equipDataEnvio:''});
+  const [f,setF]=useState({
+    data:hojeISO,
+    nome:dadosImportados?.nome||'',
+    cnpj:dadosImportados?.cnpj||'',
+    contato:dadosImportados?.contato||'',
+    tel:dadosImportados?.tel||'',
+    func:dadosImportados?.func||'',
+    equipTipo:dadosImportados?.equipTipo||equipDefault,
+    vI:dadosImportados?.vI||'',
+    vE:dadosImportados?.vE||'',
+    vS:dadosImportados?.vS||'',
+    pagamento:'Boleto',
+    dtBoleto:dadosImportados?.dtBoleto||'',
+    email:dadosImportados?.email||'',
+    status:'Aguardando',
+    plano:dadosImportados?.plano||'Basic',
+    vendedor:dadosImportados?.vendedor||'',
+    nfe:dadosImportados?.nfe||'Não',
+    renovacao:'',
+    obs:dadosImportados?.obs||'',
+    equipPago:'Não se aplica',
+    equipRastreio:'',
+    equipDataEnvio:'',
+    // Campos Asaas
+    pagamentoI:dadosImportados?.pagamentoI||'Boleto',
+    parcelasI:dadosImportados?.parcelasI||1,
+    pagamentoE:dadosImportados?.pagamentoE||'Boleto',
+    parcelasE:dadosImportados?.parcelasE||1,
+  });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
   const tot=(parseValor(f.vI)||0)+(parseValor(f.vE)||0)+(parseValor(f.vS)||0);
   const equipSel=equipamentosCad.find(e=>e.nome===f.equipTipo);
@@ -1098,9 +1165,20 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad}){
   return(
     <div style={{fontFamily:'sans-serif'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-        <div style={{fontWeight:700,fontSize:16,color:C.text}}>Novo cliente</div>
+        <div style={{fontWeight:700,fontSize:16,color:C.text}}>
+          {dadosImportados?'📥 Cliente importado do orçamento':'Novo cliente'}
+        </div>
         <button onClick={onCancel} style={{background:'none',border:'none',cursor:'pointer',color:C.textMuted,fontSize:13}}>← Voltar</button>
       </div>
+      {dadosImportados&&(
+        <div style={{background:'#d5f5e3',border:'1px solid #27ae60',borderRadius:8,padding:'10px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:18}}>✅</span>
+          <div>
+            <div style={{fontWeight:700,fontSize:12,color:'#1a5e34'}}>Dados importados do orçamento</div>
+            <div style={{fontSize:11,color:'#27ae60'}}>Verifique e complete os campos faltantes antes de salvar</div>
+          </div>
+        </div>
+      )}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados da empresa</div>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
@@ -1216,9 +1294,11 @@ function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
   );
 }
 
-function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
+function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfil}){
   const [editMode,setEditMode]=useState(false);
   const [saved,setSaved]=useState(false);
+  const [modalFaturamento,setModalFaturamento]=useState(false);
+  const [modalAlteracao,setModalAlteracao]=useState(null); // null | 'valor' | 'cancelamento'
   const [f,setF]=useState({
     nome:c.nome||'',
     cnpj:c.cnpj||'',
@@ -1422,6 +1502,79 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad}){
           </div>
         );
       })()}
+
+      {/* PAINEL ASAAS */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span>💰 Financeiro Asaas</span>
+          {c.asaas_id&&<span style={{fontSize:10,color:'#7f8c8d',fontWeight:400}}>ID: {c.asaas_id}</span>}
+        </div>
+        <PainelAsaasCliente cliente={f} perfil={perfil}/>
+
+        {/* Botão Gerar Faturamento — só financeiro/admin e sem asaas_id ainda */}
+        {(perfil==='financeiro'||perfil==='admin')&&!c.asaas_id&&(
+          <button onClick={()=>setModalFaturamento(true)} style={{width:'100%',marginTop:12,padding:'12px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            🚀 Gerar Faturamento no Asaas
+          </button>
+        )}
+
+        {/* Ações edição/cancelamento — só financeiro/admin e com asaas_id */}
+        {(perfil==='financeiro'||perfil==='admin')&&c.asaas_id&&c.asaas_status!=='CANCELED'&&(
+          <div style={{display:'flex',gap:8,marginTop:12,flexWrap:'wrap'}}>
+            <button onClick={()=>setModalAlteracao('valor')} style={{flex:1,padding:'8px',borderRadius:6,border:'1px solid #f5a623',background:'#fff',color:'#f5a623',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              ✏️ Alterar valor/vencimento
+            </button>
+            <button onClick={()=>setModalAlteracao('cancelamento')} style={{flex:1,padding:'8px',borderRadius:6,border:'1px solid #e74c3c',background:'#fff',color:'#e74c3c',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              ❌ Cancelar assinatura
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Modais */}
+      {modalFaturamento&&(
+        <ModalGerarFaturamento
+          cliente={f}
+          onConfirmar={async(checks)=>{
+            // Simula criação no Asaas (substituir por chamada real quando API Key disponível)
+            const asaasId='asaas_'+Date.now();
+            await onUpdate({...c,asaas_id:asaasId,asaas_status:'PENDING',status:'Faturado'});
+            // Registra histórico
+            await setDoc(doc(collection(db,'historico_cliente')),{
+              clienteId:c.id,clienteNome:c.nome,
+              tipo:'faturamento_gerado',
+              descricao:`Faturamento gerado no Asaas. Implantação: ${checks.impl}, Equipamento: ${checks.equip}, Sistema: ${checks.sistema}`,
+              usuario:auth.currentUser?.email||'—',
+              data:new Date().toISOString(),
+            });
+            setModalFaturamento(false);
+          }}
+          onCancelar={()=>setModalFaturamento(false)}
+        />
+      )}
+      {modalAlteracao&&(
+        <ModalConfirmacaoFinanceira
+          tipo={modalAlteracao}
+          cliente={c}
+          onConfirmar={async({quem,motivo})=>{
+            if(modalAlteracao==='cancelamento'){
+              await onUpdate({...c,asaas_status:'CANCELED',status:'Cancelado'});
+            }
+            // Registra histórico
+            await setDoc(doc(collection(db,'historico_cliente')),{
+              clienteId:c.id,clienteNome:c.nome,
+              tipo:modalAlteracao,
+              descricao:modalAlteracao==='cancelamento'?'Assinatura cancelada no Asaas':'Dados financeiros alterados',
+              solicitadoPor:quem,
+              motivo,
+              usuario:auth.currentUser?.email||'—',
+              data:new Date().toISOString(),
+            });
+            setModalAlteracao(null);
+          }}
+          onCancelar={()=>setModalAlteracao(null)}
+        />
+      )}
     </div>
   );
 }
@@ -2545,7 +2698,7 @@ function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
 // ─── FORMULÁRIO DE ORÇAMENTO ──────────────────────────────────────────────────
 function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onSalvar,onCancelar,orcEdit}){
   const [etapa,setEtapa]=useState(1);
-  const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',email:'',tel:''});
+  const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',cnpj:'',email:'',tel:'',func:'',equipTipo:'',plano:'Basic',nfe:'Não'});
   const [itens,setItens]=useState(orcEdit?.itens||[]);
   const [det,setDet]=useState(orcEdit?.detalhes||{vendedor:'',validade:'',forma:'',obs:'',templateId:''});
   const [salvando,setSalvando]=useState(false);
@@ -2566,8 +2719,16 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
   async function salvar(status='rascunho'){
     setSalvando(true);
     const id=orcEdit?.id||'orc_'+Date.now();
-    await setDoc(doc(db,'orcamentos',id),{id,cliente:cli,itens,detalhes:det,status,subtotal,
-      criadoEm:orcEdit?.criadoEm||new Date().toISOString(),atualizadoEm:new Date().toISOString()});
+    await setDoc(doc(db,'orcamentos',id),{
+      id,
+      cliente:{...cli},
+      itens,
+      detalhes:det,
+      status,
+      subtotal,
+      criadoEm:orcEdit?.criadoEm||new Date().toISOString(),
+      atualizadoEm:new Date().toISOString()
+    });
     setSalvando(false);onSalvar();
   }
 
@@ -2594,15 +2755,37 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
           <div style={{fontWeight:700,fontSize:12,color:'#4a4a4a',marginBottom:14,textTransform:'uppercase',letterSpacing:.8}}>Dados do cliente</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
             <div><label style={lbl}>Nome do contato *</label><input style={{...fi,textTransform:'uppercase'}} value={cli.nome} onChange={e=>setCli(c=>({...c,nome:e.target.value.toUpperCase()}))}/></div>
-            <div><label style={lbl}>Empresa</label><input style={{...fi,textTransform:'uppercase'}} value={cli.empresa} onChange={e=>setCli(c=>({...c,empresa:e.target.value.toUpperCase()}))}/></div>
+            <div><label style={lbl}>Empresa / Razão Social *</label><input style={{...fi,textTransform:'uppercase'}} value={cli.empresa} onChange={e=>setCli(c=>({...c,empresa:e.target.value.toUpperCase()}))}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={lbl}>CNPJ / CPF *</label><input style={fi} value={cli.cnpj||''} onChange={e=>setCli(c=>({...c,cnpj:e.target.value.toUpperCase()}))} placeholder="00.000.000/0001-00"/></div>
+            <div><label style={lbl}>Email financeiro *</label><input style={fi} type="email" value={cli.email} onChange={e=>setCli(c=>({...c,email:e.target.value}))}/></div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+            <div><label style={lbl}>Telefone</label><input style={fi} value={cli.tel} onChange={e=>setCli(c=>({...c,tel:mascaraTel(e.target.value)}))}/></div>
+            <div><label style={lbl}>Nº Funcionários</label><input style={fi} type="number" value={cli.func||''} onChange={e=>setCli(c=>({...c,func:e.target.value}))}/></div>
+            <div><label style={lbl}>Plano</label>
+              <select style={fi} value={cli.plano||'Basic'} onChange={e=>setCli(c=>({...c,plano:e.target.value}))}>
+                {PLANOS.map(p=><option key={p}>{p}</option>)}
+              </select>
+            </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
-            <div><label style={lbl}>Email</label><input style={fi} type="email" value={cli.email} onChange={e=>setCli(c=>({...c,email:e.target.value}))}/></div>
-            <div><label style={lbl}>Telefone</label><input style={fi} value={cli.tel} onChange={e=>setCli(c=>({...c,tel:mascaraTel(e.target.value)}))}/></div>
+            <div><label style={lbl}>Equipamento</label>
+              <select style={fi} value={cli.equipTipo||''} onChange={e=>setCli(c=>({...c,equipTipo:e.target.value}))}>
+                <option value="">— Selecione —</option>
+                {(equipamentosCad.length>0?equipamentosCad.map(e=>e.nome):EQUIPS).map(e=><option key={e}>{e}</option>)}
+              </select>
+            </div>
+            <div><label style={lbl}>Emitir NFe?</label>
+              <select style={fi} value={cli.nfe||'Não'} onChange={e=>setCli(c=>({...c,nfe:e.target.value}))}>
+                <option>Sim</option><option>Não</option>
+              </select>
+            </div>
           </div>
           <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
             <button onClick={onCancelar} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
-            <button onClick={()=>setEtapa(2)} disabled={!cli.nome.trim()} style={{padding:'10px 24px',borderRadius:7,border:'none',background:cli.nome.trim()?'#f5a623':'#e8eaed',color:'#fff',fontWeight:700,cursor:cli.nome.trim()?'pointer':'default',fontSize:13}}>Próximo →</button>
+            <button onClick={()=>setEtapa(2)} disabled={!cli.nome.trim()||!cli.empresa.trim()} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(cli.nome.trim()&&cli.empresa.trim())?'#f5a623':'#e8eaed',color:'#fff',fontWeight:700,cursor:(cli.nome.trim()&&cli.empresa.trim())?'pointer':'default',fontSize:13}}>Próximo →</button>
           </div>
         </div>
       )}
@@ -2861,7 +3044,33 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
   const [subAba,setSubAba]=useState('lista');
   const [orcSel,setOrcSel]=useState(null);
   const [editando,setEditando]=useState(false);
+  const [modalVenda,setModalVenda]=useState(null); // orçamento selecionado para fechar venda
+  const [dadosVenda,setDadosVenda]=useState({
+    // Implantação
+    pagamentoI:'Boleto',parcelasI:1,
+    // Equipamento
+    pagamentoE:'Boleto',parcelasE:1,
+    // Sistema
+    dtBoleto:'',
+  });
+  const [importando,setImportando]=useState(false);
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#4a4a4a',background:'#fff'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+
+  // Extrai valores do orçamento pelos tipos de item
+  function extrairValores(orc){
+    const itens=orc.itens||[];
+    let vI=0,vE=0,vS=0;
+    itens.forEach(it=>{
+      const n=(it.nome||'').toLowerCase();
+      const v=(parseFloat(it.preco)||0)*(parseFloat(it.qtd)||1)-(parseFloat(it.desconto)||0);
+      if(it.tipo==='equipamento'||n.includes('evo')||n.includes('tablet')||n.includes('celular')||n.includes('equipamento'))vE+=v;
+      else if(n.includes('implanta')||n.includes('instala'))vI+=v;
+      else if(n.includes('sistema')||n.includes('mensalidade')||n.includes('saas')||n.includes('/mês')||n.includes('/mes'))vS+=v;
+      else if(it.tipo==='servico')vI+=v; // serviços vão para implantação por padrão
+    });
+    return{vI,vE,vS};
+  }
 
   async function atualizarStatus(id,status){
     await setDoc(doc(db,'orcamentos',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
@@ -2869,14 +3078,140 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
   }
   async function remover(id){if(!window.confirm('Remover orçamento?'))return;await deleteDoc(doc(db,'orcamentos',id));setOrcSel(null);}
 
-  function importar(orc){
-    onImportarCRM({
-      nome:orc.cliente?.empresa||orc.cliente?.nome||'',
-      cnpj:'',contato:orc.cliente?.nome||'',
-      tel:orc.cliente?.tel||'',email:orc.cliente?.email||'',
-      obs:`Importado do orçamento. Total: R$ ${(orc.subtotal||0).toFixed(2).replace('.',',')}`,
-    });
+  function abrirModalVenda(orc){
+    setModalVenda(orc);
+    setDadosVenda({pagamentoI:'Boleto',parcelasI:1,pagamentoE:'Boleto',parcelasE:1,dtBoleto:''});
   }
+
+  async function confirmarVendaFechada(){
+    if(!modalVenda)return;
+    setImportando(true);
+    const orc=modalVenda;
+    const {vI,vE,vS}=extrairValores(orc);
+    // Muda status do orçamento para fechado
+    await setDoc(doc(db,'orcamentos',orc.id),{status:'fechado',atualizadoEm:new Date().toISOString()},{merge:true});
+    // Importa para o CRM com todos os dados
+    onImportarCRM({
+      nome:(orc.cliente?.empresa||orc.cliente?.nome||'').toUpperCase(),
+      cnpj:(orc.cliente?.cnpj||'').toUpperCase(),
+      contato:(orc.cliente?.nome||'').toUpperCase(),
+      tel:orc.cliente?.tel||'',
+      email:orc.cliente?.email||'',
+      func:parseInt(orc.cliente?.func)||0,
+      equipTipo:orc.cliente?.equipTipo||'Nenhum',
+      plano:orc.cliente?.plano||'Basic',
+      nfe:orc.cliente?.nfe||'Não',
+      vI,vE,vS,
+      total:vI+vE+vS,
+      pagamentoI:dadosVenda.pagamentoI,
+      parcelasI:dadosVenda.parcelasI,
+      pagamentoE:dadosVenda.pagamentoE,
+      parcelasE:dadosVenda.parcelasE,
+      dtBoleto:dadosVenda.dtBoleto,
+      vendedor:orc.detalhes?.vendedor||'',
+      status:'Aguardando',
+      obs:`Importado do orçamento ${orc.id}. Subtotal: R$ ${(orc.subtotal||0).toFixed(2).replace('.',',')}`,
+      orcamentoId:orc.id,
+    });
+    setImportando(false);
+    setModalVenda(null);
+    setOrcSel(null);
+  }
+
+  // ─── MODAL VENDA FECHADA ──────────────────────────────────────────────────
+  const ModalVendaFechada=()=>{
+    if(!modalVenda)return null;
+    const orc=modalVenda;
+    const {vI,vE,vS}=extrairValores(orc);
+    const upDados=(k,v)=>setDadosVenda(d=>({...d,[k]:v}));
+    return(
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+        <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:520,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)',maxHeight:'90vh',overflowY:'auto'}}>
+          <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>🤝 Confirmar Venda Fechada</div>
+          <div style={{fontSize:12,color:'#7f8c8d',marginBottom:20}}>Preencha os dados de pagamento para importar ao CRM</div>
+
+          {/* Resumo cliente */}
+          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:16}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
+            <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>{orc.cliente?.cnpj||'CNPJ não informado'} • {orc.cliente?.email}</div>
+            <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
+              {vI>0&&<span style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#b45309'}}>🔧 Implant.: {moeda(vI)}</span>}
+              {vE>0&&<span style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#276749'}}>💻 Equip.: {moeda(vE)}</span>}
+              {vS>0&&<span style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#2b6cb0'}}>🔄 Sistema: {moeda(vS)}/mês</span>}
+            </div>
+          </div>
+
+          {/* Implantação */}
+          {vI>0&&(
+            <div style={{background:'#fff8ee',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #fde68a'}}>
+              <div style={{fontWeight:700,fontSize:11,color:'#b45309',marginBottom:8,textTransform:'uppercase'}}>🔧 Implantação — {moeda(vI)}</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <div><label style={lbl}>Forma de pagamento</label>
+                  <select style={fi} value={dadosVenda.pagamentoI} onChange={e=>{upDados('pagamentoI',e.target.value);if(e.target.value==='Pix')upDados('parcelasI',1);}}>
+                    <option>Boleto</option><option>Pix</option><option value="Cartão">Cartão de Crédito</option>
+                  </select>
+                </div>
+                <div><label style={lbl}>Parcelas</label>
+                  <select style={fi} value={dadosVenda.parcelasI} onChange={e=>upDados('parcelasI',+e.target.value)} disabled={dadosVenda.pagamentoI==='Pix'}>
+                    {[1,2,3].map(n=><option key={n} value={n}>{n}x {dadosVenda.pagamentoI==='Pix'&&n>1?'(bloqueado)':''}</option>)}
+                  </select>
+                </div>
+              </div>
+              {(dadosVenda.pagamentoI==='Pix'||dadosVenda.pagamentoI==='Cartão')&&(
+                <div style={{marginTop:8,fontSize:11,color:'#b45309',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #fde68a'}}>
+                  ⚡ Vendedor gera o link na hora do fechamento
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Equipamento */}
+          {vE>0&&(
+            <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #9ae6b4'}}>
+              <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8,textTransform:'uppercase'}}>💻 Equipamento — {moeda(vE)}</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <div><label style={lbl}>Forma de pagamento</label>
+                  <select style={fi} value={dadosVenda.pagamentoE} onChange={e=>{upDados('pagamentoE',e.target.value);if(e.target.value==='Pix')upDados('parcelasE',1);}}>
+                    <option>Boleto</option><option>Pix</option><option value="Cartão">Cartão de Crédito</option>
+                  </select>
+                </div>
+                <div><label style={lbl}>Parcelas</label>
+                  <select style={fi} value={dadosVenda.parcelasE} onChange={e=>upDados('parcelasE',+e.target.value)} disabled={dadosVenda.pagamentoE==='Pix'}>
+                    {(dadosVenda.pagamentoE==='Boleto'?[1,2,3,4,5,6,7,8,9,10]:[1,2,3,4,5,6,7,8,9,10]).map(n=><option key={n} value={n}>{n}x</option>)}
+                  </select>
+                </div>
+              </div>
+              {(dadosVenda.pagamentoE==='Pix'||dadosVenda.pagamentoE==='Cartão')&&(
+                <div style={{marginTop:8,fontSize:11,color:'#276749',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #9ae6b4'}}>
+                  ⚡ Vendedor gera o link na hora do fechamento
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sistema */}
+          {vS>0&&(
+            <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',marginBottom:16,border:'1px solid #bee3f8'}}>
+              <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',marginBottom:8,textTransform:'uppercase'}}>🔄 Sistema SaaS — {moeda(vS)}/mês (boleto recorrente)</div>
+              <div><label style={lbl}>Data de vencimento mensal *</label>
+                <input style={fi} type="date" value={dadosVenda.dtBoleto} onChange={e=>upDados('dtBoleto',e.target.value)}/>
+              </div>
+              <div style={{marginTop:8,fontSize:11,color:'#2b6cb0',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #bee3f8'}}>
+                📄 Financeiro processa o boleto recorrente ao gerar faturamento
+              </div>
+            </div>
+          )}
+
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button onClick={()=>setModalVenda(null)} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+            <button onClick={confirmarVendaFechada} disabled={importando||(vS>0&&!dadosVenda.dtBoleto)} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(importando||(vS>0&&!dadosVenda.dtBoleto))?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+              {importando?'Importando...':'✅ Confirmar e Importar para o CRM'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if(editando&&orcSel){
     return(
@@ -2892,6 +3227,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
     const tpl=orcTemplates.find(t=>t.id===orc.detalhes?.templateId);
     return(
       <div>
+        {modalVenda&&<ModalVendaFechada/>}
         <button onClick={()=>setOrcSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,display:'flex',alignItems:'center',gap:6,padding:0}}>← Lista de orçamentos</button>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
           <div>
@@ -2909,7 +3245,11 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
               const b=encodeURIComponent(`Olá, ${orc.cliente?.nome||''}!\n\nSegue a proposta da Guion Informática.\n\nAtenciosamente,\n${orc.detalhes?.vendedor||'Guion Informática'}`);
               window.open(`mailto:${orc.cliente?.email}?subject=${s}&body=${b}`);
             }} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>✉️ Email</button>
-            {orc.status==='fechado'&&<button onClick={()=>importar(orc)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>📥 Importar p/ CRM</button>}
+            {(orc.status==='enviado'||orc.status==='negociacao'||orc.status==='fechado')&&(
+              <button onClick={()=>abrirModalVenda(orc)} style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+                🤝 Venda Fechada → CRM
+              </button>
+            )}
             <button onClick={()=>remover(orc.id)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
           </div>
         </div>
@@ -2922,6 +3262,7 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
 
   return(
     <div>
+      {modalVenda&&<ModalVendaFechada/>}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {[{id:'lista',l:`Orçamentos (${orcamentos.length})`},{id:'novo',l:'+ Novo'},{id:'config',l:'⚙️ Configurações'}].map(a=>(
@@ -2947,15 +3288,22 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
           )}
           {[...orcamentos].sort((a,b)=>new Date(b.atualizadoEm||b.criadoEm)-new Date(a.atualizadoEm||a.criadoEm)).map((orc)=>{
             const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
+            const podeFechar=orc.status==='enviado'||orc.status==='negociacao';
             return(
-              <div key={orc.id} onClick={()=>setOrcSel(orc)} style={{background:'#fff',borderRadius:8,padding:'13px 16px',marginBottom:8,cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
-                <div style={{flex:1,minWidth:0}}>
+              <div key={orc.id} style={{background:'#fff',borderRadius:8,padding:'13px 16px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
+                <div style={{flex:1,minWidth:0,cursor:'pointer'}} onClick={()=>setOrcSel(orc)}>
                   <div style={{fontWeight:700,fontSize:13,color:'#4a4a4a',marginBottom:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{orc.cliente?.empresa||orc.cliente?.nome||'(sem nome)'}</div>
                   <div style={{fontSize:11,color:'#7f8c8d'}}>{(orc.itens||[]).length} item(ns) • {orc.detalhes?.vendedor||'—'} • {orc.criadoEm?new Date(orc.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+                  {orc.cliente?.cnpj&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:2}}>CNPJ: {orc.cliente.cnpj}</div>}
                 </div>
-                <div style={{textAlign:'right',flexShrink:0}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0}}>
                   <div style={{fontWeight:700,fontSize:14,color:'#27ae60'}}>R$ {(orc.subtotal||0).toFixed(2).replace('.',',')}</div>
                   <span style={{background:st.color+'22',color:st.color,padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{st.label}</span>
+                  {podeFechar&&(
+                    <button onClick={e=>{e.stopPropagation();abrirModalVenda(orc);}} style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10,whiteSpace:'nowrap'}}>
+                      🤝 Fechar Venda
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -2965,6 +3313,466 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MÓDULO ASAAS — INTEGRAÇÃO FINANCEIRA COMPLETA
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Badge de status Asaas reutilizável
+function AsaasBadge({status,size='normal'}){
+  const s=ASAAS_STATUS[status]||ASAAS_STATUS.SEM_FATURAMENTO;
+  const p=size==='small'?'1px 6px':'2px 10px';
+  const fs=size==='small'?9:11;
+  return(
+    <span style={{background:s.color+'22',color:s.color,border:`1px solid ${s.color}44`,borderRadius:10,padding:p,fontSize:fs,fontWeight:700,whiteSpace:'nowrap'}}>
+      {s.emoji} {s.label}
+    </span>
+  );
+}
+
+// Painel financeiro Asaas no detalhe do cliente
+function PainelAsaasCliente({cliente,perfil}){
+  // Simula dados Asaas (quando API Key disponível, substituir pelas chamadas reais)
+  const asaasId=cliente.asaas_id;
+  const faturado=!!asaasId;
+  const statusAsaas=cliente.asaas_status||'SEM_FATURAMENTO';
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  if(!faturado){
+    return(
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',border:'2px dashed #dde1e7',textAlign:'center'}}>
+        <div style={{fontSize:20,marginBottom:6}}>🔵</div>
+        <div style={{fontWeight:700,fontSize:12,color:'#7f8c8d',marginBottom:4}}>Sem faturamento no Asaas</div>
+        <div style={{fontSize:11,color:'#bdc3c7'}}>Aguardando geração de cobrança pelo financeiro</div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{background:'#fff',borderRadius:8,border:'1px solid #e8eaed',overflow:'hidden'}}>
+      <div style={{background:'#f8f9fa',padding:'10px 14px',borderBottom:'1px solid #e8eaed',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontWeight:700,fontSize:11,color:'#2c3e50',textTransform:'uppercase'}}>💰 Asaas — Status Financeiro</span>
+        <AsaasBadge status={statusAsaas}/>
+      </div>
+      <div style={{padding:'12px 14px'}}>
+        {/* Implantação */}
+        {(cliente.vI>0)&&(
+          <div style={{marginBottom:10,padding:'8px 10px',background:'#fff8ee',borderRadius:6,border:'1px solid #fde68a'}}>
+            <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔧 Implantação — {moeda(cliente.vI)}</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:11,color:'#7f8c8d'}}>{cliente.pagamentoI||'Boleto'} • {cliente.parcelasI||1}x</span>
+              <AsaasBadge status={cliente.asaas_status_impl||'PENDING'} size="small"/>
+            </div>
+            {(cliente.pagamentoI==='Pix'||cliente.pagamentoI==='Cartão')&&cliente.asaas_link_impl&&(
+              <div style={{marginTop:6,display:'flex',gap:6}}>
+                <button onClick={()=>navigator.clipboard.writeText(cliente.asaas_link_impl)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #fde68a',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#b45309'}}>📋 Copiar link</button>
+                <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent('Olá! Segue o link para pagamento da implantação: '+cliente.asaas_link_impl)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
+              </div>
+            )}
+          </div>
+        )}
+        {/* Equipamento */}
+        {(cliente.vE>0)&&(
+          <div style={{marginBottom:10,padding:'8px 10px',background:'#f0fff4',borderRadius:6,border:'1px solid #9ae6b4'}}>
+            <div style={{fontSize:10,color:'#276749',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>💻 Equipamento — {moeda(cliente.vE)}</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:11,color:'#7f8c8d'}}>{cliente.pagamentoE||'Boleto'} • {cliente.parcelasE||1}x</span>
+              <AsaasBadge status={cliente.asaas_status_equip||'PENDING'} size="small"/>
+            </div>
+            {(cliente.pagamentoE==='Pix'||cliente.pagamentoE==='Cartão')&&cliente.asaas_link_equip&&(
+              <div style={{marginTop:6,display:'flex',gap:6}}>
+                <button onClick={()=>navigator.clipboard.writeText(cliente.asaas_link_equip)} style={{padding:'4px 10px',borderRadius:5,border:'1px solid #9ae6b4',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#276749'}}>📋 Copiar link</button>
+                <a href={`https://wa.me/${telParaWa(cliente.tel||'')}?text=${encodeURIComponent('Olá! Segue o link para pagamento do equipamento: '+cliente.asaas_link_equip)}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none'}}>📲 WhatsApp</a>
+              </div>
+            )}
+          </div>
+        )}
+        {/* Sistema */}
+        {(cliente.vS>0)&&(
+          <div style={{padding:'8px 10px',background:'#ebf8ff',borderRadius:6,border:'1px solid #bee3f8'}}>
+            <div style={{fontSize:10,color:'#2b6cb0',fontWeight:700,textTransform:'uppercase',marginBottom:4}}>🔄 Sistema SaaS — {moeda(cliente.vS)}/mês</div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:11,color:'#7f8c8d'}}>Vence dia {cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—'} todo mês</span>
+              <AsaasBadge status={cliente.asaas_status_sistema||'PENDING'} size="small"/>
+            </div>
+            {cliente.asaas_ultimo_pagamento&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>Último pag.: {new Date(cliente.asaas_ultimo_pagamento).toLocaleDateString('pt-BR')}</div>}
+            {cliente.asaas_proximo_vencimento&&<div style={{fontSize:10,color:'#2b6cb0',marginTop:2,fontWeight:600}}>Próximo: {new Date(cliente.asaas_proximo_vencimento).toLocaleDateString('pt-BR')}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Modal Gerar Faturamento (financeiro)
+function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
+  const [checks,setChecks]=useState({impl:cliente.vI>0&&cliente.pagamentoI==='Boleto',equip:cliente.vE>0&&cliente.pagamentoE==='Boleto',sistema:cliente.vS>0});
+  const [loading,setLoading]=useState(false);
+  const toggleCheck=k=>setChecks(c=>({...c,[k]:!c[k]}));
+  const temAlgo=checks.impl||checks.equip||checks.sistema;
+
+  async function confirmar(){
+    setLoading(true);
+    await onConfirmar(checks);
+    setLoading(false);
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:480,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>🚀 Gerar Faturamento</div>
+        <div style={{fontSize:12,color:'#7f8c8d',marginBottom:16}}>Selecione as cobranças para processar no Asaas</div>
+
+        {/* Resumo cliente */}
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:16}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{cliente.nome}</div>
+          <div style={{fontSize:11,color:'#7f8c8d'}}>{cliente.cnpj}</div>
+        </div>
+
+        {/* Checkboxes */}
+        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:20}}>
+          {cliente.vI>0&&cliente.pagamentoI==='Boleto'&&(
+            <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.impl?'#f5a623':'#e8eaed'}`,cursor:'pointer',background:checks.impl?'#fff8ee':'#fff'}}>
+              <input type="checkbox" checked={checks.impl} onChange={()=>toggleCheck('impl')} style={{width:16,height:16}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:12,color:'#b45309'}}>🔧 Implantação</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vI)} • Boleto {cliente.parcelasI||1}x</div>
+              </div>
+            </label>
+          )}
+          {cliente.vE>0&&cliente.pagamentoE==='Boleto'&&(
+            <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.equip?'#27ae60':'#e8eaed'}`,cursor:'pointer',background:checks.equip?'#f0fff4':'#fff'}}>
+              <input type="checkbox" checked={checks.equip} onChange={()=>toggleCheck('equip')} style={{width:16,height:16}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:12,color:'#276749'}}>💻 Equipamento</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vE)} • Boleto {cliente.parcelasE||1}x</div>
+              </div>
+            </label>
+          )}
+          {cliente.vS>0&&(
+            <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderRadius:8,border:`2px solid ${checks.sistema?'#3498db':'#e8eaed'}`,cursor:'pointer',background:checks.sistema?'#ebf8ff':'#fff'}}>
+              <input type="checkbox" checked={checks.sistema} onChange={()=>toggleCheck('sistema')} style={{width:16,height:16}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0'}}>🔄 Sistema SaaS recorrente</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{moeda(cliente.vS)}/mês • vence dia {cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').getDate():'—'}</div>
+              </div>
+            </label>
+          )}
+          {/* Links já gerados pelo vendedor (info) */}
+          {cliente.vI>0&&cliente.pagamentoI!=='Boleto'&&(
+            <div style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dde1e7',background:'#f8f9fa',display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:16}}>{cliente.asaas_link_impl?'✅':'⚡'}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a'}}>🔧 Implantação — {cliente.pagamentoI}</div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>{cliente.asaas_link_impl?'Link gerado pelo vendedor ✅':'Aguardando vendedor gerar link'}</div>
+              </div>
+            </div>
+          )}
+          {cliente.vE>0&&cliente.pagamentoE!=='Boleto'&&(
+            <div style={{padding:'10px 14px',borderRadius:8,border:'1px solid #dde1e7',background:'#f8f9fa',display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:16}}>{cliente.asaas_link_equip?'✅':'⚡'}</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:11,color:'#4a4a4a'}}>💻 Equipamento — {cliente.pagamentoE}</div>
+                <div style={{fontSize:10,color:'#7f8c8d'}}>{cliente.asaas_link_equip?'Link gerado pelo vendedor ✅':'Aguardando vendedor gerar link'}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={onCancelar} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+          <button onClick={confirmar} disabled={!temAlgo||loading} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(!temAlgo||loading)?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:(!temAlgo||loading)?'default':'pointer',fontSize:13}}>
+            {loading?'Processando...':'✅ Confirmar e Faturar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal Edição/Cancelamento com senha e motivo
+function ModalConfirmacaoFinanceira({tipo,cliente,onConfirmar,onCancelar}){
+  const [quem,setQuem]=useState('');
+  const [motivo,setMotivo]=useState('');
+  const [senha,setSenha]=useState('');
+  const [erro,setErro]=useState('');
+  const [loading,setLoading]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'};
+
+  const isCancelamento=tipo==='cancelamento';
+  const corTitulo=isCancelamento?'#e74c3c':'#f5a623';
+  const emoji=isCancelamento?'❌':'✏️';
+  const titulo=isCancelamento?'Cancelar Assinatura':'Alterar dados financeiros';
+
+  async function confirmar(){
+    if(!quem.trim()||!motivo.trim()||!senha.trim()){setErro('Preencha todos os campos');return;}
+    setErro('');setLoading(true);
+    try{
+      const cred=await import('firebase/auth').then(m=>m.EmailAuthProvider.credential(auth.currentUser.email,senha));
+      await import('firebase/auth').then(m=>m.reauthenticateWithCredential(auth.currentUser,cred));
+      await onConfirmar({quem,motivo});
+    }catch(e){
+      setErro('Senha incorreta. Tente novamente.');
+    }finally{setLoading(false);}
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:440,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{fontWeight:700,fontSize:16,color:corTitulo,marginBottom:4}}>{emoji} {titulo}</div>
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'8px 12px',marginBottom:16,fontSize:12,color:'#7f8c8d'}}>{cliente.nome}</div>
+        {isCancelamento&&(
+          <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#c53030'}}>
+            ⚠️ Esta ação irá cancelar a recorrência mensal no Asaas. O cliente deixará de receber boletos.
+          </div>
+        )}
+        <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
+          <div><label style={lbl}>Quem solicitou (contato do cliente) *</label><input style={fi} value={quem} onChange={e=>setQuem(e.target.value)} placeholder="Ex: Maria — Financeiro"/></div>
+          <div><label style={lbl}>Motivo *</label><textarea style={{...fi,resize:'vertical',minHeight:60}} value={motivo} onChange={e=>setMotivo(e.target.value)} placeholder="Descreva o motivo da alteração..."/></div>
+          <div><label style={lbl}>Sua senha de acesso *</label><input style={fi} type="password" value={senha} onChange={e=>setSenha(e.target.value)} placeholder="Digite sua senha para confirmar"/></div>
+        </div>
+        {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:6,padding:'8px 12px',fontSize:12,color:'#c53030',marginBottom:12}}>{erro}</div>}
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={onCancelar} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+          <button onClick={confirmar} disabled={loading} style={{padding:'10px 24px',borderRadius:7,border:'none',background:loading?'#e8eaed':isCancelamento?'#e74c3c':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            {loading?'Aguarde...':isCancelamento?'Confirmar Cancelamento':'Confirmar Alteração'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Dashboard Asaas completo
+function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
+  const [subAba,setSubAba]=useState('dashboard');
+  const [filtroStatus,setFiltroStatus]=useState('Todos');
+
+  // Clientes com Asaas vinculado (novos)
+  const comAsaas=clientes.filter(c=>c.asaas_id);
+  const semAsaas=clientes.filter(c=>!c.asaas_id&&!c._base);
+  const emDia=comAsaas.filter(c=>c.asaas_status==='RECEIVED'||c.asaas_status==='CONFIRMED');
+  const pendentes=comAsaas.filter(c=>c.asaas_status==='PENDING');
+  const vencidos=comAsaas.filter(c=>c.asaas_status==='OVERDUE');
+  const cancelados=comAsaas.filter(c=>c.asaas_status==='CANCELED');
+  const mrr=emDia.reduce((s,c)=>s+(c.vS||0),0)+pendentes.reduce((s,c)=>s+(c.vS||0),0);
+  const recebidoMes=emDia.reduce((s,c)=>s+(c.vS||0),0);
+  const inadimplencia=vencidos.reduce((s,c)=>s+(c.vS||0),0);
+
+  const listaFiltrada=()=>{
+    if(filtroStatus==='OVERDUE')return vencidos;
+    if(filtroStatus==='PENDING')return pendentes;
+    if(filtroStatus==='RECEIVED')return emDia;
+    if(filtroStatus==='CANCELED')return cancelados;
+    if(filtroStatus==='SEM_FATURAMENTO')return semAsaas;
+    return comAsaas;
+  };
+
+  const subAbas=[
+    {id:'dashboard',l:'📊 Dashboard'},
+    {id:'cobrancas',l:'📋 Cobranças'},
+    {id:'assinaturas',l:`🔄 Assinaturas (${comAsaas.length})`},
+    {id:'inadimplentes',l:`🔴 Inadimplentes (${vencidos.length})`},
+    {id:'relatorios',l:'📈 Relatórios'},
+  ];
+
+  return(
+    <div>
+      <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+        {subAbas.map(s=>(
+          <button key={s.id} onClick={()=>setSubAba(s.id)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:subAba===s.id?'#27ae60':'#ecf0f1',color:subAba===s.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:subAba===s.id?700:400}}>{s.l}</button>
+        ))}
+      </div>
+
+      {/* DASHBOARD */}
+      {subAba==='dashboard'&&(
+        <div>
+          {/* Cards de topo */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:20}}>
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #27ae60'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>💚 Recebido este mês</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#27ae60'}}>{moeda(recebidoMes)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{emDia.length} assinaturas em dia</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #f5a623'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>⏳ Pendente</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#f5a623'}}>{moeda(pendentes.reduce((s,c)=>s+(c.vS||0),0))}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{pendentes.length} aguardando pagamento</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #e74c3c'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>🔴 Inadimplentes</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#e74c3c'}}>{moeda(inadimplencia)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{vencidos.length} em atraso</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:'3px solid #3498db'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>📈 MRR total</div>
+              <div style={{fontSize:22,fontWeight:700,color:'#3498db'}}>{moeda(mrr)}</div>
+              <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{comAsaas.length} assinaturas ativas</div>
+            </div>
+          </div>
+
+          {/* Gráfico de barras MRR (visual) */}
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:16}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Distribuição de assinaturas</div>
+            <div style={{display:'flex',gap:6,alignItems:'flex-end',height:80}}>
+              {[
+                {l:'Em dia',v:emDia.length,c:'#27ae60'},
+                {l:'Pendente',v:pendentes.length,c:'#f5a623'},
+                {l:'Vencido',v:vencidos.length,c:'#e74c3c'},
+                {l:'Cancelado',v:cancelados.length,c:'#7f8c8d'},
+                {l:'Sem fat.',v:semAsaas.length,c:'#3498db'},
+              ].map((d,i)=>{
+                const max=Math.max(emDia.length,pendentes.length,vencidos.length,cancelados.length,semAsaas.length,1);
+                return(
+                  <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+                    <div style={{fontSize:11,fontWeight:700,color:d.c}}>{d.v}</div>
+                    <div style={{width:'100%',background:d.c,borderRadius:'4px 4px 0 0',height:`${Math.max((d.v/max)*60,d.v>0?4:0)}px`}}/>
+                    <div style={{fontSize:9,color:'#7f8c8d',textAlign:'center',lineHeight:1.2}}>{d.l}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Clientes aguardando faturamento */}
+          {semAsaas.length>0&&(
+            <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',border:'2px solid #f5a623'}}>
+              <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:10,textTransform:'uppercase'}}>⏰ Aguardando faturamento no Asaas ({semAsaas.length})</div>
+              {semAsaas.slice(0,5).map(c=>(
+                <div key={c.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #f8f9fa'}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{c.nome}</div>
+                    <div style={{fontSize:10,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.total)}</div>
+                  </div>
+                  <AsaasBadge status="SEM_FATURAMENTO" size="small"/>
+                </div>
+              ))}
+              {semAsaas.length>5&&<div style={{fontSize:11,color:'#7f8c8d',marginTop:8}}>+{semAsaas.length-5} mais</div>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* COBRANÇAS */}
+      {subAba==='cobrancas'&&(
+        <div>
+          <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+            {[['Todos','Todos'],['RECEIVED','🟢 Em dia'],['PENDING','🟡 Pendente'],['OVERDUE','🔴 Vencido'],['CANCELED','⚫ Cancelado'],['SEM_FATURAMENTO','🔵 Sem fat.']].map(([v,l])=>(
+              <button key={v} onClick={()=>setFiltroStatus(v)} style={{padding:'5px 12px',borderRadius:5,border:'none',background:filtroStatus===v?'#27ae60':'#ecf0f1',color:filtroStatus===v?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===v?700:400}}>{l}</button>
+            ))}
+          </div>
+          <div style={{background:'#fff',borderRadius:8,boxShadow:'0 1px 4px rgba(0,0,0,.07)',overflow:'hidden'}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead><tr style={{background:'#f8f9fa'}}>
+                {['Empresa','Vendedor','Sistema/mês','Vencimento','Status Asaas'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {listaFiltrada().map((c,i)=>(
+                  <tr key={c.id} style={{borderTop:'1px solid #f0f0f0',background:i%2===0?'#fff':'#fdfdfd'}}>
+                    <td style={{padding:'8px 12px',fontSize:12,fontWeight:600,color:'#2c3e50'}}>{c.nome}</td>
+                    <td style={{padding:'8px 12px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
+                    <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:'#27ae60'}}>{moeda(c.vS||0)}</td>
+                    <td style={{padding:'8px 12px',fontSize:11,color:'#7f8c8d'}}>{c.dtBoleto?`Dia ${new Date(c.dtBoleto+'T12:00:00').getDate()}`:'—'}</td>
+                    <td style={{padding:'8px 12px'}}><AsaasBadge status={c.asaas_status||'SEM_FATURAMENTO'} size="small"/></td>
+                  </tr>
+                ))}
+                {listaFiltrada().length===0&&<tr><td colSpan={5} style={{padding:'20px',textAlign:'center',color:'#7f8c8d',fontSize:12}}>Nenhum registro encontrado</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ASSINATURAS */}
+      {subAba==='assinaturas'&&(
+        <div>
+          {comAsaas.map(c=>(
+            <div key={c.id} style={{background:'#fff',borderRadius:8,padding:'12px 16px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${(ASAAS_STATUS[c.asaas_status||'SEM_FATURAMENTO']||ASAAS_STATUS.SEM_FATURAMENTO).color}`}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{c.nome}</div>
+                <div style={{fontSize:11,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.vS||0)}/mês • dia {c.dtBoleto?new Date(c.dtBoleto+'T12:00:00').getDate():'—'}</div>
+              </div>
+              <AsaasBadge status={c.asaas_status||'SEM_FATURAMENTO'} size="small"/>
+            </div>
+          ))}
+          {comAsaas.length===0&&<div style={{background:'#fff',borderRadius:8,padding:'40px',textAlign:'center',color:'#7f8c8d'}}>Nenhuma assinatura ativa no Asaas ainda</div>}
+        </div>
+      )}
+
+      {/* INADIMPLENTES */}
+      {subAba==='inadimplentes'&&(
+        <div>
+          {vencidos.length===0&&<div style={{background:'#fff',borderRadius:8,padding:'40px',textAlign:'center',color:'#27ae60',fontSize:13,fontWeight:700}}>✅ Nenhum inadimplente! Tudo em dia.</div>}
+          {vencidos.map(c=>(
+            <div key={c.id} style={{background:'#fff',borderRadius:8,padding:'12px 16px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',borderLeft:'4px solid #e74c3c'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:2}}>{c.nome}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d'}}>{c.cnpj} • {c.email}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d'}}>{c.vendedor} • {moeda(c.vS||0)}/mês</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <AsaasBadge status="OVERDUE"/>
+                  {c.tel&&(
+                    <div style={{marginTop:6}}>
+                      <a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent('Olá! Identificamos que sua mensalidade está em atraso. Por favor, entre em contato conosco.')}`} target="_blank" rel="noopener noreferrer" style={{padding:'4px 10px',borderRadius:5,border:'1px solid #25D366',background:'#fff',fontSize:10,fontWeight:700,color:'#25D366',textDecoration:'none',display:'inline-flex',alignItems:'center',gap:4}}>
+                        📲 Cobrar via WhatsApp
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* RELATÓRIOS */}
+      {subAba==='relatorios'&&(
+        <div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:16}}>
+            {[
+              {l:'MRR Total',v:moeda(mrr),c:'#3498db',desc:'Receita recorrente mensal'},
+              {l:'Taxa de adimplência',v:`${Math.round((emDia.length/Math.max(comAsaas.length,1))*100)}%`,c:'#27ae60',desc:`${emDia.length} de ${comAsaas.length} clientes`},
+              {l:'Taxa de inadimplência',v:`${Math.round((vencidos.length/Math.max(comAsaas.length,1))*100)}%`,c:'#e74c3c',desc:`${vencidos.length} clientes em atraso`},
+              {l:'Sem faturamento',v:semAsaas.length,c:'#f5a623',desc:'Clientes pendentes no Asaas'},
+            ].map((card,i)=>(
+              <div key={i} style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${card.c}`}}>
+                <div style={{fontSize:10,color:'#7f8c8d',textTransform:'uppercase',fontWeight:700,marginBottom:6}}>{card.l}</div>
+                <div style={{fontSize:24,fontWeight:700,color:card.c}}>{card.v}</div>
+                <div style={{fontSize:10,color:'#7f8c8d',marginTop:4}}>{card.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Resumo por status</div>
+            {[
+              {l:'🟢 Em dia',qtd:emDia.length,val:recebidoMes,c:'#27ae60'},
+              {l:'🟡 Pendente',qtd:pendentes.length,val:pendentes.reduce((s,c)=>s+(c.vS||0),0),c:'#f5a623'},
+              {l:'🔴 Vencido',qtd:vencidos.length,val:inadimplencia,c:'#e74c3c'},
+              {l:'⚫ Cancelado',qtd:cancelados.length,val:cancelados.reduce((s,c)=>s+(c.vS||0),0),c:'#7f8c8d'},
+              {l:'🔵 Sem faturamento',qtd:semAsaas.length,val:semAsaas.reduce((s,c)=>s+(c.vS||0),0),c:'#3498db'},
+            ].map((row,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f0f0f0'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{width:8,height:8,borderRadius:'50%',background:row.c}}/>
+                  <span style={{fontSize:12,color:'#2c3e50',fontWeight:600}}>{row.l}</span>
+                </div>
+                <div style={{display:'flex',gap:16,fontSize:12}}>
+                  <span style={{color:'#7f8c8d'}}>{row.qtd} clientes</span>
+                  <span style={{fontWeight:700,color:row.c}}>{moeda(row.val)}/mês</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── FIM MÓDULO ASAAS ────────────────────────────────────────────────────────
 
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
@@ -2990,6 +3798,7 @@ export default function App(){
   const [orcServicos,setOrcServicos]=useState([]);
   const [orcFormas,setOrcFormas]=useState([]);
   const [orcTemplates,setOrcTemplates]=useState([]);
+  const [dadosImportados,setDadosImportados]=useState(null);
   const [menuOrder,setMenuOrder]=useState(()=>{try{const s=localStorage.getItem('crm_menu_order');return s?JSON.parse(s):null;}catch(e){return null;}});
   const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
   const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
@@ -3145,7 +3954,7 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','config':'#95a5a6'};
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','config':'#95a5a6'};
             const svgIcons={
               // Dashboard: monitor com gráfico
               dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
@@ -3153,6 +3962,8 @@ export default function App(){
               vendas:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.42 4.58a5.4 5.4 0 0 0-7.65 0l-.77.78-.77-.78a5.4 5.4 0 0 0-7.65 0C1.46 6.7 1.33 10.28 4 13l8 8 8-8c2.67-2.72 2.54-6.3.42-8.42z"/><path d="M12 5.36 8.87 8.5a2.13 2.13 0 0 0 0 3h0a2.13 2.13 0 0 0 3.02 0L12 11l.11.5a2.13 2.13 0 0 0 3.02 0h0a2.13 2.13 0 0 0 0-3z"/></svg>,
               // Financeiro: carteira com dinheiro
               financeiro:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><circle cx="16" cy="15" r="1" fill="currentColor"/></svg>,
+              // Asaas: banco/cifrão
+              asaas:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
               // Clientes: grupo de pessoas
               clientes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
               // Novo cliente: pessoa com sinal de +
@@ -3254,10 +4065,16 @@ export default function App(){
           )}
 
           {/* NOVO */}
-          {page==='novo'&&<NovoForm onSave={async d=>{await salvarCliente(d);setPage('clientes');}} onCancel={()=>setPage('clientes')} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
+          {page==='novo'&&<NovoForm
+            onSave={async d=>{await salvarCliente(d);setDadosImportados(null);setPage('clientes');}}
+            onCancel={()=>{setDadosImportados(null);setPage('clientes');}}
+            vendedoresCad={vendedoresCad}
+            equipamentosCad={equipamentosCad}
+            dadosImportados={dadosImportados}
+          />}
 
           {/* DETALHE */}
-          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad}/>}
+          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
@@ -3394,6 +4211,9 @@ export default function App(){
             </div>
           )}
 
+          {/* ASAAS */}
+          {!clienteSel&&page==='asaas'&&<AsaasView todos={todos} clientes={clientes} perfil={perfil} onAtualizarCliente={async(id,dados)=>atualizarCliente(id,dados)}/>}
+
           {/* RELATÓRIOS */}
           {!clienteSel&&page==='relatorios'&&<RelatoriosView todos={todos} implantacoes={implantacoes}/>}
 
@@ -3402,7 +4222,7 @@ export default function App(){
             orcamentos={orcamentos} orcServicos={orcServicos} orcFormas={orcFormas}
             orcTemplates={orcTemplates} equipamentosCad={equipamentosCad}
             vendedoresCad={vendedoresCad}
-            onImportarCRM={dados=>{setPage('novo');}}
+            onImportarCRM={dados=>{setDadosImportados(dados);setPage('novo');}}
           />}
 
           {/* SOLICITAÇÕES */}
@@ -3418,7 +4238,7 @@ export default function App(){
                 </div>
                 <table style={{width:'100%',borderCollapse:'collapse'}}>
                   <thead><tr style={{background:'#f8f9fa'}}>
-                    {['Empresa','CNPJ','Contato','Plano','Vendedor','Status','Total'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}
+                    {['Empresa','CNPJ','Contato','Plano','Vendedor','Status','Asaas','Total'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}
                   </tr></thead>
                   <tbody>
                     {sortRecente(cl).slice(0,200).map((c,i)=>(
@@ -3431,6 +4251,7 @@ export default function App(){
                         <td style={{padding:'8px 12px'}}>{c.plano!=='—'&&<span style={{background:'#ebf5fb',color:C.blue,padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span>}</td>
                         <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted}}>{c.vendedor}</td>
                         <td style={{padding:'8px 12px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fef9e7',color:c.status==='Faturado'?C.green:C.orange,padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
+                        <td style={{padding:'8px 12px'}}>{!c._base&&<AsaasBadge status={c.asaas_status||'SEM_FATURAMENTO'} size="small"/>}</td>
                         <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:C.blue}}>{moeda(c.total)}</td>
                       </tr>
                     ))}
