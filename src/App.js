@@ -4959,7 +4959,7 @@ export default function App(){
             {/* Versão / build */}
             <div style={{fontSize:10,color:'#bdc3c7',borderLeft:'1px solid #e8eaed',paddingLeft:12,lineHeight:1.4,display:'flex',flexDirection:'column',alignItems:'flex-end'}}>
               <span style={{color:'#27ae60',fontWeight:700}}>● ao vivo</span>
-              <span>{new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleDateString('pt-BR')} {new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
+              <span>{new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'})} {new Date(process.env.REACT_APP_BUILD_TIME||Date.now()).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'})}</span>
             </div>
             {/* Avatar + nome usuário */}
             <div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid #e8eaed',paddingLeft:16}}>
