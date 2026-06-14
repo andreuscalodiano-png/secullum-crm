@@ -4621,11 +4621,11 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
       
       const [respPag,respSub,respVenc]=await Promise.all([
         // Pagamentos confirmados este mês
-        chamarProxy('/payments?status=CONFIRMED&paymentDate[ge]='+fmtDate(inicio)+'&limit=100','GET'),
+        asaasReq('/payments?status=CONFIRMED&paymentDate[ge]='+fmtDate(inicio)+'&limit=100','GET'),
         // Assinaturas ativas
-        chamarProxy('/subscriptions?status=ACTIVE&limit=100','GET'),
+        asaasReq('/subscriptions?status=ACTIVE&limit=100','GET'),
         // Cobranças vencidas
-        chamarProxy('/payments?status=OVERDUE&limit=100','GET'),
+        asaasReq('/payments?status=OVERDUE&limit=100','GET'),
       ]);
 
       const pagamentos=respPag?.data||[];
