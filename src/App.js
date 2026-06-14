@@ -1383,10 +1383,14 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
     email:c.email||'',
     func:c.func!=null?String(c.func):'',
     equipTipo:c.equipTipo||'Evo40',
-    vI:c.vI!=null?String(c.vI):'',
-    vE:c.vE!=null?String(c.vE):'',
-    vS:c.vS!=null?String(c.vS):'',
+    vI:c.vI!=null?String(c.vI):'0',
+    vE:c.vE!=null?String(c.vE):'0',
+    vS:c.vS!=null?String(c.vS):'0',
     pagamento:c.pagamento||'Boleto',
+    pagamentoI:c.pagamentoI||'Boleto',
+    pagamentoE:c.pagamentoE||'Boleto',
+    parcelasI:c.parcelasI||1,
+    parcelasE:c.parcelasE||1,
     dtBoleto:c.dtBoleto||'',
     plano:c.plano==='—'?'Basic':c.plano||'Basic',
     vendedor:c.vendedor==='—'?'':c.vendedor||'',
@@ -1398,6 +1402,14 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
     equipRastreio:c.equipRastreio||'',
     equipDataEnvio:c.equipDataEnvio||'',
     despachado:c.despachado||'Não',
+    asaas_id:c.asaas_id||'',
+    asaas_status:c.asaas_status||'',
+    asaas_link_impl:c.asaas_link_impl||'',
+    asaas_link_equip:c.asaas_link_equip||'',
+    asaas_status_impl:c.asaas_status_impl||'',
+    asaas_status_equip:c.asaas_status_equip||'',
+    asaas_status_sistema:c.asaas_status_sistema||'',
+    asaas_ultimo_pagamento:c.asaas_ultimo_pagamento||'',
   });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -3991,9 +4003,9 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         {erro&&<div style={{background:'#fff5f5',borderRadius:6,padding:'8px',marginBottom:8,fontSize:11,color:'#e74c3c'}}>{erro}</div>}
 
         {/* Implantação */}
-        {cliente.vI>0&&(
+        {parseFloat(cliente.vI)>0&&(
           <LinkBox
-            label={`🔧 Implantação — ${moeda(cliente.vI)} • ${cliente.parcelasI||1}x`}
+            label={`🔧 Implantação — ${moeda(parseFloat(cliente.vI))} • ${cliente.parcelasI||1}x`}
             link={cliente.asaas_link_impl}
             tipo={cliente.pagamentoI||'Boleto'}
             status={cliente.asaas_status_impl}
@@ -4006,9 +4018,9 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         )}
 
         {/* Equipamento */}
-        {cliente.vE>0&&(
+        {parseFloat(cliente.vE)>0&&(
           <LinkBox
-            label={`💻 Equipamento — ${moeda(cliente.vE)} • ${cliente.parcelasE||1}x`}
+            label={`💻 Equipamento — ${moeda(parseFloat(cliente.vE))} • ${cliente.parcelasE||1}x`}
             link={cliente.asaas_link_equip}
             tipo={cliente.pagamentoE||'Boleto'}
             status={cliente.asaas_status_equip}
@@ -4021,10 +4033,10 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
         )}
 
         {/* Sistema */}
-        {cliente.vS>0&&(
+        {parseFloat(cliente.vS)>0&&(
           <div style={{padding:'10px',background:'#ebf8ff',borderRadius:6,border:'1px solid #bee3f844'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-              <span style={{fontSize:10,color:'#2b6cb0',fontWeight:700,textTransform:'uppercase'}}>🔄 Sistema — {moeda(cliente.vS)}/mês</span>
+              <span style={{fontSize:10,color:'#2b6cb0',fontWeight:700,textTransform:'uppercase'}}>🔄 Sistema — {moeda(parseFloat(cliente.vS))}/mês</span>
               <AsaasBadge status={cliente.asaas_status_sistema||'SEM_FATURAMENTO'} size="small"/>
             </div>
             <div style={{fontSize:11,color:'#7f8c8d'}}>
@@ -4034,7 +4046,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
           </div>
         )}
 
-        {!cliente.vI&&!cliente.vE&&!cliente.vS&&(
+        {!parseFloat(cliente.vI)&&!parseFloat(cliente.vE)&&!parseFloat(cliente.vS)&&(
           <div style={{textAlign:'center',padding:'16px',color:'#bdc3c7',fontSize:12}}>Nenhum valor cadastrado</div>
         )}
       </div>
