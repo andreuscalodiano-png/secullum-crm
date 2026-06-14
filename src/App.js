@@ -3357,23 +3357,20 @@ function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamen
   // Co-piloto IA vendas
   async function consultarIA(orc){
     if(!followInput.trim()||!orc)return;
+    setIaLoading(true);setIaResposta('');setIaAberta(true);
     const dias=diasDesde(orc.criadoEm);
     const diasSemContato=orc.ultimoContato?diasDesde(orc.ultimoContato):dias;
     const historico=(orc.followup||[]).map(f=>`- ${new Date(f.data).toLocaleDateString('pt-BR')}: ${f.descricao}`).join('\n')||'Nenhum contato registrado ainda.';
     const {vE,vS}=extrairValores(orc);
     try{
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:CLAUDE_HEADERS,
-        body:JSON.stringify({
-          model:'claude-sonnet-4-6',
-          max_tokens:1000,
-          system:`Você é um co-piloto de vendas especialista em sistemas de ponto e RH da Secullum. 
+      const resposta=await chamadaClaude({
+        max_tokens:1000,
+        system:`Você é um co-piloto de vendas especialista em sistemas de ponto e RH da Secullum. 
 Seu papel é ajudar o vendedor ${nomeVendedor} a fechar orçamentos com linguagem direta, persuasiva, profissional mas informal — como um colega sênior experiente.
 Use sempre o nome do vendedor (${nomeVendedor}) na sua resposta.
 Seja objetivo, prático e motivador. Dê sugestões concretas de abordagem, mensagens prontas para WhatsApp, e estratégias para quebrar objeções.
 Nunca seja genérico — use os dados do orçamento para personalizar cada resposta.`,
-          messages:[{role:'user',content:`
+        messages:[{role:'user',content:`
 Orçamento: ${orc.cliente?.empresa||orc.cliente?.nome||'Cliente'}
 Valor equipamento: R$ ${vE.toFixed(2)}
 Valor sistema/mês: R$ ${vS.toFixed(2)}
@@ -3390,12 +3387,10 @@ ${historico}
 O vendedor informa: "${followInput}"
 
 Responda como co-piloto de vendas: analise a situação, dê sugestões práticas e, se necessário, gere uma mensagem pronta para WhatsApp.`}],
-        }),
       });
-      const data=await resp.json();
-      setIaResposta(data.content?.[0]?.text||'Não consegui gerar uma resposta.');
+      setIaResposta(resposta);
     }catch(e){
-      setIaResposta('Erro ao consultar IA. Verifique a conexão.');
+      setIaResposta(`⚠️ ${e.message}`);
     }
     setIaLoading(false);
   }
@@ -3817,6 +3812,25 @@ const CLAUDE_HEADERS={
   'anthropic-version':'2023-06-01',
   'anthropic-dangerous-direct-browser-access':'true',
 };
+
+// Wrapper para chamadas à API Claude com tratamento de erro unificado
+async function chamadaClaude({system,messages,max_tokens=800}){
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:CLAUDE_HEADERS,
+    body:JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens,
+      system,
+      messages,
+    }),
+  });
+  const data=await resp.json();
+  if(!resp.ok){
+    throw new Error(data?.error?.message||`Erro ${resp.status}`);
+  }
+  return data.content?.[0]?.text||'';
+}
 // Chave configurada em .env como REACT_APP_ASAAS_KEY
 const ASAAS_KEY=process.env.REACT_APP_ASAAS_KEY||'';
 const ASAAS_URL='https://sandbox.asaas.com/api/v3'; // trocar para api.asaas.com em produção
@@ -4458,20 +4472,14 @@ Situação atual:
 Tom: consultivo, direto, como um gerente experiente ajudando seu financeiro.
 Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
     try{
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:CLAUDE_HEADERS,
-        body:JSON.stringify({
-          model:'claude-sonnet-4-6',max_tokens:800,
-          system:contexto,
-          messages:novaMsgs.map(m=>({role:m.role,content:m.content})),
-        }),
+      const resposta=await chamadaClaude({
+        max_tokens:800,
+        system:contexto,
+        messages:novaMsgs.map(m=>({role:m.role,content:m.content})),
       });
-      const data=await resp.json();
-      const resposta=data.content?.[0]?.text||'Não consegui processar.';
       setMsgs(m=>[...m,{role:'assistant',content:resposta}]);
     }catch(e){
-      setMsgs(m=>[...m,{role:'assistant',content:'Erro de conexão. Tente novamente.'}]);
+      setMsgs(m=>[...m,{role:'assistant',content:`⚠️ ${e.message}`}]);
     }
     setIaLoading(false);
   }
@@ -4479,18 +4487,13 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
   async function gerarMensagemCobranca(cliente){
     setClienteMsg(cliente);setIaLoading(true);setMensagemGerada('');
     try{
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:CLAUDE_HEADERS,
-        body:JSON.stringify({
-          model:'claude-sonnet-4-6',max_tokens:400,
-          system:`Você é ${nomeFinanceiro} do financeiro da Guion Informática. Escreva mensagem de cobrança simpática e eficaz para WhatsApp. Máximo 4 linhas. Tom cordial.`,
-          messages:[{role:'user',content:`Mensagem para ${cliente.contato||cliente.nome} da empresa ${cliente.nome}. Boleto vencido. Valor: ${moeda(cliente.vS||0)}/mês.`}],
-        }),
+      const resposta=await chamadaClaude({
+        max_tokens:400,
+        system:`Você é ${nomeFinanceiro} do financeiro da Guion Informática. Escreva mensagem de cobrança simpática e eficaz para WhatsApp. Máximo 4 linhas. Tom cordial.`,
+        messages:[{role:'user',content:`Mensagem para ${cliente.contato||cliente.nome} da empresa ${cliente.nome}. Boleto vencido. Valor: ${moeda(cliente.vS||0)}/mês.`}],
       });
-      const data=await resp.json();
-      setMensagemGerada(data.content?.[0]?.text||'');
-    }catch(e){setMensagemGerada('Erro ao gerar.');}
+      setMensagemGerada(resposta);
+    }catch(e){setMensagemGerada(`⚠️ ${e.message}`);}
     setIaLoading(false);
   }
 
