@@ -11,7 +11,7 @@ import {
 } from "firebase/auth";
 import { db, auth } from "./firebase";
 
-// ─── CONSTANTES ──────────────────────────────────────────────────────────────
+// --- CONSTANTES --------------------------------------------------------------
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
 // Formas de pagamento espelhadas do Asaas
@@ -91,7 +91,7 @@ const C={
   accent:'#f5a623',accentLight:'#fff8ee',
 };
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// --- HELPERS -----------------------------------------------------------------
 function parseDate(s){
   if(!s)return null;
   s=String(s).trim();
@@ -125,7 +125,7 @@ function getDataTs(c){
   return isNaN(d.getTime())?0:d.getTime();
 }
 
-// ─── MÁSCARA TELEFONE ────────────────────────────────────────────────────────
+// --- MÁSCARA TELEFONE --------------------------------------------------------
 function mascaraTel(v){
   // Remove tudo que não for número
   const n=v.replace(/\D/g,'').slice(0,11);
@@ -148,7 +148,7 @@ function sortRecente(arr){
 }
 
 
-// ─── EXPORT EXCEL/CSV ────────────────────────────────────────────────────────
+// --- EXPORT EXCEL/CSV --------------------------------------------------------
 function exportarExcel(dados, nomeArquivo){
   const escape=v=>{
     if(v==null)return'';
@@ -173,7 +173,7 @@ function exportarExcel(dados, nomeArquivo){
   URL.revokeObjectURL(url);
 }
 
-// ─── GRÁFICO MRR MENSAL ──────────────────────────────────────────────────────
+// --- GRÁFICO MRR MENSAL ------------------------------------------------------
 function GraficoMRR({todos}){
   const anoAtual=new Date().getFullYear();
   const anos=[...new Set(todos.map(c=>c.ano).filter(Boolean))].sort();
@@ -211,7 +211,7 @@ function GraficoMRR({todos}){
   );
 }
 
-// ─── PAINEL DE ALERTAS ───────────────────────────────────────────────────────
+// --- PAINEL DE ALERTAS -------------------------------------------------------
 function PainelAlertas({todos,implantacoes,onVerImplantacao}){
   const hoje=new Date();hoje.setHours(0,0,0,0);
   const atrasados=todos.filter(c=>{
@@ -258,7 +258,7 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
   );
 }
 
-// ─── META MENSAL ─────────────────────────────────────────────────────────────
+// --- META MENSAL -------------------------------------------------------------
 function CardMeta({titulo,realizado,meta,onSetMeta,cor}){
   const pct=meta>0?Math.min(Math.round((realizado/meta)*100),100):0;
   const [editando,setEditando]=useState(false);
@@ -310,7 +310,7 @@ function DuplasMetas({todos,metaSistema,metaEquip,onSetMetaSistema,onSetMetaEqui
   );
 }
 
-// ─── PÁGINA DE RELATÓRIOS ─────────────────────────────────────────────────────
+// --- PÁGINA DE RELATÓRIOS -----------------------------------------------------
 function RelatoriosView({todos,implantacoes}){
   const [anoRel,setAnoRel]=useState('Todos');
   const [mesRel,setMesRel]=useState('Todos');
@@ -423,7 +423,7 @@ function RelatoriosView({todos,implantacoes}){
   );
 }
 
-// ─── CSV BASE (dados históricos da planilha) ──────────────────────────────────
+// --- CSV BASE (dados históricos da planilha) ----------------------------------
 const CSV_BASE=`12/30/2024;JR Apoio Logísticos;26.406.164/0001-07;Elaine;11 99618-0667;80;Evo40;0;1450;339;Cartão/Boleto;15/01/2025;financeiro@jrapoio.com.br;FATURADO/FINALIZADO;Pro;
 12/30/2024;MAYCON LUAN DE CAMARGO;38.406.730/0001-60;Taison;42 9157-5284;3;Nenhum;0;0;69.9;Boleto;15/01/2025;mayconcamargo66@gmail.com;FATURADO/FINALIZADO;Basic;
 1/9/2025;ELETROSOLENG ENERGIA E SERVICO LTDA;21.027.684/0001-95;FELIPE;99 8537-6355;10;Tablet;0;0;99.9;Boleto;15/01/2025;;FATURADO/FINALIZADO;Pro;
@@ -662,7 +662,7 @@ const CLIENTES_BASE = CSV_BASE.trim().split('\n').filter(l=>l.replace(/;/g,'').t
 }).filter(c=>c.nome);
 
 
-// ─── LOGOS SVG ────────────────────────────────────────────────────────────────
+// --- LOGOS SVG ----------------------------------------------------------------
 const LOGO_SIDEBAR_SVG=(
   <svg width="140" height="28" viewBox="0 0 140 28" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g transform="translate(13,14)">
@@ -698,7 +698,7 @@ const LOGO_LOGIN_SVG=(
   </svg>
 );
 
-// ─── TELA DE LOGIN ────────────────────────────────────────────────────────────
+// --- TELA DE LOGIN ------------------------------------------------------------
 function LoginScreen({onLogin}){
   const [email,setEmail]=useState('');
   const [senha,setSenha]=useState('');
@@ -749,7 +749,7 @@ function LoginScreen({onLogin}){
   );
 }
 
-// ─── COMPONENTES VISUAIS ──────────────────────────────────────────────────────
+// --- COMPONENTES VISUAIS ------------------------------------------------------
 function Donut({vals,colors,size=100,label,sub}){
   const tot=vals.reduce((s,v)=>s+v,0)||1;let a=-Math.PI/2;
   const cx=size/2,cy=size/2,r=size*.42,inn=size*.28;
@@ -812,7 +812,7 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
   );
 }
 
-// ─── CARD DETALHE (IMPLANTAÇÃO) ───────────────────────────────────────────────
+// --- CARD DETALHE (IMPLANTAÇÃO) -----------------------------------------------
 function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
@@ -913,7 +913,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
   );
 }
 
-// ─── KANBAN VIEW ──────────────────────────────────────────────────────────────
+// --- KANBAN VIEW --------------------------------------------------------------
 function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
@@ -1096,7 +1096,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
   );
 }
 
-// ─── FORMULÁRIO NOVO CLIENTE ──────────────────────────────────────────────────
+// --- FORMULÁRIO NOVO CLIENTE --------------------------------------------------
 function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados,currentUser}){
   const hoje=new Date();
   const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
@@ -1338,8 +1338,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     </div>
   );
 }
-// ─── DETALHE CLIENTE ──────────────────────────────────────────────────────────
-// ─── CAMPO HELPER (fora de DetalheCliente para evitar perda de foco) ──────────
+// --- DETALHE CLIENTE ----------------------------------------------------------
+// --- CAMPO HELPER (fora de DetalheCliente para evitar perda de foco) ----------
 function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
   type=type||'text';
   const upperTypes=['text'];
@@ -1673,7 +1673,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
   );
 }
 
-// ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
+// --- CONFIGURAÇÕES ------------------------------------------------------------
 function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
@@ -2029,7 +2029,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 }
 
 
-// ─── SOLICITAÇÕES ─────────────────────────────────────────────────────────────
+// --- SOLICITAÇÕES -------------------------------------------------------------
 const CATEGORIAS_SOL=['Suporte técnico','Financeiro','Comercial','Administrativo'];
 const STATUS_SOL=['Aberta','Em andamento','Resolvida','Cancelada'];
 const PRIORIDADES_SOL=['Alta','Média','Baixa'];
@@ -2364,7 +2364,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
 }
 
 
-// ─── SOM DE SINO ─────────────────────────────────────────────────────────────
+// --- SOM DE SINO -------------------------------------------------------------
 function tocarSino(vezes=3){
   try{
     const ctx=new (window.AudioContext||window.webkitAudioContext)();
@@ -2384,7 +2384,7 @@ function tocarSino(vezes=3){
 }
 
 
-// ─── DASHBOARD VIEW ───────────────────────────────────────────────────────────
+// --- DASHBOARD VIEW -----------------------------------------------------------
 function DashboardView({todos,cl,fat,agd,totFat,totAgd,totGeral,totSist,totEquip,totImpl,porMes,porVend,porPlano,maxVend,solicitacoes,implantacoes,clientes,metaSistema,metaEquip,salvarMetaSistema,salvarMetaEquip,setPage,setClienteSel,setFiltroStatus,filtroVendedor,setFiltroVendedor}){
 const [dashAba,setDashAba]=useState('resumo');
 const hoje2=new Date();hoje2.setHours(0,0,0,0);
@@ -2579,9 +2579,9 @@ return(
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // MÓDULO DE ORÇAMENTOS
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 const STATUS_ORC=[
   {id:'rascunho',   label:'Rascunho',       color:'#7f8c8d'},
@@ -2592,7 +2592,7 @@ const STATUS_ORC=[
 ];
 const COR_ORC={rascunho:'#7f8c8d',enviado:'#3498db',negociacao:'#f5a623',fechado:'#27ae60',perdido:'#e74c3c'};
 
-// ─── EDITOR RICO ──────────────────────────────────────────────────────────────
+// --- EDITOR RICO --------------------------------------------------------------
 function RichEditor({value,onChange,minHeight=120,placeholder=''}){
   const ref=useRef(null);
   const init=useRef(false);
@@ -2649,7 +2649,7 @@ function RichEditor({value,onChange,minHeight=120,placeholder=''}){
   );
 }
 
-// ─── CONFIG: SERVIÇOS ─────────────────────────────────────────────────────────
+// --- CONFIG: SERVIÇOS ---------------------------------------------------------
 function OrcConfigServicos({servicos}){
   const [form,setForm]=useState({nome:'',descricao:'',valor:''});
   const [editId,setEditId]=useState(null);
@@ -2695,7 +2695,7 @@ function OrcConfigServicos({servicos}){
   );
 }
 
-// ─── CONFIG: FORMAS DE PAGAMENTO ──────────────────────────────────────────────
+// --- CONFIG: FORMAS DE PAGAMENTO ----------------------------------------------
 function OrcConfigFormas({formas}){
   const [nova,setNova]=useState('');const [saved,setSaved]=useState(false);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -2720,7 +2720,7 @@ function OrcConfigFormas({formas}){
   );
 }
 
-// ─── CONFIG: TEMPLATES ────────────────────────────────────────────────────────
+// --- CONFIG: TEMPLATES --------------------------------------------------------
 function OrcConfigTemplates({templates}){
   const [sel,setSel]=useState(null);
   const [form,setForm]=useState({nome:'',secoes:[]});
@@ -2783,7 +2783,7 @@ function OrcConfigTemplates({templates}){
   );
 }
 
-// ─── CONFIG ORÇAMENTO (agrupado) ──────────────────────────────────────────────
+// --- CONFIG ORÇAMENTO (agrupado) ----------------------------------------------
 function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
   const [aba,setAba]=useState('servicos');
   const abas=[{id:'servicos',l:'Serviços',c:'#3498db'},{id:'formas',l:'Formas de pagamento',c:'#9b59b6'},{id:'templates',l:'Templates',c:'#e74c3c'}];
@@ -2801,7 +2801,7 @@ function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
   );
 }
 
-// ─── FORMULÁRIO DE ORÇAMENTO ──────────────────────────────────────────────────
+// --- FORMULÁRIO DE ORÇAMENTO --------------------------------------------------
 function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onSalvar,onCancelar,orcEdit}){
   const [etapa,setEtapa]=useState(1);
   const [cli,setCli]=useState(orcEdit?.cliente||{nome:'',empresa:'',cnpj:'',email:'',tel:'',func:'',equipTipo:'',plano:'Basic',nfe:'Não'});
@@ -3040,7 +3040,7 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
   );
 }
 
-// ─── PREVIEW DA PROPOSTA ──────────────────────────────────────────────────────
+// --- PREVIEW DA PROPOSTA ------------------------------------------------------
 function OrcamentoPreview({cli,itens,det,template,subtotal}){
   const hoje=new Date();
   const validAte=det.validade?new Date(det.validade+'T12:00:00').toLocaleDateString('pt-BR'):'—';
@@ -3153,8 +3153,8 @@ function OrcamentoPreview({cli,itens,det,template,subtotal}){
   );
 }
 
-// ─── LISTA DE ORÇAMENTOS ──────────────────────────────────────────────────────
-// ─── PAINEL LATERAL ORÇAMENTO (fora do OrcamentosView para evitar perda de foco) ───
+// --- LISTA DE ORÇAMENTOS ------------------------------------------------------
+// --- PAINEL LATERAL ORÇAMENTO (fora do OrcamentosView para evitar perda de foco) ---
 function PainelLateral({painelOrc,orcamentos,currentUser,nomeVendedor,followInput,setFollowInput,iaResposta,setIaResposta,iaLoading,setIaLoading,iaAberta,setIaAberta,onFechar,onAbrirVenda,onEditar,registrarFollowup,consultarIA,diasDesde,corFollowup,extrairValores}){
   if(!painelOrc)return null;
   const orc=orcamentos.find(o=>o.id===painelOrc.id)||painelOrc;
@@ -3407,7 +3407,7 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
     setIaLoading(false);
   }
 
-  // ─── MODAL VENDA FECHADA ─────────────────────────────────────────────────
+  // --- MODAL VENDA FECHADA -------------------------------------------------
   const ModalVendaFechada=()=>{
     if(!modalVenda)return null;
     const orc=modalVenda;
@@ -3498,7 +3498,7 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 
   const porStatus=STATUS_ORC.map(s=>({...s,qtd:orcamentos.filter(o=>o.status===s.id).length,total:orcamentos.filter(o=>o.status===s.id).reduce((acc,o)=>acc+(o.subtotal||0),0)}));
 
-  // ─── CARD DO KANBAN ───────────────────────────────────────────────────────
+  // --- CARD DO KANBAN -------------------------------------------------------
   const CardKanban=({orc})=>{
     const st=STATUS_ORC.find(s=>s.id===orc.status)||STATUS_ORC[0];
     const dias=diasDesde(orc.criadoEm);
@@ -3539,6 +3539,67 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
       </div>
     );
   };
+
+  // Extrai valores do orçamento pelos tipos de item
+  function extrairValores(orc){
+    const itens=orc.itens||[];
+    let vI=0,vE=0,vS=0;
+    itens.forEach(it=>{
+      const n=(it.nome||'').toLowerCase();
+      const v=(parseFloat(it.preco)||0)*(parseFloat(it.qtd)||1)-(parseFloat(it.desconto)||0);
+      if(it.tipo==='equipamento'||n.includes('evo')||n.includes('tablet')||n.includes('celular')||n.includes('equipamento'))vE+=v;
+      else if(n.includes('implanta')||n.includes('instala'))vI+=v;
+      else if(n.includes('sistema')||n.includes('mensalidade')||n.includes('saas')||n.includes('/mês')||n.includes('/mes'))vS+=v;
+      else if(it.tipo==='servico')vI+=v; // serviços vão para implantação por padrão
+    });
+    return{vI,vE,vS};
+  }
+
+  async function atualizarStatus(id,status){
+    await setDoc(doc(db,'orcamentos',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
+    if(orcSel?.id===id)setOrcSel(o=>({...o,status}));
+  }
+  async function remover(id){if(!window.confirm('Remover orçamento?'))return;await deleteDoc(doc(db,'orcamentos',id));setOrcSel(null);}
+
+  function abrirModalVenda(orc){
+    setModalVenda(orc);
+    setDadosVenda({pagamentoI:'Boleto',parcelasI:1,pagamentoE:'Boleto',parcelasE:1,dtBoleto:''});
+  }
+
+  async function confirmarVendaFechada(){
+    if(!modalVenda)return;
+    setImportando(true);
+    const orc=modalVenda;
+    const {vI,vE,vS}=extrairValores(orc);
+    // Muda status do orçamento para fechado
+    await setDoc(doc(db,'orcamentos',orc.id),{status:'fechado',atualizadoEm:new Date().toISOString()},{merge:true});
+    // Importa para o CRM com todos os dados
+    onImportarCRM({
+      nome:(orc.cliente?.empresa||orc.cliente?.nome||'').toUpperCase(),
+      cnpj:(orc.cliente?.cnpj||'').toUpperCase(),
+      contato:(orc.cliente?.nome||'').toUpperCase(),
+      tel:orc.cliente?.tel||'',
+      email:orc.cliente?.email||'',
+      func:parseInt(orc.cliente?.func)||0,
+      equipTipo:orc.cliente?.equipTipo||'Nenhum',
+      plano:orc.cliente?.plano||'Basic',
+      nfe:orc.cliente?.nfe||'Não',
+      vI,vE,vS,
+      total:vI+vE+vS,
+      pagamentoI:dadosVenda.pagamentoI,
+      parcelasI:dadosVenda.parcelasI,
+      pagamentoE:dadosVenda.pagamentoE,
+      parcelasE:dadosVenda.parcelasE,
+      dtBoleto:dadosVenda.dtBoleto,
+      vendedor:orc.detalhes?.vendedor||'',
+      status:'Aguardando',
+      obs:`Importado do orçamento ${orc.id}. Subtotal: R$ ${(orc.subtotal||0).toFixed(2).replace('.',',')}`,
+      orcamentoId:orc.id,
+    });
+    setImportando(false);
+    setModalVenda(null);
+    setOrcSel(null);
+  }
 
   return(
     <div>
@@ -3657,169 +3718,13 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
       )}
     </div>
   );
-}
+}  // fim OrcamentosView
 
-  // Extrai valores do orçamento pelos tipos de item
-  function extrairValores(orc){
-    const itens=orc.itens||[];
-    let vI=0,vE=0,vS=0;
-    itens.forEach(it=>{
-      const n=(it.nome||'').toLowerCase();
-      const v=(parseFloat(it.preco)||0)*(parseFloat(it.qtd)||1)-(parseFloat(it.desconto)||0);
-      if(it.tipo==='equipamento'||n.includes('evo')||n.includes('tablet')||n.includes('celular')||n.includes('equipamento'))vE+=v;
-      else if(n.includes('implanta')||n.includes('instala'))vI+=v;
-      else if(n.includes('sistema')||n.includes('mensalidade')||n.includes('saas')||n.includes('/mês')||n.includes('/mes'))vS+=v;
-      else if(it.tipo==='servico')vI+=v; // serviços vão para implantação por padrão
-    });
-    return{vI,vE,vS};
-  }
-
-  async function atualizarStatus(id,status){
-    await setDoc(doc(db,'orcamentos',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
-    if(orcSel?.id===id)setOrcSel(o=>({...o,status}));
-  }
-  async function remover(id){if(!window.confirm('Remover orçamento?'))return;await deleteDoc(doc(db,'orcamentos',id));setOrcSel(null);}
-
-  function abrirModalVenda(orc){
-    setModalVenda(orc);
-    setDadosVenda({pagamentoI:'Boleto',parcelasI:1,pagamentoE:'Boleto',parcelasE:1,dtBoleto:''});
-  }
-
-  async function confirmarVendaFechada(){
-    if(!modalVenda)return;
-    setImportando(true);
-    const orc=modalVenda;
-    const {vI,vE,vS}=extrairValores(orc);
-    // Muda status do orçamento para fechado
-    await setDoc(doc(db,'orcamentos',orc.id),{status:'fechado',atualizadoEm:new Date().toISOString()},{merge:true});
-    // Importa para o CRM com todos os dados
-    onImportarCRM({
-      nome:(orc.cliente?.empresa||orc.cliente?.nome||'').toUpperCase(),
-      cnpj:(orc.cliente?.cnpj||'').toUpperCase(),
-      contato:(orc.cliente?.nome||'').toUpperCase(),
-      tel:orc.cliente?.tel||'',
-      email:orc.cliente?.email||'',
-      func:parseInt(orc.cliente?.func)||0,
-      equipTipo:orc.cliente?.equipTipo||'Nenhum',
-      plano:orc.cliente?.plano||'Basic',
-      nfe:orc.cliente?.nfe||'Não',
-      vI,vE,vS,
-      total:vI+vE+vS,
-      pagamentoI:dadosVenda.pagamentoI,
-      parcelasI:dadosVenda.parcelasI,
-      pagamentoE:dadosVenda.pagamentoE,
-      parcelasE:dadosVenda.parcelasE,
-      dtBoleto:dadosVenda.dtBoleto,
-      vendedor:orc.detalhes?.vendedor||'',
-      status:'Aguardando',
-      obs:`Importado do orçamento ${orc.id}. Subtotal: R$ ${(orc.subtotal||0).toFixed(2).replace('.',',')}`,
-      orcamentoId:orc.id,
-    });
-    setImportando(false);
-    setModalVenda(null);
-    setOrcSel(null);
-  }
-
-  // ─── MODAL VENDA FECHADA ──────────────────────────────────────────────────
-  const ModalVendaFechada=()=>{
-    if(!modalVenda)return null;
-    const orc=modalVenda;
-    const {vI,vE,vS}=extrairValores(orc);
-    const upDados=(k,v)=>setDadosVenda(d=>({...d,[k]:v}));
-    return(
-      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
-        <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:520,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)',maxHeight:'90vh',overflowY:'auto'}}>
-          <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>🤝 Confirmar Venda Fechada</div>
-          <div style={{fontSize:12,color:'#7f8c8d',marginBottom:20}}>Preencha os dados de pagamento para importar ao CRM</div>
-
-          {/* Resumo cliente */}
-          <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:16}}>
-            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{orc.cliente?.empresa||orc.cliente?.nome}</div>
-            <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>{orc.cliente?.cnpj||'CNPJ não informado'} • {orc.cliente?.email}</div>
-            <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
-              {vI>0&&<span style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#b45309'}}>🔧 Implant.: {moeda(vI)}</span>}
-              {vE>0&&<span style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#276749'}}>💻 Equip.: {moeda(vE)}</span>}
-              {vS>0&&<span style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:10,padding:'2px 8px',fontSize:10,fontWeight:700,color:'#2b6cb0'}}>🔄 Sistema: {moeda(vS)}/mês</span>}
-            </div>
-          </div>
-
-          {/* Implantação */}
-          {vI>0&&(
-            <div style={{background:'#fff8ee',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #fde68a'}}>
-              <div style={{fontWeight:700,fontSize:11,color:'#b45309',marginBottom:8,textTransform:'uppercase'}}>🔧 Implantação — {moeda(vI)}</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                <div><label style={lbl}>Forma de pagamento</label>
-                  <select style={fi} value={dadosVenda.pagamentoI} onChange={e=>{upDados('pagamentoI',e.target.value);if(e.target.value==='Pix')upDados('parcelasI',1);}}>
-                    <option>Boleto</option><option>Pix</option><option value="Cartão">Cartão de Crédito</option>
-                  </select>
-                </div>
-                <div><label style={lbl}>Parcelas</label>
-                  <select style={fi} value={dadosVenda.parcelasI} onChange={e=>upDados('parcelasI',+e.target.value)} disabled={dadosVenda.pagamentoI==='Pix'}>
-                    {[1,2,3].map(n=><option key={n} value={n}>{n}x {dadosVenda.pagamentoI==='Pix'&&n>1?'(bloqueado)':''}</option>)}
-                  </select>
-                </div>
-              </div>
-              {(dadosVenda.pagamentoI==='Pix'||dadosVenda.pagamentoI==='Cartão')&&(
-                <div style={{marginTop:8,fontSize:11,color:'#b45309',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #fde68a'}}>
-                  ⚡ Vendedor gera o link na hora do fechamento
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Equipamento */}
-          {vE>0&&(
-            <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:12,border:'1px solid #9ae6b4'}}>
-              <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8,textTransform:'uppercase'}}>💻 Equipamento — {moeda(vE)}</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                <div><label style={lbl}>Forma de pagamento</label>
-                  <select style={fi} value={dadosVenda.pagamentoE} onChange={e=>{upDados('pagamentoE',e.target.value);if(e.target.value==='Pix')upDados('parcelasE',1);}}>
-                    <option>Boleto</option><option>Pix</option><option value="Cartão">Cartão de Crédito</option>
-                  </select>
-                </div>
-                <div><label style={lbl}>Parcelas</label>
-                  <select style={fi} value={dadosVenda.parcelasE} onChange={e=>upDados('parcelasE',+e.target.value)} disabled={dadosVenda.pagamentoE==='Pix'}>
-                    {(dadosVenda.pagamentoE==='Boleto'?[1,2,3,4,5,6,7,8,9,10]:[1,2,3,4,5,6,7,8,9,10]).map(n=><option key={n} value={n}>{n}x</option>)}
-                  </select>
-                </div>
-              </div>
-              {(dadosVenda.pagamentoE==='Pix'||dadosVenda.pagamentoE==='Cartão')&&(
-                <div style={{marginTop:8,fontSize:11,color:'#276749',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #9ae6b4'}}>
-                  ⚡ Vendedor gera o link na hora do fechamento
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Sistema */}
-          {vS>0&&(
-            <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',marginBottom:16,border:'1px solid #bee3f8'}}>
-              <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',marginBottom:8,textTransform:'uppercase'}}>🔄 Sistema SaaS — {moeda(vS)}/mês (boleto recorrente)</div>
-              <div><label style={lbl}>Data de vencimento mensal *</label>
-                <input style={fi} type="date" value={dadosVenda.dtBoleto} onChange={e=>upDados('dtBoleto',e.target.value)}/>
-              </div>
-              <div style={{marginTop:8,fontSize:11,color:'#2b6cb0',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #bee3f8'}}>
-                📄 Financeiro processa o boleto recorrente ao gerar faturamento
-              </div>
-            </div>
-          )}
-
-          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-            <button onClick={()=>setModalVenda(null)} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
-            <button onClick={confirmarVendaFechada} disabled={importando||(vS>0&&!dadosVenda.dtBoleto)} style={{padding:'10px 24px',borderRadius:7,border:'none',background:(importando||(vS>0&&!dadosVenda.dtBoleto))?'#e8eaed':'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,display:'flex',alignItems:'center',gap:6}}>
-              {importando?'Importando...':'✅ Confirmar e Importar para o CRM'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 // MÓDULO ASAAS — INTEGRAÇÃO FINANCEIRA COMPLETA
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
-// ─── PROXIES VIA FIREBASE CLOUD FUNCTIONS ────────────────────────────────────
+// --- PROXIES VIA FIREBASE CLOUD FUNCTIONS ------------------------------------
 // Substitui chamadas diretas às APIs (bloqueadas por CORS no browser)
 const FUNCTIONS_URL = 'https://us-central1-secullum-crm.cloudfunctions.net';
 
@@ -3846,18 +3751,8 @@ async function chamadaIA({ system, messages, max_tokens = 800 }) {
   if (!resp.ok) throw new Error(data?.error || `Erro ${resp.status}`);
   return data.text || '';
 }
-// ─── FIM PROXIES ──────────────────────────────────────────────────────────────
-// Chave configurada em .env como REACT_APP_ASAAS_KEY
-const ASAAS_KEY=process.env.REACT_APP_ASAAS_KEY||'';
-const ASAAS_URL='https://sandbox.asaas.com/api/v3'; // trocar para api.asaas.com em produção
+// --- FIM PROXIES ---
 
-async function asaasReq(path,method='GET',body=null){
-  const opts={method,headers:{'Content-Type':'application/json','access_token':ASAAS_KEY}};
-  if(body)opts.body=JSON.stringify(body);
-  const resp=await fetch(ASAAS_URL+path,opts);
-  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err?.errors?.[0]?.description||`Erro Asaas ${resp.status}`);}
-  return resp.json();
-}
 async function asaasBuscarClientePorCNPJ(cnpj){
   const cpfCnpj=(cnpj||'').replace(/\D/g,'');if(!cpfCnpj)return null;
   try{const r=await asaasReq(`/customers?cpfCnpj=${cpfCnpj}`);return r.data?.[0]||null;}catch(e){return null;}
@@ -3900,7 +3795,7 @@ async function asaasBuscarStatusCliente(customerId){
     return sub.status==='ACTIVE'?'RECEIVED':sub.status==='OVERDUE'?'OVERDUE':'PENDING';
   }catch(e){return'PENDING';}
 }
-// ─── FIM API ASAAS ────────────────────────────────────────────────────────────
+// --- FIM API ASAAS ------------------------------------------------------------
 
 // Badge de status Asaas reutilizável
 function AsaasBadge({status,size='normal'}){
@@ -4426,9 +4321,9 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
   );
 }
 
-// ─── FIM MÓDULO ASAAS ────────────────────────────────────────────────────────
+// --- FIM MÓDULO ASAAS --------------------------------------------------------
 
-// ─── WIDGET FINANCEIRO IA FLUTUANTE ──────────────────────────────────────────
+// --- WIDGET FINANCEIRO IA FLUTUANTE ------------------------------------------
 // Estado do chat mantido fora do componente para não perder ao re-render
 const _chatMsgs={};
 const _chatInput={};
@@ -4643,7 +4538,7 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas.`;
   );
 }
 
-// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+// --- APP PRINCIPAL ------------------------------------------------------------
 export default function App(){
   const [authUser,setAuthUser]=useState(null);
   const [authLoading,setAuthLoading]=useState(true);
