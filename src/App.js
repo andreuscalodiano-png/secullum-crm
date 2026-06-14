@@ -5601,8 +5601,7 @@ export default function App(){
               </select>
               <select value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)} style={fi}>
                 <option value="Todos">📋 Status</option>
-                <option value="Faturado">✅ Faturado</option>
-                <option value="Aguardando">⏳ Aguardando</option>
+                {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
               {filtroAtivo&&<button onClick={()=>{setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{...fi,background:'#fadbd8',border:'1px solid #f1948a',color:'#e74c3c',cursor:'pointer',padding:'6px 12px'}}>✕ Limpar</button>}
               <span style={{fontSize:11,color:C.textMuted,marginLeft:4}}>{cl.length} cliente(s)</span>
