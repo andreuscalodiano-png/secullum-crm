@@ -5397,10 +5397,28 @@ export default function App(){
   const [orcTemplates,setOrcTemplates]=useState([]);
   const [dadosImportados,setDadosImportados]=useState(null);
   const [menuOrder,setMenuOrder]=useState(null);
-  const [metaSistema,setMetaSistema]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_sistema'))||0;}catch(e){return 0;}});
-  const [metaEquip,setMetaEquip]=useState(()=>{try{return parseFloat(localStorage.getItem('crm_meta_equip'))||0;}catch(e){return 0;}});
-  function salvarMetaSistema(v){setMetaSistema(v);try{localStorage.setItem('crm_meta_sistema',String(v));}catch(e){}}
-  function salvarMetaEquip(v){setMetaEquip(v);try{localStorage.setItem('crm_meta_equip',String(v));}catch(e){}}
+  const [metaSistema,setMetaSistema]=useState(0);
+  const [metaEquip,setMetaEquip]=useState(0);
+  // Carrega metas do Firestore ao montar
+  useEffect(()=>{
+    const refMeta=doc(db,'config','metas');
+    const unsub=onSnapshot(refMeta,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setMetaSistema(parseFloat(d.sistema)||0);
+        setMetaEquip(parseFloat(d.equip)||0);
+      }
+    });
+    return()=>unsub();
+  },[]);
+  async function salvarMetaSistema(v){
+    setMetaSistema(v);
+    try{await setDoc(doc(db,'config','metas'),{sistema:v,equip:metaEquip},{merge:true});}catch(e){console.error('Erro salvar meta sistema:',e);}
+  }
+  async function salvarMetaEquip(v){
+    setMetaEquip(v);
+    try{await setDoc(doc(db,'config','metas'),{sistema:metaSistema,equip:v},{merge:true});}catch(e){console.error('Erro salvar meta equip:',e);}
+  }
 
   // Sino: refs para detectar novos itens
   const prevSolIds=useRef(null);
