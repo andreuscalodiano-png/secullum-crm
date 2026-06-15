@@ -1355,6 +1355,148 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
 }
 
 // --- FORMULÁRIO NOVO CLIENTE --------------------------------------------------
+// ─── IMPORTADOR DE CNPJ VIA PDF ──────────────────────────────────────────────
+function ImportadorCNPJ({onDadosExtraidos}){
+  const [estado,setEstado]=useState('idle'); // idle | lendo | ok | erro
+  const [erro,setErro]=useState('');
+  const [drag,setDrag]=useState(false);
+  const inputRef=React.useRef();
+
+  async function processarArquivo(file){
+    if(!file||file.type!=='application/pdf'){
+      setErro('Envie um arquivo PDF.');setEstado('erro');return;
+    }
+    setEstado('lendo');setErro('');
+    try{
+      // Converte PDF para base64
+      const base64=await new Promise((res,rej)=>{
+        const r=new FileReader();
+        r.onload=()=>res(r.result.split(',')[1]);
+        r.onerror=()=>rej(new Error('Erro ao ler arquivo'));
+        r.readAsDataURL(file);
+      });
+
+      // Envia para Claude via API Anthropic
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          model:'claude-sonnet-4-6',
+          max_tokens:1000,
+          messages:[{
+            role:'user',
+            content:[
+              {type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},
+              {type:'text',text:`Extraia os dados deste comprovante de CNPJ e retorne SOMENTE um JSON válido, sem texto antes ou depois, sem markdown, sem \`\`\`json.
+
+Formato exato:
+{
+  "razaoSocial": "...",
+  "nomeFantasia": "...",
+  "cnpj": "...",
+  "email": "...",
+  "telefone": "...",
+  "cep": "...",
+  "logradouro": "...",
+  "numero": "...",
+  "complemento": "...",
+  "bairro": "...",
+  "cidade": "...",
+  "uf": "..."
+}
+
+Regras:
+- cnpj: somente números e pontuação original (ex: 29.511.897/0001-08)
+- cep: somente números e hífen (ex: 09.820-655 → 09820-655)
+- telefone: manter com DDD e formatação original
+- Se algum campo não existir, use string vazia ""`}
+            ]
+          }]
+        })
+      });
+
+      if(!resp.ok){
+        const err=await resp.json();
+        throw new Error(err?.error?.message||'Erro na API');
+      }
+
+      const data=await resp.json();
+      const texto=data.content?.find(b=>b.type==='text')?.text||'';
+      const dados=JSON.parse(texto.trim());
+
+      // Mapeia para campos do formulário
+      onDadosExtraidos({
+        empresa: dados.razaoSocial||'',
+        nome:    dados.nomeFantasia||dados.razaoSocial||'',
+        cnpj:    dados.cnpj||'',
+        email:   dados.email||'',
+        tel:     dados.telefone||'',
+        fone:    dados.telefone||'',
+        cep:     (dados.cep||'').replace(/\./g,''),
+        rua:     dados.logradouro||'',
+        numero:  dados.numero||'',
+        complemento: dados.complemento||'',
+        bairro:  dados.bairro||'',
+        cidade:  dados.cidade||'',
+      });
+      setEstado('ok');
+    }catch(e){
+      console.error('ImportadorCNPJ erro:',e);
+      setErro('Erro ao ler PDF: '+e.message);
+      setEstado('erro');
+    }
+  }
+
+  function onDrop(e){
+    e.preventDefault();setDrag(false);
+    const file=e.dataTransfer.files[0];
+    processarArquivo(file);
+  }
+
+  const corBorda=drag?'#3498db':estado==='ok'?'#27ae60':estado==='erro'?'#e74c3c':'#b0bec5';
+  const bgBox=drag?'#ebf8ff':estado==='ok'?'#f0fff4':estado==='erro'?'#fff5f5':'#fafbfc';
+
+  return(
+    <div
+      onDragOver={e=>{e.preventDefault();setDrag(true);}}
+      onDragLeave={()=>setDrag(false)}
+      onDrop={onDrop}
+      onClick={()=>estado==='idle'||estado==='erro'?inputRef.current?.click():null}
+      style={{border:`2px dashed ${corBorda}`,borderRadius:10,padding:'20px 24px',
+        background:bgBox,cursor:estado==='lendo'?'wait':'pointer',
+        display:'flex',alignItems:'center',gap:16,marginBottom:20,
+        transition:'all .2s',userSelect:'none'}}>
+      <input ref={inputRef} type="file" accept="application/pdf" style={{display:'none'}}
+        onChange={e=>processarArquivo(e.target.files[0])}/>
+      <div style={{fontSize:32,flexShrink:0}}>
+        {estado==='lendo'?'⏳':estado==='ok'?'✅':estado==='erro'?'❌':'📄'}
+      </div>
+      <div style={{flex:1}}>
+        {estado==='idle'&&<>
+          <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>Importar dados do CNPJ</div>
+          <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>Arraste o PDF do Comprovante de Inscrição da Receita Federal ou clique para selecionar. Os campos serão preenchidos automaticamente.</div>
+        </>}
+        {estado==='lendo'&&<>
+          <div style={{fontWeight:700,fontSize:13,color:'#f5a623'}}>Lendo documento...</div>
+          <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>Extraindo dados do PDF com IA. Aguarde um momento.</div>
+        </>}
+        {estado==='ok'&&<>
+          <div style={{fontWeight:700,fontSize:13,color:'#27ae60'}}>Dados importados com sucesso!</div>
+          <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>Revise os campos abaixo e corrija se necessário. <span onClick={e=>{e.stopPropagation();setEstado('idle');}} style={{color:'#3498db',cursor:'pointer',textDecoration:'underline'}}>Importar outro arquivo</span></div>
+        </>}
+        {estado==='erro'&&<>
+          <div style={{fontWeight:700,fontSize:13,color:'#e74c3c'}}>Erro ao importar</div>
+          <div style={{fontSize:11,color:'#e74c3c',marginTop:2}}>{erro}</div>
+          <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>Clique para tentar novamente.</div>
+        </>}
+      </div>
+      {(estado==='idle'||estado==='erro')&&(
+        <div style={{fontSize:11,color:'#b0bec5',fontWeight:700,flexShrink:0}}>PDF</div>
+      )}
+    </div>
+  );
+}
+
 function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados,currentUser}){
   const hoje=new Date();
   const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
@@ -1398,6 +1540,25 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
   const equipSel=equipamentosCad.find(e=>e.nome===f.equipTipo);
   const requerPag=equipSel?equipSel.requerPagamento:false;
   const [erros,setErros]=useState({});
+
+  // Preenche formulário com dados extraídos do PDF do CNPJ
+  function preencherComDadosCNPJ(dados){
+    setF(prev=>({
+      ...prev,
+      nome:     dados.nome     ||prev.nome,
+      empresa:  dados.empresa  ||prev.empresa,
+      cnpj:     dados.cnpj     ||prev.cnpj,
+      email:    dados.email    ||prev.email,
+      tel:      dados.tel      ||prev.tel,
+      fone:     dados.fone     ||prev.fone,
+      cep:      dados.cep      ||prev.cep,
+      rua:      dados.rua      ||prev.rua,
+      numero:   dados.numero   ||prev.numero,
+      complemento: dados.complemento||prev.complemento,
+      bairro:   dados.bairro   ||prev.bairro,
+      cidade:   dados.cidade   ||prev.cidade,
+    }));
+  }
 
   function validar(){
     const e={};
@@ -1462,6 +1623,11 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
             <div style={{fontSize:11,color:'#27ae60'}}>Verifique e complete os campos faltantes antes de salvar</div>
           </div>
         </div>
+      )}
+
+      {/* Importador PDF CNPJ */}
+      {!dadosImportados&&(
+        <ImportadorCNPJ onDadosExtraidos={preencherComDadosCNPJ}/>
       )}
 
       {/* Dados da empresa */}
