@@ -239,7 +239,8 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
     const impl=implantacoes[c.id]||{};
     return impl.etapa!=='processo_finalizado'&&!impl.prazo;
   });
-  const agdFat=todos.filter(c=>c.status==='Aguardando');
+  const STATUS_AGD=['Links enviados','Aguardando','Faturado parcial'];
+  const agdFat=todos.filter(c=>STATUS_AGD.includes(c.status));
   const totAgd=agdFat.reduce((s,c)=>s+c.total,0);
   if(!atrasados.length&&!semPrazo.length&&!agdFat.length)return null;
   return(
@@ -266,7 +267,20 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
         <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
             <i className="ti ti-currency-dollar" style={{color:C.blue,fontSize:16}}/>
-            <span style={{fontSize:13,fontWeight:700,color:C.blue}}>{agdFat.length} cliente(s) aguardando faturamento — {moeda(totAgd)}</span>
+            <div style={{display:'flex',flexDirection:'column',gap:2}}>
+              <span style={{fontSize:13,fontWeight:700,color:C.blue}}>{agdFat.length} cliente(s) pendente(s) — {moeda(totAgd)}</span>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:2}}>
+                {[
+                  {s:'Links enviados', emoji:'⚡', c:'#3498db'},
+                  {s:'Aguardando',     emoji:'⏳', c:'#f5a623'},
+                  {s:'Faturado parcial',emoji:'💰',c:'#f39c12'},
+                ].map(({s,emoji,c})=>{
+                  const qtd=todos.filter(x=>x.status===s).length;
+                  if(!qtd)return null;
+                  return<span key={s} style={{fontSize:10,color:c,fontWeight:700}}>{emoji} {s}: {qtd}</span>;
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2825,7 +2839,7 @@ return(
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:14}}>
           <SCard label="Total de Clientes" value={cl.length} sub={`${fat.length} fat. / ${agd.length} agd.`} pct={pctFat} cor="#f5a623"/>
           <SCard label="Clientes Faturados" value={fat.length} sub={moeda(totFat)} pct={pctFat} cor="#27ae60" onClick={()=>setFiltroStatus('Faturado')}/>
-          <SCard label="Aguardando Faturar" value={agd.length} sub={moeda(totAgd)} pct={pctAgd} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
+          <SCard label="Pendentes" value={todos.filter(c=>['Links enviados','Aguardando','Faturado parcial'].includes(c.status)).length} sub={moeda(todos.filter(c=>['Links enviados','Aguardando','Faturado parcial'].includes(c.status)).reduce((s,c)=>s+c.total,0))} pct={pctAgd} cor="#e74c3c" onClick={()=>setFiltroStatus('Aguardando')}/>
           <SCard label="Receita Total" value={moeda(totGeral)} cor="#3498db"/>
           <SCard label="Receita Sistema" value={moeda(totSist)} cor="#9b59b6"/>
           <SCard label="Receita Equipamentos" value={moeda(totEquip)} cor="#1abc9c"/>
