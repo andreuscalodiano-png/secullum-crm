@@ -1762,12 +1762,20 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
       func:parseInt(f.func)||0,
       vendedor:f.vendedor||'—',
       equipPago:f.equipPago,
-      equipRastreio:f.equipRastreio.trim(),
-      equipDataEnvio:f.equipDataEnvio,
+      equipRastreio:(f.equipRastreio||'').trim(),
+      equipDataEnvio:f.equipDataEnvio||'',
     };
-    await onUpdate(upd);
-    setSaved(true);setEditMode(false);
-    setTimeout(()=>setSaved(false),2500);
+    try{
+      await onUpdate(upd);
+      // Sincroniza estado local com dados salvos
+      setF(prev=>({...prev,...upd}));
+      setSaved(true);
+      setEditMode(false);
+      setTimeout(()=>setSaved(false),2500);
+    }catch(err){
+      console.error('Erro ao salvar cliente:',err);
+      alert('Erro ao salvar: '+err.message);
+    }
   }
 
   // Helper: renderiza campo como input/select (edit) ou div (view)
@@ -5527,7 +5535,7 @@ export default function App(){
     } else {
       await setDoc(doc(db,'clientes',id),dados,{merge:true});
     }
-    if(clienteSel?.id===id)setClienteSel(c=>({...c,...dados}));
+    if(clienteSel?.id===id)setClienteSel(prev=>prev?{...prev,...dados}:dados);
   }
   async function salvarImpl(id,dados){
     await setDoc(doc(db,'implantacoes',String(id)),dados,{merge:true});
@@ -5764,7 +5772,7 @@ export default function App(){
           />}
 
           {/* DETALHE */}
-          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
+          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
