@@ -94,18 +94,18 @@ const C={
 
 // Status do cliente — automáticos baseados no processo
 const STATUS_CLIENTE=[
-  {id:'Novo',             label:'🆕 Novo',              color:'#95a5a6'},
-  {id:'Links enviados',   label:'⚡ Links enviados',     color:'#3498db'},
-  {id:'Aguardando',       label:'⏳ Aguard. boletos',    color:'#f5a623'},
-  {id:'Boletos emitidos', label:'📄 Boletos emitidos',  color:'#e67e22'},
-  {id:'Faturado parcial', label:'💰 Faturado parcial',  color:'#f39c12'},
-  {id:'Faturado',         label:'✅ Faturado',           color:'#27ae60'},
-  {id:'Inadimplente',     label:'🔴 Inadimplente',      color:'#e74c3c'},
-  {id:'Cancelado',        label:'⚫ Cancelado',          color:'#7f8c8d'},
+  {id:'Novo',             label:'Novo',              emoji:'🆕', color:'#95a5a6'},
+  {id:'Links enviados',   label:'Links enviados',    emoji:'⚡', color:'#3498db'},
+  {id:'Aguardando',       label:'Aguard. boletos',   emoji:'⏳', color:'#f5a623'},
+  {id:'Boletos emitidos', label:'Boletos emitidos',  emoji:'📄', color:'#e67e22'},
+  {id:'Faturado parcial', label:'Faturado parcial',  emoji:'💰', color:'#f39c12'},
+  {id:'Faturado',         label:'Faturado',          emoji:'✅', color:'#27ae60'},
+  {id:'Inadimplente',     label:'Inadimplente',      emoji:'🔴', color:'#e74c3c'},
+  {id:'Cancelado',        label:'Cancelado',         emoji:'⚫', color:'#7f8c8d'},
 ];
 function getStatusCliente(s){return STATUS_CLIENTE.find(x=>x.id===s)||STATUS_CLIENTE[0];}
 function corStatus(s){return getStatusCliente(s).color;}
-function labelStatus(s){return getStatusCliente(s).label;}
+function labelStatus(s){const st=getStatusCliente(s);return `${st.emoji} ${st.label}`;}
 
 // --- HELPERS -----------------------------------------------------------------
 function parseDate(s){
@@ -1861,7 +1861,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
             <label style={lbl}>Status</label>
             {(perfil==='admin'||perfil==='financeiro')&&editMode
               ?<select style={fi} value={f.status} onChange={e=>up('status',e.target.value)}>
-                  {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+                  {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
                 </select>
               :<div style={{...fiView,fontWeight:700,color:corStatus(f.status),background:corStatus(f.status)+'11'}}>
                 {labelStatus(f.status)}
@@ -2921,7 +2921,7 @@ return(
                 <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.cnpj}</td>
                 <td style={{padding:'9px 12px'}}><span style={{background:'#fff8ee',color:'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span></td>
                 <td style={{padding:'9px 12px',fontSize:11,color:'#7f8c8d'}}>{c.vendedor}</td>
-                <td style={{padding:'9px 12px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fff8ee',color:c.status==='Faturado'?'#27ae60':'#f5a623',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
+                <td style={{padding:'9px 12px'}}><span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>{labelStatus(c.status)}</span></td>
                 <td style={{padding:'9px 12px',fontSize:12,fontWeight:700,color:'#4a4a4a'}}>{moeda(c.total)}</td>
               </tr>
             ))}
@@ -5687,7 +5687,7 @@ export default function App(){
               </select>
               <select value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)} style={fi}>
                 <option value="Todos">📋 Status</option>
-                {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+                {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
               </select>
               {filtroAtivo&&<button onClick={()=>{setFiltroAno(String(new Date().getFullYear()));setFiltroMes(String(new Date().getMonth()));setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{...fi,background:'#fadbd8',border:'1px solid #f1948a',color:'#e74c3c',cursor:'pointer',padding:'6px 12px'}}>✕ Limpar</button>}
               <span style={{fontSize:11,color:C.textMuted,marginLeft:4}}>{cl.length} cliente(s)</span>
@@ -5895,25 +5895,78 @@ export default function App(){
                   <span style={{fontWeight:700,fontSize:13,color:C.text}}>{cl.length} clientes</span>
                   {perfil!=='financeiro'&&<button onClick={()=>setPage('novo')} style={{background:C.blue,color:'#fff',border:'none',borderRadius:5,padding:'6px 14px',cursor:'pointer',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:6}}><i className="ti ti-plus"/>Novo cliente</button>}
                 </div>
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',minWidth:900}}>
                   <thead><tr style={{background:'#f8f9fa'}}>
-                    {['Empresa','CNPJ','Contato','Plano','Vendedor','Status','Asaas','Total'].map(h=><th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{h}</th>)}
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Empresa</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>CNPJ</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Contato / Tel</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Vendedor</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Plano</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Status</th>
+                    <th style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Asaas</th>
+                    <th style={{padding:'8px 12px',textAlign:'right',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Sist./mês</th>
+                    <th style={{padding:'8px 12px',textAlign:'right',fontSize:10,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>Total</th>
                   </tr></thead>
                   <tbody>
-                    {sortRecente(cl).slice(0,200).map((c,i)=>(
-                      <tr key={c.id} onClick={()=>setClienteSel(c)} style={{borderTop:`1px solid ${C.border}`,cursor:'pointer',background:i%2===0?'#fff':'#fdfdfd'}}>
-                        <td style={{padding:'8px 12px',fontSize:12,fontWeight:600,color:C.text,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                          {!c._base&&<span style={{background:'#d5f5e3',color:C.green,fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:4}}>novo</span>}{c.nome}
-                        </td>
-                        <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted}}>{c.cnpj}</td>
-                        <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted}}>{c.contato}</td>
-                        <td style={{padding:'8px 12px'}}>{c.plano!=='—'&&<span style={{background:'#ebf5fb',color:C.blue,padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span>}</td>
-                        <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted}}>{c.vendedor}</td>
-                        <td style={{padding:'8px 12px'}}><span style={{background:c.status==='Faturado'?'#d5f5e3':'#fef9e7',color:c.status==='Faturado'?C.green:C.orange,padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.status==='Faturado'?'✓ Fat.':'⏳ Agd.'}</span></td>
-                        <td style={{padding:'8px 12px'}}>{!c._base&&<AsaasBadge status={c.asaas_status||'SEM_FATURAMENTO'} size="small"/>}</td>
-                        <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:C.blue}}>{moeda(c.total)}</td>
-                      </tr>
-                    ))}
+                    {sortRecente(cl).slice(0,200).map((c,i)=>{
+                      const temVencido=c.asaas_status_impl==='OVERDUE'||c.asaas_status_equip==='OVERDUE'||c.asaas_status_sistema==='OVERDUE';
+                      const rowBg=temVencido?'#fff8f8':i%2===0?'#fff':'#fdfdfd';
+                      // Status Asaas real: pega o mais crítico entre as cobranças
+                      const statusAsaasReal=(()=>{
+                        const sts=[c.asaas_status_sistema,c.asaas_status_equip,c.asaas_status_impl,c.asaas_status].filter(Boolean);
+                        if(!sts.length)return'SEM_FATURAMENTO';
+                        if(sts.includes('OVERDUE'))return'OVERDUE';
+                        if(sts.includes('BOLETO_EMITIDO')||sts.includes('PENDING'))return'PENDING';
+                        if(sts.some(s=>s==='RECEIVED'||s==='CONFIRMED'))return'RECEIVED';
+                        if(sts.includes('CANCELED'))return'CANCELED';
+                        return sts[0]||'SEM_FATURAMENTO';
+                      })();
+                      return(
+                        <tr key={c.id} onClick={()=>setClienteSel(c)}
+                          style={{borderTop:`1px solid ${C.border}`,cursor:'pointer',background:rowBg}}
+                          onMouseEnter={e=>e.currentTarget.style.background='#f0f7ff'}
+                          onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
+                          {/* Empresa */}
+                          <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:C.text,maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                            {temVencido&&<span title="Inadimplente" style={{color:'#e74c3c',marginRight:4}}>⚠</span>}
+                            {!c._base&&<span style={{background:'#d5f5e3',color:C.green,fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:4,fontWeight:700}}>novo</span>}
+                            {c.nome}
+                          </td>
+                          {/* CNPJ */}
+                          <td style={{padding:'8px 12px',fontSize:10,color:C.textMuted,whiteSpace:'nowrap'}}>{c.cnpj||'—'}</td>
+                          {/* Contato + Tel */}
+                          <td style={{padding:'8px 12px',whiteSpace:'nowrap'}}>
+                            <div style={{fontSize:11,fontWeight:600,color:C.text}}>{c.contato||'—'}</div>
+                            <div style={{fontSize:9,color:C.textMuted}}>{c.cel||c.fone||c.tel||''}</div>
+                          </td>
+                          {/* Vendedor */}
+                          <td style={{padding:'8px 12px',fontSize:11,color:C.textMuted,whiteSpace:'nowrap',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis'}}>{c.vendedor&&c.vendedor!=='—'?c.vendedor.split(' ')[0]+(c.vendedor.split(' ').length>1?' '+c.vendedor.split(' ')[1]:''):'—'}</td>
+                          {/* Plano */}
+                          <td style={{padding:'8px 12px'}}>
+                            {c.plano&&c.plano!=='—'&&<span style={{background:c.plano==='Ultimate'?'#ebf5fb':c.plano==='Pro'?'#e8f8f5':'#fef9f0',color:c.plano==='Ultimate'?C.blue:c.plano==='Pro'?C.teal:C.orange,padding:'2px 7px',borderRadius:10,fontSize:10,fontWeight:700}}>{c.plano}</span>}
+                          </td>
+                          {/* Status CRM — label completo */}
+                          <td style={{padding:'8px 12px'}}>
+                            <span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'2px 8px',borderRadius:8,fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                              {labelStatus(c.status)}
+                            </span>
+                          </td>
+                          {/* Asaas — status real consolidado */}
+                          <td style={{padding:'8px 12px'}}>
+                            {!c._base&&(c.asaas_id
+                              ? <AsaasBadge status={statusAsaasReal} size="small"/>
+                              : <span style={{fontSize:9,color:'#95a5a6'}}>Sem Asaas</span>
+                            )}
+                          </td>
+                          {/* Sist/mês */}
+                          <td style={{padding:'8px 12px',fontSize:11,fontWeight:700,color:parseFloat(c.vS)>0?C.purple:'#dde1e7',textAlign:'right',whiteSpace:'nowrap'}}>
+                            {parseFloat(c.vS)>0?moeda(c.vS):'—'}
+                          </td>
+                          {/* Total */}
+                          <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:C.blue,textAlign:'right',whiteSpace:'nowrap'}}>{moeda(c.total)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {cl.length>200&&<div style={{padding:'10px',textAlign:'center',fontSize:11,color:C.textMuted}}>Mostrando 200 de {cl.length}. Use filtros.</div>}
