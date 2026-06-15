@@ -2071,6 +2071,151 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
 }
 
 // --- CONFIGURAÇÕES ------------------------------------------------------------
+function UsuariosLista({usuarios,currentUser}){
+  const [editandoPerfil,setEditandoPerfil]=useState(null); // uid do usuário sendo editado
+  const [novoPerfil,setNovoPerfil]=useState('');
+  const [loadingId,setLoadingId]=useState('');
+  const [confirmRevogar,setConfirmRevogar]=useState(null); // usuario a revogar
+
+  const ehOProprio=uid=>uid===currentUser?.id||uid===currentUser?.uid;
+
+  async function salvarPerfil(u){
+    if(!novoPerfil||novoPerfil===u.perfil){setEditandoPerfil(null);return;}
+    setLoadingId(u.id);
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{perfil:novoPerfil},{merge:true});
+      setEditandoPerfil(null);
+    }catch(e){alert('Erro ao alterar perfil: '+e.message);}
+    setLoadingId('');
+  }
+
+  async function revogarAcesso(u){
+    setLoadingId(u.id);
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{status:'revogado',revogarEm:new Date().toISOString(),revogarPor:currentUser?.email||''},{merge:true});
+      setConfirmRevogar(null);
+    }catch(e){alert('Erro ao revogar acesso: '+e.message);}
+    setLoadingId('');
+  }
+
+  async function reativarAcesso(u){
+    setLoadingId(u.id);
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{status:'ativo'},{merge:true});
+    }catch(e){alert('Erro ao reativar: '+e.message);}
+    setLoadingId('');
+  }
+
+  const ativos=usuarios.filter(u=>u.status!=='revogado');
+  const revogados=usuarios.filter(u=>u.status==='revogado');
+
+  return(
+    <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16}}>
+      <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({ativos.length})</div>
+
+      {/* Modal confirmação revogar */}
+      {confirmRevogar&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+          <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:400,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+            <div style={{fontWeight:700,fontSize:15,color:'#e74c3c',marginBottom:8}}>Revogar acesso</div>
+            <div style={{fontSize:13,color:'#2c3e50',marginBottom:6}}>
+              Tem certeza que deseja revogar o acesso de <strong>{confirmRevogar.nome}</strong>?
+            </div>
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:20}}>
+              O usuário não conseguirá mais fazer login. Esta ação pode ser desfeita reativando o acesso.
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmRevogar(null)} style={{padding:'8px 16px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>
+              <button onClick={()=>revogarAcesso(confirmRevogar)} style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                Revogar acesso
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {ativos.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário cadastrado.</div>}
+
+      {ativos.map(u=>(
+        <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'12px',borderRadius:8,background:'#f8f9fa',marginBottom:8,border:'1px solid #e8eaed'}}>
+          {/* Avatar */}
+          <div style={{width:38,height:38,borderRadius:'50%',background:PERFIS[u.perfil]?.color||C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:15,flexShrink:0}}>
+            {(u.nome||u.email||'?')[0].toUpperCase()}
+          </div>
+          {/* Info */}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',display:'flex',alignItems:'center',gap:6}}>
+              {u.nome}
+              {ehOProprio(u.id)&&<span style={{fontSize:9,background:'#ebf8ff',color:'#2b6cb0',padding:'1px 5px',borderRadius:4,fontWeight:700}}>Você</span>}
+            </div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
+            {u.status==='pendente'&&<div style={{fontSize:9,color:C.orange,fontWeight:700,marginTop:2}}>⏳ Convite pendente — aguardando primeiro acesso</div>}
+            {u.convidadoPor&&<div style={{fontSize:9,color:'#aaa',marginTop:1}}>Convidado por {u.convidadoPor}</div>}
+          </div>
+          {/* Perfil — clicável para editar */}
+          <div style={{flexShrink:0}}>
+            {editandoPerfil===u.id?(
+              <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                <select value={novoPerfil} onChange={e=>setNovoPerfil(e.target.value)}
+                  style={{padding:'4px 8px',borderRadius:5,border:'1px solid #dde1e7',fontSize:11,color:'#2c3e50',background:'#fff'}}>
+                  {Object.entries(PERFIS).map(([k,v])=>(
+                    <option key={k} value={k}>{v.label}</option>
+                  ))}
+                </select>
+                <button onClick={()=>salvarPerfil(u)} disabled={loadingId===u.id}
+                  style={{padding:'4px 10px',borderRadius:5,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+                  {loadingId===u.id?'...':'✓'}
+                </button>
+                <button onClick={()=>setEditandoPerfil(null)}
+                  style={{padding:'4px 8px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>✕</button>
+              </div>
+            ):(
+              <button onClick={()=>{if(ehOProprio(u.id))return;setEditandoPerfil(u.id);setNovoPerfil(u.perfil);}}
+                title={ehOProprio(u.id)?'Não é possível alterar seu próprio perfil':'Clique para alterar perfil'}
+                style={{background:PERFIS[u.perfil]?.color||C.blue,color:'#fff',padding:'3px 10px',borderRadius:10,fontSize:10,fontWeight:700,border:'none',cursor:ehOProprio(u.id)?'default':'pointer',opacity:1,display:'flex',alignItems:'center',gap:5}}>
+                {PERFIS[u.perfil]?.label||u.perfil}
+                {!ehOProprio(u.id)&&<i className="ti ti-pencil" style={{fontSize:9}}/>}
+              </button>
+            )}
+          </div>
+          {/* Ações */}
+          {!ehOProprio(u.id)&&(
+            <button onClick={()=>setConfirmRevogar(u)} disabled={loadingId===u.id}
+              title="Revogar acesso"
+              style={{padding:'5px 10px',borderRadius:6,border:'1px solid #fee2e2',background:'#fff5f5',color:'#e74c3c',cursor:'pointer',fontSize:10,fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}>
+              {loadingId===u.id?'...':'🚫 Revogar'}
+            </button>
+          )}
+        </div>
+      ))}
+
+      {/* Revogados */}
+      {revogados.length>0&&(
+        <div style={{marginTop:16}}>
+          <div style={{fontSize:11,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:8}}>Acessos revogados ({revogados.length})</div>
+          {revogados.map(u=>(
+            <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:8,background:'#f8f9fa',marginBottom:6,opacity:.7,border:'1px solid #e8eaed'}}>
+              <div style={{width:36,height:36,borderRadius:'50%',background:'#bdc3c7',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>
+                {(u.nome||u.email||'?')[0].toUpperCase()}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:12,color:'#7f8c8d',textDecoration:'line-through'}}>{u.nome}</div>
+                <div style={{fontSize:10,color:'#aaa'}}>{u.email}</div>
+                {u.revogarEm&&<div style={{fontSize:9,color:'#e74c3c',marginTop:2}}>Revogado em {new Date(u.revogarEm).toLocaleDateString('pt-BR')}{u.revogarPor?' por '+u.revogarPor:''}</div>}
+              </div>
+              <span style={{background:'#fee2e2',color:'#e74c3c',padding:'2px 8px',borderRadius:8,fontSize:9,fontWeight:700,flexShrink:0}}>REVOGADO</span>
+              <button onClick={()=>reativarAcesso(u)} disabled={loadingId===u.id}
+                style={{padding:'4px 10px',borderRadius:6,border:'1px solid #d1fae5',background:'#f0fff4',color:'#27ae60',cursor:'pointer',fontSize:10,fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}>
+                {loadingId===u.id?'...':'✓ Reativar'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
@@ -2258,23 +2403,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       </div>
 
       {/* Usuários cadastrados */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({usuarios.length})</div>
-        {usuarios.map(u=>(
-          <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',borderRadius:6,background:'#f8f9fa',marginBottom:6}}>
-            <div style={{width:36,height:36,borderRadius:'50%',background:PERFIS[u.perfil]?.color||C.blue,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,flexShrink:0}}>{(u.nome||u.email||'?')[0].toUpperCase()}</div>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{u.nome}</div>
-              <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
-            </div>
-            <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
-              {u.status==='pendente'&&<span style={{background:'#fef9e7',color:C.orange,padding:'2px 8px',borderRadius:10,fontSize:9,fontWeight:700}}>CONVITE PENDENTE</span>}
-              <span style={{background:PERFIS[u.perfil]?.color||C.blue,color:'#fff',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700}}>{PERFIS[u.perfil]?.label||u.perfil}</span>
-            </div>
-          </div>
-        ))}
-        {usuarios.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário cadastrado.</div>}
-      </div>
+      <UsuariosLista usuarios={usuarios} currentUser={currentUser}/>
 
       {/* Mapeamento de vendedores antigos */}
       {nomesParaMapear.length>0&&(
