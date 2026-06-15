@@ -1368,60 +1368,63 @@ function ImportadorCNPJ({onDadosExtraidos}){
     }
     setEstado('lendo');setErro('');
     try{
-      // Converte PDF para base64
-      const base64=await new Promise((res,rej)=>{
-        const r=new FileReader();
-        r.onload=()=>res(r.result.split(',')[1]);
-        r.onerror=()=>rej(new Error('Erro ao ler arquivo'));
-        r.readAsDataURL(file);
-      });
+      // Extrai texto do PDF usando FileReader + PDF.js via CDN
+      const arrayBuffer=await file.arrayBuffer();
 
-      // Envia para Claude via API Anthropic
-      const resp=await fetch('https://api.anthropic.com/v1/messages',{
+      // Carrega PDF.js dinamicamente se ainda nao carregado
+      if(!window.pdfjsLib){
+        await new Promise((res,rej)=>{
+          const s=document.createElement('script');
+          s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload=res; s.onerror=rej;
+          document.head.appendChild(s);
+        });
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc=
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+
+      // Extrai texto de todas as páginas
+      const pdf=await window.pdfjsLib.getDocument({data:arrayBuffer}).promise;
+      let textoPDF='';
+      for(let i=1;i<=pdf.numPages;i++){
+        const page=await pdf.getPage(i);
+        const tc=await page.getTextContent();
+        textoPDF+=tc.items.map(it=>it.str).join(' ')+'
+';
+      }
+
+      if(!textoPDF.trim()) throw new Error('PDF sem texto legível. Tente um PDF digital (não escaneado).');
+
+      // Envia texto para OpenAI via proxy Firebase
+      const resp=await fetch(`${FUNCTIONS_URL}/openaiProxy`,{
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          model:'claude-sonnet-4-6',
           max_tokens:1000,
+          system:'Voce extrai dados estruturados de documentos brasileiros. Retorne SOMENTE JSON valido, sem markdown, sem texto adicional.',
           messages:[{
             role:'user',
-            content:[
-              {type:'document',source:{type:'base64',media_type:'application/pdf',data:base64}},
-              {type:'text',text:`Extraia os dados deste comprovante de CNPJ e retorne SOMENTE um JSON válido, sem texto antes ou depois, sem markdown, sem \`\`\`json.
+            content:`Extraia os dados deste comprovante de CNPJ da Receita Federal e retorne SOMENTE um JSON valido sem markdown.
 
 Formato exato:
-{
-  "razaoSocial": "...",
-  "nomeFantasia": "...",
-  "cnpj": "...",
-  "email": "...",
-  "telefone": "...",
-  "cep": "...",
-  "logradouro": "...",
-  "numero": "...",
-  "complemento": "...",
-  "bairro": "...",
-  "cidade": "...",
-  "uf": "..."
-}
+{"razaoSocial":"...","nomeFantasia":"...","cnpj":"...","email":"...","telefone":"...","cep":"...","logradouro":"...","numero":"...","complemento":"...","bairro":"...","cidade":"...","uf":"..."}
 
-Regras:
-- cnpj: somente números e pontuação original (ex: 29.511.897/0001-08)
-- cep: somente números e hífen (ex: 09.820-655 → 09820-655)
-- telefone: manter com DDD e formatação original
-- Se algum campo não existir, use string vazia ""`}
-            ]
+Regras: cnpj com pontuacao original, cep sem pontos (ex: 09820-655), telefone com DDD, campos ausentes como string vazia.
+
+Texto do documento:
+${textoPDF.slice(0,3000)}`
           }]
         })
       });
 
       if(!resp.ok){
-        const err=await resp.json();
-        throw new Error(err?.error?.message||'Erro na API');
+        const err=await resp.json().catch(()=>({}));
+        throw new Error(err?.error||'Erro no proxy ('+resp.status+')');
       }
 
       const data=await resp.json();
-      const texto=data.content?.find(b=>b.type==='text')?.text||'';
+      const texto=data.text||'';
+
       const dados=JSON.parse(texto.trim());
 
       // Mapeia para campos do formulário

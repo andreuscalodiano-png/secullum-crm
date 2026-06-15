@@ -50,20 +50,65 @@ exports.openaiProxy = functions.https.onRequest(async (req, res) => {
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
   try {
     const { system = '', messages = [], max_tokens = 800 } = req.body || {};
-    const openaiMessages = [{ role: 'system', content: system }, ...messages];
+
+    // Suporta dois formatos:
+    // 1. Formato simples: { system, messages: [{role, content: string}] }
+    // 2. Formato multimodal: { messages: [{role, content: [{type, ...}]}] }
+    let openaiMessages;
+    if (system) {
+      openaiMessages = [{ role: 'system', content: system }, ...messages];
+    } else {
+      openaiMessages = messages;
+    }
+
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${OPENAI_KEY}`,
       },
-      body: JSON.stringify({ model: 'gpt-4o-mini', max_tokens, messages: openaiMessages }),
+      body: JSON.stringify({ model: 'gpt-4o', max_tokens, messages: openaiMessages }),
     });
     const data = await resp.json();
     if (!resp.ok) { res.status(resp.status).json({ error: data?.error?.message || 'Erro OpenAI' }); return; }
     res.status(200).json({ text: data.choices?.[0]?.message?.content || '' });
   } catch (err) {
     console.error('openaiProxy error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PROXY CLAUDE (leitura de PDF/documentos) ────────────────────────────────
+const CLAUDE_KEY = process.env.CLAUDE_KEY || '';
+
+exports.claudeProxy = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { messages = [], max_tokens = 1000 } = req.body || {};
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens,
+        messages,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      console.error('claudeProxy error:', data);
+      res.status(resp.status).json({ error: data?.error?.message || 'Erro Claude API' });
+      return;
+    }
+    const text = data.content?.find(b => b.type === 'text')?.text || '';
+    res.status(200).json({ text });
+  } catch (err) {
+    console.error('claudeProxy error:', err);
     res.status(500).json({ error: err.message });
   }
 });
