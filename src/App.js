@@ -1765,10 +1765,12 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
       equipRastreio:(f.equipRastreio||'').trim(),
       equipDataEnvio:f.equipDataEnvio||'',
     };
+    // Remove campos undefined — Firestore rejeita com erro
+    const updLimpo=Object.fromEntries(Object.entries(upd).filter(([,v])=>v!==undefined));
     try{
-      await onUpdate(upd);
+      await onUpdate(updLimpo);
       // Sincroniza estado local com dados salvos
-      setF(prev=>({...prev,...upd}));
+      setF(prev=>({...prev,...updLimpo}));
       setSaved(true);
       setEditMode(false);
       setTimeout(()=>setSaved(false),2500);
@@ -5530,12 +5532,14 @@ export default function App(){
     await setDoc(ref,{...dados,id:ref.id});
   }
   async function atualizarCliente(id,dados){
+    // Firestore nao aceita campos undefined — limpar antes de salvar
+    const dadosLimpos=Object.fromEntries(Object.entries(dados).filter(([,v])=>v!==undefined));
     if(id.startsWith('base_')){
-      await setDoc(doc(db,'overrides',id),dados);
+      await setDoc(doc(db,'overrides',id),dadosLimpos);
     } else {
-      await setDoc(doc(db,'clientes',id),dados,{merge:true});
+      await setDoc(doc(db,'clientes',id),dadosLimpos,{merge:true});
     }
-    if(clienteSel?.id===id)setClienteSel(prev=>prev?{...prev,...dados}:dados);
+    if(clienteSel?.id===id)setClienteSel(prev=>prev?{...prev,...dadosLimpos}:dadosLimpos);
   }
   async function salvarImpl(id,dados){
     await setDoc(doc(db,'implantacoes',String(id)),dados,{merge:true});
