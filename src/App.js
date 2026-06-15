@@ -21,9 +21,10 @@ const EQUIPS=['Evo40','Tablet','Celular','Control ID','TopData InnerRep','Já po
 // Status Asaas → badge visual
 const ASAAS_STATUS={
   SEM_FATURAMENTO:{label:'Sem faturamento', color:'#3498db',   emoji:'🔵'},
+  BOLETO_EMITIDO:  {label:'Boleto emitido',  color:'#f5a623',   emoji:'🟡'},
   PENDING:         {label:'Pendente',        color:'#f5a623',   emoji:'🟡'},
-  RECEIVED:        {label:'Em dia',          color:'#27ae60',   emoji:'🟢'},
-  CONFIRMED:       {label:'Em dia',          color:'#27ae60',   emoji:'🟢'},
+  RECEIVED:        {label:'Pago',            color:'#27ae60',   emoji:'🟢'},
+  CONFIRMED:       {label:'Pago',            color:'#27ae60',   emoji:'🟢'},
   OVERDUE:         {label:'Vencido',         color:'#e74c3c',   emoji:'🔴'},
   CANCELED:        {label:'Cancelado',       color:'#7f8c8d',   emoji:'⚫'},
 };
@@ -96,6 +97,7 @@ const STATUS_CLIENTE=[
   {id:'Novo',             label:'🆕 Novo',              color:'#95a5a6'},
   {id:'Links enviados',   label:'⚡ Links enviados',     color:'#3498db'},
   {id:'Aguardando',       label:'⏳ Aguard. boletos',    color:'#f5a623'},
+  {id:'Boletos emitidos', label:'📄 Boletos emitidos',  color:'#e67e22'},
   {id:'Faturado parcial', label:'💰 Faturado parcial',  color:'#f39c12'},
   {id:'Faturado',         label:'✅ Faturado',           color:'#27ae60'},
   {id:'Inadimplente',     label:'🔴 Inadimplente',      color:'#e74c3c'},
@@ -1939,9 +1941,11 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         {/* Botão Gerar Faturamento — financeiro/admin
             Aparece quando nao tem asaas_id OU tem pendencias de boleto a processar */}
         {(perfil==='financeiro'||perfil==='admin')&&(()=>{
-          const temImplBoleto=parseFloat(c.vI)>0&&(c.pagamentoI==='Boleto'||!c.pagamentoI)&&(!c.asaas_status_impl||c.asaas_status_impl==='');
-          const temEquipBoleto=parseFloat(c.vE)>0&&(c.pagamentoE==='Boleto'||!c.pagamentoE)&&(!c.asaas_status_equip||c.asaas_status_equip==='');
-          const temSistema=parseFloat(c.vS)>0&&(!c.asaas_status_sistema||c.asaas_status_sistema==='')&&c.status!=='Cancelado';
+          const jaProcessadoImpl=['BOLETO_EMITIDO','PENDING','RECEIVED','CONFIRMED','OVERDUE','REFUNDED'];
+          const jaProcessadoSistema=['PENDING','RECEIVED','CONFIRMED','OVERDUE'];
+          const temImplBoleto=parseFloat(c.vI)>0&&(c.pagamentoI==='Boleto'||!c.pagamentoI)&&!jaProcessadoImpl.includes(c.asaas_status_impl||'');
+          const temEquipBoleto=parseFloat(c.vE)>0&&(c.pagamentoE==='Boleto'||!c.pagamentoE)&&!jaProcessadoImpl.includes(c.asaas_status_equip||'');
+          const temSistema=parseFloat(c.vS)>0&&!jaProcessadoSistema.includes(c.asaas_status_sistema||'')&&c.status!=='Cancelado';
           const precisaFaturar=!c.asaas_id||(temImplBoleto||temEquipBoleto||temSistema);
           if(!precisaFaturar)return null;
           return(
@@ -1989,8 +1993,17 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
               if(checks.sistema&&f.vS>0){
                 await asaasCriarAssinatura(asaasId,f.vS,f.dtBoleto);
               }
-              // 5. Salvar asaas_id e atualizar status
-              await onUpdate({...c,asaas_id:asaasId,asaas_status:'PENDING',status:'Faturado'});
+              // 5. Salvar asaas_id, status por cobrança e status geral correto
+              const dadosUpdate={...c,asaas_id:asaasId};
+              // Boleto implantação gerado → BOLETO_EMITIDO (aguarda pagamento)
+              if(checks.impl&&f.vI>0) dadosUpdate.asaas_status_impl='BOLETO_EMITIDO';
+              // Boleto equipamento gerado → BOLETO_EMITIDO
+              if(checks.equip&&f.vE>0) dadosUpdate.asaas_status_equip='BOLETO_EMITIDO';
+              // Sistema gerado → PENDING (recorrência ativa aguardando 1º boleto)
+              if(checks.sistema&&f.vS>0) dadosUpdate.asaas_status_sistema='PENDING';
+              // Status geral do cliente
+              dadosUpdate.status='Boletos emitidos';
+              await onUpdate(dadosUpdate);
               // 6. Histórico
               await setDoc(doc(collection(db,'historico_cliente')),{
                 clienteId:c.id,clienteNome:c.nome,tipo:'faturamento_gerado',
@@ -4211,7 +4224,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
   useEffect(()=>{
     // Só atualiza se o novo valor do Firestore for diferente e mais "evoluído"
     // (evita sobrescrever um RECEIVED recém-gerado com PENDING vindo do cache)
-    const statusPriority={RECEIVED:4,CONFIRMED:4,OVERDUE:3,PENDING:2,CANCELED:1,REFUNDED:1,CHARGEBACK:1,'':0};
+    const statusPriority={RECEIVED:4,CONFIRMED:4,OVERDUE:3,PENDING:2,BOLETO_EMITIDO:2,CANCELED:1,REFUNDED:1,CHARGEBACK:1,'':0};
     const novoImpl=cliente.asaas_status_impl||'';
     const novoEquip=cliente.asaas_status_equip||'';
     if((statusPriority[novoImpl]||0)>=(statusPriority[statusImpl]||0)){
@@ -4290,7 +4303,16 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
             <AsaasBadge status={status||'PENDING'} size="small"/>
           </div>
         </div>
-        {temLink?(
+        {(status==='RECEIVED'||status==='CONFIRMED')?(
+          // PAGO — só mostra confirmação, sem link/botões
+          <div style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0'}}>
+            <span style={{fontSize:20}}>✅</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:'#27ae60'}}>Pagamento confirmado</div>
+              <div style={{fontSize:10,color:'#7f8c8d'}}>Nenhuma ação necessária</div>
+            </div>
+          </div>
+        ):temLink?(
           <>
             {/* QR Code visual via API pública */}
             {tipo==='Pix'&&(
@@ -4395,9 +4417,11 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
 // Modal Gerar Faturamento (financeiro)
 function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
   // Determina o que ainda está pendente de processar
-  const implPendente=parseFloat(cliente.vI)>0&&(cliente.pagamentoI==='Boleto'||!cliente.pagamentoI)&&(!cliente.asaas_status_impl||cliente.asaas_status_impl==='');
-  const equipPendente=parseFloat(cliente.vE)>0&&(cliente.pagamentoE==='Boleto'||!cliente.pagamentoE)&&(!cliente.asaas_status_equip||cliente.asaas_status_equip==='');
-  const sistemaPendente=parseFloat(cliente.vS)>0&&(!cliente.asaas_status_sistema||cliente.asaas_status_sistema==='');
+  const jaOkImpl=['BOLETO_EMITIDO','PENDING','RECEIVED','CONFIRMED','OVERDUE','REFUNDED'];
+  const jaOkSistema=['PENDING','RECEIVED','CONFIRMED','OVERDUE'];
+  const implPendente=parseFloat(cliente.vI)>0&&(cliente.pagamentoI==='Boleto'||!cliente.pagamentoI)&&!jaOkImpl.includes(cliente.asaas_status_impl||'');
+  const equipPendente=parseFloat(cliente.vE)>0&&(cliente.pagamentoE==='Boleto'||!cliente.pagamentoE)&&!jaOkImpl.includes(cliente.asaas_status_equip||'');
+  const sistemaPendente=parseFloat(cliente.vS)>0&&!jaOkSistema.includes(cliente.asaas_status_sistema||'');
 
   const [checks,setChecks]=useState({impl:implPendente,equip:equipPendente,sistema:sistemaPendente});
   const [loading,setLoading]=useState(false);
@@ -4751,7 +4775,7 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
             </div>
             <div style={{display:'flex',gap:6,alignItems:'flex-end',height:80}}>
               {[
-                {l:'Em dia',v:emDia.length,c:'#27ae60'},
+                {l:'Pago',v:emDia.length,c:'#27ae60'},
                 {l:'Pendente',v:pendentes.length,c:'#f5a623'},
                 {l:'Vencido',v:vencidos.length,c:'#e74c3c'},
                 {l:'Cancelado',v:cancelados.length,c:'#7f8c8d'},
@@ -4820,7 +4844,7 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
       {subAba==='cobrancas'&&(
         <div>
           <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
-            {[['Todos','Todos'],['RECEIVED','🟢 Em dia'],['PENDING','🟡 Pendente'],['OVERDUE','🔴 Vencido'],['CANCELED','⚫ Cancelado'],['SEM_FATURAMENTO','🔵 Sem fat.']].map(([v,l])=>(
+            {[['Todos','Todos'],['RECEIVED','🟢 Pago'],['PENDING','🟡 Pendente'],['OVERDUE','🔴 Vencido'],['CANCELED','⚫ Cancelado'],['SEM_FATURAMENTO','🔵 Sem fat.']].map(([v,l])=>(
               <button key={v} onClick={()=>setFiltroStatus(v)} style={{padding:'5px 12px',borderRadius:5,border:'none',background:filtroStatus===v?'#27ae60':'#ecf0f1',color:filtroStatus===v?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===v?700:400}}>{l}</button>
             ))}
           </div>
@@ -4910,7 +4934,7 @@ function AsaasView({todos,clientes,perfil,onAtualizarCliente}){
           <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
             <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Resumo por status</div>
             {[
-              {l:'🟢 Em dia',qtd:emDia.length,val:recebidoMes,c:'#27ae60'},
+              {l:'🟢 Pago',qtd:emDia.length,val:recebidoMes,c:'#27ae60'},
               {l:'🟡 Pendente',qtd:pendentes.length,val:pendentes.reduce((s,c)=>s+(c.vS||0),0),c:'#f5a623'},
               {l:'🔴 Vencido',qtd:vencidos.length,val:inadimplencia,c:'#e74c3c'},
               {l:'⚫ Cancelado',qtd:cancelados.length,val:cancelados.reduce((s,c)=>s+(c.vS||0),0),c:'#7f8c8d'},
@@ -5566,7 +5590,7 @@ export default function App(){
             const badgeNovo=clientes.filter(c=>{if(!c.criadoEm)return false;return c.criadoEm.startsWith(hojeStr);}).length;
             const badge=n.id==='solicitacoes'?badgeSol:n.id==='implantacao'?badgeImpl:n.id==='novo'?badgeNovo:0;
             return(
-              <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:7,cursor:'pointer',background:ativo?corAtivo:'transparent',marginBottom:3,transition:'background .15s',position:'relative'}}>
+              <div key={n.id} onClick={()=>{setPage(n.id);setClienteSel(null);setFiltroAno(String(new Date().getFullYear()));setFiltroMes(String(new Date().getMonth()));setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:7,cursor:'pointer',background:ativo?corAtivo:'transparent',marginBottom:3,transition:'background .15s',position:'relative'}}>
                 <div style={{width:28,height:28,borderRadius:6,background:ativo?'rgba(255,255,255,.25)':cor,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:ativo?'none':'0 1px 3px rgba(0,0,0,.2)'}}>
                   <span style={{color:'#fff',display:'flex',alignItems:'center',justifyContent:'center'}}>{svgIcons[n.id]||svgIcons.config}</span>
                 </div>
@@ -5647,7 +5671,7 @@ export default function App(){
                 <option value="Todos">📋 Status</option>
                 {STATUS_CLIENTE.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
-              {filtroAtivo&&<button onClick={()=>{setFiltroAno('Todos');setFiltroMes('Todos');setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{...fi,background:'#fadbd8',border:'1px solid #f1948a',color:'#e74c3c',cursor:'pointer',padding:'6px 12px'}}>✕ Limpar</button>}
+              {filtroAtivo&&<button onClick={()=>{setFiltroAno(String(new Date().getFullYear()));setFiltroMes(String(new Date().getMonth()));setFiltroVendedor('Todos');setFiltroPlano('Todos');setFiltroStatus('Todos');setBusca('');}} style={{...fi,background:'#fadbd8',border:'1px solid #f1948a',color:'#e74c3c',cursor:'pointer',padding:'6px 12px'}}>✕ Limpar</button>}
               <span style={{fontSize:11,color:C.textMuted,marginLeft:4}}>{cl.length} cliente(s)</span>
             </div>
           )}
