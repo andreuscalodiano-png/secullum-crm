@@ -14,6 +14,7 @@ import { db, auth } from "./firebase";
 // --- CONSTANTES --------------------------------------------------------------
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
+const FUNCTIONS_URL='https://us-central1-secullum-crm.cloudfunctions.net';
 // Formas de pagamento espelhadas do Asaas
 const FORMAS_ASAAS=['Boleto','Pix','Cartão'];
 const FORMAS=FORMAS_ASAAS; // apenas formas que o Asaas suporta
@@ -4421,7 +4422,6 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 
 // --- PROXIES VIA FIREBASE CLOUD FUNCTIONS ------------------------------------
 // Substitui chamadas diretas às APIs (bloqueadas por CORS no browser)
-const FUNCTIONS_URL = 'https://us-central1-secullum-crm.cloudfunctions.net';
 
 async function asaasReq(path, method='GET', body=null){
   const resp = await fetch(`${FUNCTIONS_URL}/asaasProxy`, {
