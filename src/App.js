@@ -1157,7 +1157,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
               {onAbrirCliente&&(
                 <button onClick={()=>onAbrirCliente(cliente)} title="Ver dados completos do cliente"
                   style={{padding:'3px 9px',borderRadius:6,border:'1px solid #dde1e7',background:'#f8f9fa',cursor:'pointer',fontSize:10,fontWeight:700,color:'#3498db',display:'flex',alignItems:'center',gap:4}}>
-                  <i className="ti ti-eye" style={{fontSize:11}}/> Ver cliente
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Ver cliente
                 </button>
               )}
             </div>
@@ -1372,7 +1372,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
                               draggable={false}
                               onDragStart={e=>e.stopPropagation()}
                               style={{flexShrink:0,width:20,height:20,borderRadius:4,border:'1px solid #dde1e7',background:'#f8f9fa',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
-                              <i className="ti ti-eye" style={{fontSize:11,color:'#3498db'}}/>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3498db" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                             </button>
                           </div>
                           {c.vendedor!=='—'&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2}}>👤 {c.vendedor}</div>}
