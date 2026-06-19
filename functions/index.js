@@ -11,26 +11,16 @@ const OPENAI_KEY = process.env.OPENAI_KEY || '';
 const ASAAS_URL = 'https://sandbox.asaas.com/api/v3';
 
 // Configuração SMTP — HostGator (guionstore.com.br)
-// Lê tanto de functions.config() (firebase functions:config:set) quanto de
-// variáveis de ambiente / .env — o que estiver disponível primeiro é usado.
-let _fbConfig = {};
-try { _fbConfig = functions.config() || {}; } catch (e) { _fbConfig = {}; }
+// Lê de variáveis de ambiente (.env na pasta functions/). Se não encontrar,
+// usa o fallback abaixo — TEMPORÁRIO, só para validar que o SMTP funciona.
+// IMPORTANTE: depois de confirmar o envio, mover a senha para functions/.env
+// e remover o valor fixo abaixo por segurança.
+const SMTP_HOST = process.env.SMTP_HOST || 'mail.guionstore.com.br';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
+const SMTP_USER = process.env.SMTP_USER || 'crm@guionstore.com.br';
+const SMTP_PASS = process.env.SMTP_PASS || '@calodiano*793A';
 
-console.log('[email] DEBUG _fbConfig.smtp existe:', !!_fbConfig.smtp);
-console.log('[email] DEBUG _fbConfig.smtp.pass tipo:', typeof _fbConfig.smtp?.pass, 'length:', _fbConfig.smtp?.pass?.length || 0);
-console.log('[email] DEBUG process.env.SMTP_PASS tipo:', typeof process.env.SMTP_PASS, 'length:', process.env.SMTP_PASS?.length || 0);
-
-function valorOuFallback(...valores){
-  for(const v of valores){
-    if(v!==undefined && v!==null && v!=='') return v;
-  }
-  return '';
-}
-
-const SMTP_HOST = valorOuFallback(process.env.SMTP_HOST, _fbConfig.smtp?.host, 'mail.guionstore.com.br');
-const SMTP_PORT = parseInt(valorOuFallback(process.env.SMTP_PORT, _fbConfig.smtp?.port, '465'), 10);
-const SMTP_USER = valorOuFallback(process.env.SMTP_USER, _fbConfig.smtp?.user, 'crm@guionstore.com.br');
-const SMTP_PASS = valorOuFallback(process.env.SMTP_PASS, _fbConfig.smtp?.pass, '');
+console.log('[email] config carregada — host:', SMTP_HOST, 'port:', SMTP_PORT, 'user:', SMTP_USER, 'pass definida:', !!SMTP_PASS, 'fonte pass:', process.env.SMTP_PASS ? 'env' : 'fallback');
 
 const mailTransporter = nodemailer.createTransport({
   host: SMTP_HOST,
