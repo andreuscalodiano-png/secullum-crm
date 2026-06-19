@@ -2365,6 +2365,24 @@ function UsuariosLista({usuarios,currentUser}){
     setLoadingId('');
   }
 
+  const [reenviadoId,setReenviadoId]=useState(''); // mostra "Enviado!" temporariamente
+
+  async function reenviarConvite(u){
+    if(!u.email){alert('Usuário sem email cadastrado.');return;}
+    setLoadingId(u.id);
+    try{
+      await sendPasswordResetEmail(auth,u.email.trim().toLowerCase());
+      // Marca como ativo — se a pessoa já está acessando normalmente,
+      // o reenvio serve só de confirmação e também corrige o status visual.
+      await setDoc(doc(db,'usuarios',u.id),{status:'ativo',convitereenviadoEm:new Date().toISOString()},{merge:true});
+      setReenviadoId(u.id);
+      setTimeout(()=>setReenviadoId(''),3000);
+    }catch(e){
+      alert('Erro ao reenviar convite: '+e.message);
+    }
+    setLoadingId('');
+  }
+
   const ativos=usuarios.filter(u=>u.status!=='revogado');
   const revogados=usuarios.filter(u=>u.status==='revogado');
 
@@ -2438,13 +2456,22 @@ function UsuariosLista({usuarios,currentUser}){
             )}
           </div>
           {/* Ações */}
-          {!ehOProprio(u.id)&&(
-            <button onClick={()=>setConfirmRevogar(u)} disabled={loadingId===u.id}
-              title="Revogar acesso"
-              style={{padding:'5px 10px',borderRadius:6,border:'1px solid #fee2e2',background:'#fff5f5',color:'#e74c3c',cursor:'pointer',fontSize:10,fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}>
-              {loadingId===u.id?'...':'🚫 Revogar'}
-            </button>
-          )}
+          <div style={{display:'flex',gap:6,flexShrink:0}}>
+            {u.status==='pendente'&&(
+              <button onClick={()=>reenviarConvite(u)} disabled={loadingId===u.id}
+                title="Reenviar email de convite e marcar como ativo"
+                style={{padding:'5px 10px',borderRadius:6,border:'1px solid #bee3f8',background:reenviadoId===u.id?'#d1fae5':'#ebf8ff',color:reenviadoId===u.id?'#276749':'#2b6cb0',cursor:'pointer',fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                {loadingId===u.id?'...':reenviadoId===u.id?'✓ Enviado!':'📧 Reenviar convite'}
+              </button>
+            )}
+            {!ehOProprio(u.id)&&(
+              <button onClick={()=>setConfirmRevogar(u)} disabled={loadingId===u.id}
+                title="Revogar acesso"
+                style={{padding:'5px 10px',borderRadius:6,border:'1px solid #fee2e2',background:'#fff5f5',color:'#e74c3c',cursor:'pointer',fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                {loadingId===u.id?'...':'🚫 Revogar'}
+              </button>
+            )}
+          </div>
         </div>
       ))}
 
