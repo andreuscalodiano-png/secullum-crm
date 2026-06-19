@@ -1466,8 +1466,7 @@ function ImportadorCNPJ({onDadosExtraidos}){
       for(let i=1;i<=pdf.numPages;i++){
         const page=await pdf.getPage(i);
         const tc=await page.getTextContent();
-        textoPDF+=tc.items.map(it=>it.str).join(' ')+'
-';
+        textoPDF+=tc.items.map(it=>it.str).join(' ')+'\n';
       }
 
       if(!textoPDF.trim()) throw new Error('PDF sem texto legível. Tente um PDF digital (não escaneado).');
