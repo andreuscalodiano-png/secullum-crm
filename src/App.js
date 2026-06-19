@@ -1081,7 +1081,7 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
 }
 
 // --- CARD DETALHE (IMPLANTAÇÃO) -----------------------------------------------
-function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios}){
+function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
   const [procText,setProcText]=useState('');
@@ -1152,8 +1152,16 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios}){
       <div style={{background:'#fff',borderRadius:8,padding:'20px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,flexWrap:'wrap',gap:8}}>
           <div>
-            <div style={{fontWeight:700,fontSize:17,color:'#2c3e50',marginBottom:5}}>{cliente.nome}</div>
-            <div style={{fontSize:11,color:'#7f8c8d'}}>{cliente.cnpj} • {cliente.contato} • {cliente.tel}</div>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <div style={{fontWeight:700,fontSize:17,color:'#2c3e50'}}>{cliente.nome}</div>
+              {onAbrirCliente&&(
+                <button onClick={()=>onAbrirCliente(cliente)} title="Ver dados completos do cliente"
+                  style={{padding:'3px 9px',borderRadius:6,border:'1px solid #dde1e7',background:'#f8f9fa',cursor:'pointer',fontSize:10,fontWeight:700,color:'#3498db',display:'flex',alignItems:'center',gap:4}}>
+                  <i className="ti ti-eye" style={{fontSize:11}}/> Ver cliente
+                </button>
+              )}
+            </div>
+            <div style={{fontSize:11,color:'#7f8c8d',marginTop:5}}>{cliente.cnpj} • {cliente.contato} • {cliente.tel}</div>
           </div>
           <div style={{fontWeight:700,fontSize:18,color:'#3498db'}}>{moeda(cliente.total)}</div>
         </div>
@@ -1256,7 +1264,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios}){
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios}){
+function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente}){
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
@@ -1278,7 +1286,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   if(clienteKanban){
-    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios}/>;
+    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios} onAbrirCliente={onAbrirCliente}/>;
   }
 
   const subAbas=[
@@ -1356,15 +1364,34 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios}){
                               ⚡ FATURADO — PRIORIDADE TOTAL
                             </div>
                           )}
-                          <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:3,lineHeight:1.3}}>{c.nome}</div>
+                          <div style={{display:'flex',alignItems:'center',gap:5,marginBottom:3}}>
+                            <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',lineHeight:1.3,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</div>
+                            <button
+                              onClick={e=>{e.stopPropagation();onAbrirCliente&&onAbrirCliente(c);}}
+                              title="Ver dados do cliente"
+                              draggable={false}
+                              onDragStart={e=>e.stopPropagation()}
+                              style={{flexShrink:0,width:20,height:20,borderRadius:4,border:'1px solid #dde1e7',background:'#f8f9fa',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',padding:0}}>
+                              <i className="ti ti-eye" style={{fontSize:11,color:'#3498db'}}/>
+                            </button>
+                          </div>
                           {c.vendedor!=='—'&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2}}>👤 {c.vendedor}</div>}
+                          {(()=>{
+                            const resp=usuarios?.find(u=>u.id===c.impl.responsavelId);
+                            return resp
+                              ?<div style={{fontSize:10,color:'#2b6cb0',fontWeight:600,marginBottom:2}}>🧑‍💼 {resp.nome||resp.email}</div>
+                              :<div style={{fontSize:10,color:'#bdc3c7',marginBottom:2}}>🧑‍💼 Sem responsável</div>;
+                          })()}
                           {c.impl.prazo&&<div style={{fontSize:10,color:atrasado?'#e74c3c':'#27ae60',fontWeight:600}}>📅 {new Date(c.impl.prazo+'T12:00:00').toLocaleDateString('pt-BR')}{atrasado?' ⚠':''}</div>}
                           {diasNaEtapa!==null&&(
                             <div style={{fontSize:9,color:alerta7dias?'#e74c3c':'#7f8c8d',fontWeight:alerta7dias?700:400,marginTop:2}}>
                               {alerta7dias?'⚠ ':'⏱ '}{diasNaEtapa}d nesta etapa
                             </div>
                           )}
-                          {(c.impl.comentarios||[]).length>0&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:2}}>💬 {c.impl.comentarios.length}</div>}
+                          <div style={{display:'flex',gap:8,marginTop:2,flexWrap:'wrap'}}>
+                            {(c.impl.comentarios||[]).length>0&&<div style={{fontSize:10,color:'#7f8c8d'}}>💬 {c.impl.comentarios.length}</div>}
+                            {(c.impl.arquivos||[]).length>0&&<div style={{fontSize:10,color:'#7f8c8d'}}>📎 {c.impl.arquivos.length}</div>}
+                          </div>
                           <div style={{fontSize:9,color:'#bdc3c7',marginTop:3,textAlign:'right'}}>⠿ arrastar</div>
                         </div>
                       );
@@ -6612,7 +6639,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
