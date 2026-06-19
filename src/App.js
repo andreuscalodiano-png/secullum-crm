@@ -1081,7 +1081,7 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
 }
 
 // --- CARD DETALHE (IMPLANTAÇÃO) -----------------------------------------------
-function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
+function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
   const [procText,setProcText]=useState('');
@@ -1164,7 +1164,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
               return <div key={e.id} title={e.label} onClick={()=>setLocal(l=>({...l,etapa:e.id}))} style={{flex:1,height:8,borderRadius:4,background:active?e.color:done?e.color+'99':'#ecf0f1',cursor:'pointer',minWidth:16}}/>;
             })}
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
             <div>
               <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Etapa</label>
               <select value={local.etapa} onChange={e=>setLocal(l=>({...l,etapa:e.target.value}))} style={{...fi,borderLeft:`4px solid ${etapaAtual?.color||'#3498db'}`}}>
@@ -1175,6 +1175,13 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
               <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Prazo</label>
               <input type="date" value={local.prazo||''} onChange={e=>setLocal(l=>({...l,prazo:e.target.value}))} style={fi}/>
             </div>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Responsável</label>
+            <select value={local.responsavelId||''} onChange={e=>setLocal(l=>({...l,responsavelId:e.target.value}))} style={fi}>
+              <option value="">— Sem responsável —</option>
+              {(usuarios||[]).filter(u=>u.status==='ativo'||!u.status).map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+            </select>
           </div>
         </div>
         <div style={{marginBottom:14}}>
@@ -1249,7 +1256,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
+function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios}){
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
@@ -1271,7 +1278,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   if(clienteKanban){
-    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser}/>;
+    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios}/>;
   }
 
   const subAbas=[
@@ -2929,11 +2936,43 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
   const sec={background:C.card,borderRadius:8,padding:'16px',marginBottom:12,boxShadow:'0 1px 3px rgba(0,0,0,.06)'};
 
+  // Notifica por email o novo responsável de uma solicitação — usado na
+  // criação e em qualquer reatribuição (manual ou via drag-and-drop no kanban).
+  function notificarResponsavelSolicitacao(sol,novoRespId){
+    const responsavel=usuarios.find(u=>u.id===novoRespId);
+    if(!responsavel?.email)return;
+    const comentariosHTML=(sol.comentarios||[]).length
+      ? (sol.comentarios||[]).map(c=>`<div style="border-left:3px solid #3498db;padding-left:10px;margin-bottom:8px;"><div style="font-size:11px;font-weight:700;color:#2c3e50;">${c.autor||'—'}</div><div style="font-size:12px;color:#2c3e50;">${c.texto||''}</div></div>`).join('')
+      : '<span style="font-size:12px;color:#aaa;">Nenhum comentário ainda.</span>';
+
+    const html=emailWrapperHTML(
+      'Você foi atribuído a uma solicitação',
+      '#f5a623',
+      `
+        ${linhaInfoHTML('Título',sol.titulo)}
+        ${linhaInfoHTML('Cliente',sol.clienteNome)}
+        ${linhaInfoHTML('Categoria',sol.categoria)}
+        ${linhaInfoHTML('Prioridade',sol.prioridade)}
+        ${sol.descricao?`<div style="margin-top:10px;"><span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Descrição</span><div style="font-size:13px;color:#2c3e50;white-space:pre-wrap;">${sol.descricao}</div></div>`:''}
+        <div style="margin-top:14px;">
+          <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Histórico de comentários</span>
+          ${comentariosHTML}
+        </div>
+      `
+    );
+
+    enviarNotificacaoEmail({
+      to:responsavel.email,
+      subject:`Solicitação atribuída — ${sol.titulo||'Sem título'}`,
+      html,
+    });
+  }
+
   async function criarSolicitacao(){
     if(!form.titulo.trim()){alert('Título obrigatório');return;}
     setSalvando(true);
     const ref=doc(collection(db,'solicitacoes'));
-    await setDoc(ref,{
+    const novaSolicitacao={
       id:ref.id,
       titulo:form.titulo.trim().toUpperCase(),
       nrBanco:form.nrBanco.trim(),
@@ -2949,7 +2988,9 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       criadoPorId:currentUser?.id||'',
       criadoEm:new Date().toISOString(),
       comentarios:[],
-    });
+    };
+    await setDoc(ref,novaSolicitacao);
+    if(form.responsavelId)notificarResponsavelSolicitacao(novaSolicitacao,form.responsavelId);
     setForm({titulo:'',nrBanco:'',clienteNome:'',clienteId:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
     setBuscaCliente('');
     setSalvando(false);setSubAba('kanban');
@@ -2965,8 +3006,12 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
 
   async function atualizarResponsavel(id,novoRespId){
     const u=usuarios.find(x=>x.id===novoRespId);
+    const solAtual=solicitacoes.find(s=>s.id===id)||solSel;
     await setDoc(doc(db,'solicitacoes',id),{responsavelId:novoRespId,responsavelNome:u?.nome||''},{merge:true});
     if(solSel?.id===id)setSolSel(s=>({...s,responsavelId:novoRespId,responsavelNome:u?.nome||''}));
+    if(novoRespId&&novoRespId!==solAtual?.responsavelId&&solAtual){
+      notificarResponsavelSolicitacao({...solAtual,responsavelId:novoRespId},novoRespId);
+    }
   }
 
   async function adicionarComentario(sol){
@@ -2995,6 +3040,9 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       updates.responsavelNome=usuarios.find(u=>u.id===novoRespId)?.nome||'';
     }
     await setDoc(doc(db,'solicitacoes',dragId),updates,{merge:true});
+    if(novoRespId&&novoRespId!==sol.responsavelId){
+      notificarResponsavelSolicitacao({...sol,...updates},novoRespId);
+    }
     setDragId(null);setDragOverCol(null);
   }
 
@@ -4637,6 +4685,45 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 // --- PROXIES VIA FIREBASE CLOUD FUNCTIONS ------------------------------------
 // Substitui chamadas diretas às APIs (bloqueadas por CORS no browser)
 
+// ─── NOTIFICAÇÃO POR EMAIL — responsável de Kanban/Solicitação ──────────────
+// Envia email via Cloud Function (SMTP HostGator). Falhas no envio são
+// logadas mas nunca interrompem o fluxo principal do usuário.
+async function enviarNotificacaoEmail({to,subject,html}){
+  if(!to){console.log('[email] sem destinatário, ignorando');return;}
+  try{
+    await fetch(`${FUNCTIONS_URL}/enviarEmailNotificacao`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({to,subject,html}),
+    });
+  }catch(e){
+    console.error('[email] erro ao notificar',to,':',e.message);
+  }
+}
+
+function emailWrapperHTML(titulo,corBarra,corpoHTML){
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#f5f6fa;padding:24px;">
+      <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+        <div style="background:${corBarra};padding:16px 20px;">
+          <div style="color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;opacity:.85;">Secullum CRM</div>
+          <div style="color:#fff;font-size:16px;font-weight:700;margin-top:4px;">${titulo}</div>
+        </div>
+        <div style="padding:20px;">
+          ${corpoHTML}
+        </div>
+        <div style="background:#f8f9fa;padding:12px 20px;font-size:11px;color:#7f8c8d;border-top:1px solid #ecf0f1;">
+          Notificação automática do Secullum CRM — Guion Informática e Relógio de Ponto
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function linhaInfoHTML(label,valor){
+  return `<div style="margin-bottom:8px;"><span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;">${label}</span><span style="font-size:13px;color:#2c3e50;font-weight:600;">${valor||'—'}</span></div>`;
+}
+
 async function asaasReq(path, method='GET', body=null){
   if(!ASAAS_HABILITADO){
     throw new Error('Integração com Asaas está desativada nas Configurações. Ative em Configurações > Integração Asaas para usar este recurso.');
@@ -6089,8 +6176,51 @@ export default function App(){
     }
     if(clienteSel?.id===id)setClienteSel(prev=>prev?{...prev,...dadosLimpos}:dadosLimpos);
   }
-  async function salvarImpl(id,dados){
+  async function salvarImpl(id,dados,dadosAnteriores,clienteImpl){
     await setDoc(doc(db,'implantacoes',String(id)),dados,{merge:true});
+
+    // Notifica por email só quando o responsável for definido por primeira vez
+    // ou trocado — nunca em mudança de etapa/comentário/arquivo.
+    const respAntigo=dadosAnteriores?.responsavelId||'';
+    const respNovo=dados?.responsavelId||'';
+    if(respNovo&&respNovo!==respAntigo){
+      const responsavel=usuarios.find(u=>u.id===respNovo);
+      if(responsavel?.email){
+        const cliente=clienteImpl||todos.find(c=>c.id===id)||{};
+        const etapaInfo=ETAPAS.find(e=>e.id===dados.etapa);
+        const processosHTML=(dados.processos||[]).length
+          ? '<ul style="margin:4px 0 0 0;padding-left:18px;">'+(dados.processos||[]).map(p=>`<li style="font-size:12px;color:#2c3e50;margin-bottom:3px;">${p.texto||p}</li>`).join('')+'</ul>'
+          : '<span style="font-size:12px;color:#aaa;">Nenhum processo registrado.</span>';
+        const comentariosHTML=(dados.comentarios||[]).length
+          ? (dados.comentarios||[]).slice(-5).map(c=>`<div style="border-left:3px solid #3498db;padding-left:10px;margin-bottom:8px;"><div style="font-size:11px;font-weight:700;color:#2c3e50;">${c.autor||'—'}</div><div style="font-size:12px;color:#2c3e50;">${c.texto||''}</div></div>`).join('')
+          : '<span style="font-size:12px;color:#aaa;">Nenhum comentário ainda.</span>';
+
+        const html=emailWrapperHTML(
+          'Você foi atribuído a uma implantação',
+          '#e74c3c',
+          `
+            ${linhaInfoHTML('Cliente',cliente.nome)}
+            ${linhaInfoHTML('CNPJ',cliente.cnpj)}
+            ${linhaInfoHTML('Etapa atual',etapaInfo?.label||dados.etapa)}
+            ${linhaInfoHTML('Prazo',dados.prazo?new Date(dados.prazo+'T12:00:00').toLocaleDateString('pt-BR'):'Não definido')}
+            <div style="margin-top:14px;">
+              <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Processos</span>
+              ${processosHTML}
+            </div>
+            <div style="margin-top:14px;">
+              <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Últimos comentários</span>
+              ${comentariosHTML}
+            </div>
+          `
+        );
+
+        enviarNotificacaoEmail({
+          to:responsavel.email,
+          subject:`Implantação atribuída — ${cliente.nome||'Cliente'}`,
+          html,
+        });
+      }
+    }
   }
 
   const todos=useMemo(()=>[
@@ -6327,7 +6457,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
