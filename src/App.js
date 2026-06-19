@@ -9,12 +9,21 @@ import {
   signOut,
   onAuthStateChanged
 } from "firebase/auth";
-import { db, auth } from "./firebase";
+import {
+  getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject
+} from "firebase/storage";
+import { db, auth, app } from "./firebase";
+
+// Storage para anexos do Kanban de implantação
+const storage = getStorage(app);
 
 // --- CONSTANTES --------------------------------------------------------------
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
 const FUNCTIONS_URL='https://us-central1-secullum-crm.cloudfunctions.net';
+// Flag global — controla se as integrações com Asaas estão ativas.
+// Atualizada em tempo real via onSnapshot em config/sistema (ver App principal).
+let ASAAS_HABILITADO=true;
 // Formas de pagamento espelhadas do Asaas
 const FORMAS_ASAAS=['Boleto','Pix','Cartão'];
 const FORMAS=FORMAS_ASAAS; // apenas formas que o Asaas suporta
@@ -1078,8 +1087,51 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
   const [procText,setProcText]=useState('');
   const [comentario,setComentario]=useState('');
   const [saved,setSaved]=useState(false);
+  const [enviandoArquivo,setEnviandoArquivo]=useState(false);
+  const [erroArquivo,setErroArquivo]=useState('');
+  const [removendoIdx,setRemovendoIdx]=useState(null);
 
   function salvar(){onSalvar(cliente.id,local);setSaved(true);setTimeout(()=>setSaved(false),1800);}
+
+  // Upload real para Firebase Storage — guarda nome, data, url de download e path
+  async function anexarArquivo(file){
+    if(!file)return;
+    setEnviandoArquivo(true);setErroArquivo('');
+    try{
+      const path=`implantacoes/${cliente.id}/${Date.now()}_${file.name}`;
+      const ref=storageRef(storage,path);
+      await uploadBytes(ref,file);
+      const url=await getDownloadURL(ref);
+      setLocal(l=>({...l,arquivos:[...(l.arquivos||[]),{
+        nome:file.name,
+        data:new Date().toLocaleDateString('pt-BR'),
+        url,
+        path,
+        tamanho:file.size,
+        enviadoPor:currentUser?.nome||currentUser?.email||'—',
+      }]}));
+    }catch(e){
+      console.error('Erro ao anexar arquivo:',e);
+      setErroArquivo('Erro ao enviar arquivo: '+e.message);
+    }
+    setEnviandoArquivo(false);
+  }
+
+  // Remove arquivo do Storage e da lista local
+  async function removerArquivo(idx){
+    const arq=local.arquivos[idx];
+    if(!window.confirm(`Remover o arquivo "${arq.nome}"?`))return;
+    setRemovendoIdx(idx);
+    try{
+      if(arq.path){
+        try{await deleteObject(storageRef(storage,arq.path));}catch(e){/* arquivo pode já não existir no storage */}
+      }
+      setLocal(l=>({...l,arquivos:l.arquivos.filter((_,i)=>i!==idx)}));
+    }catch(e){
+      alert('Erro ao remover arquivo: '+e.message);
+    }
+    setRemovendoIdx(null);
+  }
   function addProc(){
     if(!procText.trim())return;
     const lbl=ETAPAS.find(e=>e.id===local.etapa)?.label||local.etapa;
@@ -1141,14 +1193,38 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser}){
         <div style={{marginBottom:14}}>
           <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>Arquivos</div>
           {(local.arquivos||[]).map((a,i)=>(
-            <div key={i} style={{background:'#f0f9ff',borderRadius:5,padding:'6px 12px',marginBottom:4,display:'flex',justifyContent:'space-between',fontSize:12}}>
-              <span><i className="ti ti-file" style={{marginRight:6,color:'#3498db'}}/>{a.nome}</span>
-              <span style={{fontSize:10,color:'#7f8c8d'}}>{a.data}</span>
+            <div key={i} style={{background:'#f0f9ff',borderRadius:5,padding:'8px 12px',marginBottom:4,display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:12,gap:10}}>
+              <div style={{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:8}}>
+                <i className="ti ti-file" style={{color:'#3498db',flexShrink:0}}/>
+                <div style={{minWidth:0,overflow:'hidden'}}>
+                  <div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.nome}</div>
+                  <div style={{fontSize:9,color:'#7f8c8d'}}>
+                    {a.data}{a.tamanho?` • ${(a.tamanho/1024).toFixed(0)} KB`:''}{a.enviadoPor?` • ${a.enviadoPor}`:''}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:'flex',gap:6,flexShrink:0}}>
+                {a.url?(
+                  <a href={a.url} target="_blank" rel="noopener noreferrer" download={a.nome}
+                    style={{padding:'5px 10px',borderRadius:5,border:'1px solid #3498db',background:'#fff',color:'#3498db',fontWeight:700,fontSize:11,textDecoration:'none',display:'flex',alignItems:'center',gap:4}}>
+                    <i className="ti ti-download"/> Baixar
+                  </a>
+                ):(
+                  <span style={{fontSize:10,color:'#e67e22',fontStyle:'italic'}}>Arquivo antigo — sem link de download</span>
+                )}
+                <button onClick={()=>removerArquivo(i)} disabled={removendoIdx===i}
+                  style={{padding:'5px 8px',borderRadius:5,border:'1px solid #fee2e2',background:'#fff5f5',color:'#e74c3c',cursor:'pointer',fontSize:11}}>
+                  {removendoIdx===i?'...':<i className="ti ti-trash"/>}
+                </button>
+              </div>
             </div>
           ))}
-          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:5,background:'#ecf0f1',cursor:'pointer',fontSize:12,fontWeight:600,color:'#2c3e50',marginTop:4}}>
-            <i className="ti ti-upload"/><span>Anexar</span>
-            <input type="file" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f)setLocal(l=>({...l,arquivos:[...(l.arquivos||[]),{nome:f.name,data:new Date().toLocaleDateString('pt-BR')}]}));e.target.value='';}}/>
+          {erroArquivo&&<div style={{fontSize:11,color:'#e74c3c',marginTop:6,marginBottom:4}}>{erroArquivo}</div>}
+          <label style={{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:5,background:enviandoArquivo?'#dde1e7':'#ecf0f1',cursor:enviandoArquivo?'wait':'pointer',fontSize:12,fontWeight:600,color:'#2c3e50',marginTop:4}}>
+            <i className={enviandoArquivo?'ti ti-loader':'ti ti-upload'}/>
+            <span>{enviandoArquivo?'Enviando...':'Anexar'}</span>
+            <input type="file" disabled={enviandoArquivo} style={{display:'none'}}
+              onChange={e=>{const f=e.target.files[0];anexarArquivo(f);e.target.value='';}}/>
           </label>
         </div>
         <div style={{marginBottom:16}}>
@@ -2386,7 +2462,7 @@ function UsuariosLista({usuarios,currentUser}){
   );
 }
 
-function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates}){
+function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates,asaasHabilitado,onToggleAsaas}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
   const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true});
@@ -2407,6 +2483,13 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
   const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
+  const [salvandoToggle,setSalvandoToggle]=useState(false);
+
+  async function handleToggleAsaas(){
+    setSalvandoToggle(true);
+    await onToggleAsaas(!asaasHabilitado);
+    setSalvandoToggle(false);
+  }
 
   // Nomes antigos nos dados históricos que não correspondem a nenhum vendedor cadastrado
   const nomesAntigos=[...new Set(CLIENTES_BASE.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
@@ -2527,6 +2610,39 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
   return(
     <div style={{fontFamily:'sans-serif'}}>
+
+      {/* Integração Asaas — liga/desliga */}
+      {(currentUser?.perfil==='admin')&&(
+        <div style={{...sec,border:`2px solid ${asaasHabilitado?'#27ae60':'#e74c3c'}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:12,color:asaasHabilitado?'#27ae60':'#e74c3c',marginBottom:4,textTransform:'uppercase'}}>
+                {asaasHabilitado?'🟢':'🔴'} Integração Asaas
+              </div>
+              <div style={{fontSize:12,color:'#7f8c8d',maxWidth:480}}>
+                {asaasHabilitado
+                  ? 'Ativa. O sistema gera cobranças, links e mensagens reais no Asaas normalmente.'
+                  : 'Desativada. Nenhuma cobrança, link, assinatura ou mensagem será enviada ao Asaas — útil durante testes. O CRM segue funcionando sem nenhuma integração externa.'}
+              </div>
+            </div>
+            <button onClick={handleToggleAsaas} disabled={salvandoToggle}
+              style={{
+                position:'relative',width:64,height:32,borderRadius:16,border:'none',cursor:salvandoToggle?'wait':'pointer',
+                background:asaasHabilitado?'#27ae60':'#dde1e7',transition:'background .2s',flexShrink:0,
+              }}>
+              <div style={{
+                position:'absolute',top:3,left:asaasHabilitado?34:3,width:26,height:26,borderRadius:'50%',
+                background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s',
+              }}/>
+            </button>
+          </div>
+          {!asaasHabilitado&&(
+            <div style={{marginTop:10,padding:'8px 12px',background:'#fff5f5',border:'1px solid #fee2e2',borderRadius:6,fontSize:11,color:'#c0392b'}}>
+              ⚠ Enquanto desativado: botão "Gerar Faturamento" e geração de links Pix/Cartão vão exibir erro ao tentar usar o Asaas. Isso é esperado — reative quando terminar os testes.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sessão atual */}
       <div style={sec}>
@@ -4424,6 +4540,9 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
 // Substitui chamadas diretas às APIs (bloqueadas por CORS no browser)
 
 async function asaasReq(path, method='GET', body=null){
+  if(!ASAAS_HABILITADO){
+    throw new Error('Integração com Asaas está desativada nas Configurações. Ative em Configurações > Integração Asaas para usar este recurso.');
+  }
   const resp = await fetch(`${FUNCTIONS_URL}/asaasProxy`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -5721,6 +5840,7 @@ export default function App(){
   const [menuOrder,setMenuOrder]=useState(null);
   const [metaSistema,setMetaSistema]=useState(0);
   const [metaEquip,setMetaEquip]=useState(0);
+  const [asaasHabilitado,setAsaasHabilitado]=useState(true);
   // Carrega metas do Firestore ao montar
   useEffect(()=>{
     const refMeta=doc(db,'config','metas');
@@ -5741,6 +5861,23 @@ export default function App(){
     setMetaEquip(v);
     try{await setDoc(doc(db,'config','metas'),{sistema:metaSistema,equip:v},{merge:true});}catch(e){console.error('Erro salvar meta equip:',e);}
   }
+  // Liga/desliga integração com Asaas em tempo real — qualquer usuário que mudar
+  // a config reflete instantaneamente para todos via Firestore.
+  useEffect(()=>{
+    const refSistema=doc(db,'config','sistema');
+    const unsub=onSnapshot(refSistema,snap=>{
+      const habilitado=snap.exists()?(snap.data().asaasHabilitado!==false):true;
+      setAsaasHabilitado(habilitado);
+      ASAAS_HABILITADO=habilitado; // sincroniza a flag global usada por asaasReq()
+    });
+    return()=>unsub();
+  },[]);
+  async function alternarAsaas(v){
+    setAsaasHabilitado(v);
+    ASAAS_HABILITADO=v;
+    try{await setDoc(doc(db,'config','sistema'),{asaasHabilitado:v},{merge:true});}catch(e){console.error('Erro ao salvar config Asaas:',e);}
+  }
+
 
   // Sino: refs para detectar novos itens
   const prevSolIds=useRef(null);
@@ -6080,7 +6217,7 @@ export default function App(){
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile}/>}
 
           {/* CONFIGURAÇÕES */}
-          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>}
+          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
 
           {/* DASHBOARD */}
           {!clienteSel&&page==='dashboard'&&<DashboardView
