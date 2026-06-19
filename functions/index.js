@@ -1,6 +1,7 @@
 const functions = require('firebase-functions');
 const fetch = require('node-fetch');
 const admin = require('firebase-admin');
+const nodemailer = require('nodemailer');
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -8,6 +9,45 @@ const db = admin.firestore();
 const ASAAS_KEY = process.env.ASAAS_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_KEY || '';
 const ASAAS_URL = 'https://sandbox.asaas.com/api/v3';
+
+// Configuração SMTP — HostGator (guionstore.com.br)
+// Lê tanto de functions.config() (firebase functions:config:set) quanto de
+// variáveis de ambiente / .env — o que estiver disponível primeiro é usado.
+let _fbConfig = {};
+try { _fbConfig = functions.config() || {}; } catch (e) { _fbConfig = {}; }
+
+const SMTP_HOST = process.env.SMTP_HOST || _fbConfig.smtp?.host || 'mail.guionstore.com.br';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || _fbConfig.smtp?.port || '465', 10);
+const SMTP_USER = process.env.SMTP_USER || _fbConfig.smtp?.user || 'crm@guionstore.com.br';
+const SMTP_PASS = process.env.SMTP_PASS || _fbConfig.smtp?.pass || '';
+
+const mailTransporter = nodemailer.createTransport({
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465, // true para SSL (465), false para TLS (587)
+  auth: { user: SMTP_USER, pass: SMTP_PASS },
+});
+
+console.log('[email] config carregada — host:', SMTP_HOST, 'port:', SMTP_PORT, 'user:', SMTP_USER, 'pass definida:', !!SMTP_PASS);
+
+async function enviarEmail({ to, subject, html }) {
+  if (!to) {
+    console.log('[email] destinatário vazio, ignorando envio');
+    return;
+  }
+  try {
+    await mailTransporter.sendMail({
+      from: `"Secullum CRM" <${SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    console.log('[email] enviado com sucesso para:', to, '-', subject);
+  } catch (err) {
+    console.error('[email] erro ao enviar para', to, ':', err.message);
+    throw err;
+  }
+}
 
 const ALLOWED_ORIGINS = [
   'https://secullum-crm.vercel.app',
@@ -23,6 +63,24 @@ function setCors(req, res) {
   res.set('Access-Control-Allow-Headers', 'Content-Type');
   res.set('Access-Control-Max-Age', '3600');
 }
+
+// ─── ENVIO DE EMAIL — NOTIFICAÇÕES DE RESPONSÁVEL ────────────────────────────
+exports.enviarEmailNotificacao = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { to, subject, html } = req.body || {};
+    if (!to || !subject || !html) {
+      res.status(400).json({ error: 'Campos obrigatórios: to, subject, html' });
+      return;
+    }
+    await enviarEmail({ to, subject, html });
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('enviarEmailNotificacao error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── PROXY ASAAS ──────────────────────────────────────────────────────────────
 exports.asaasProxy = functions.https.onRequest(async (req, res) => {
