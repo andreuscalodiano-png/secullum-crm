@@ -1501,7 +1501,21 @@ ${textoPDF.slice(0,3000)}`
       const data=await resp.json();
       const texto=data.text||'';
 
-      const dados=JSON.parse(texto.trim());
+      // GPT-4o às vezes envolve a resposta em ```json ... ``` mesmo quando pedido para não fazer isso.
+      // Remove os fences de markdown antes de parsear.
+      const textoLimpo=texto.trim()
+        .replace(/^```json\s*/i,'')
+        .replace(/^```\s*/,'')
+        .replace(/```\s*$/,'')
+        .trim();
+
+      let dados;
+      try{
+        dados=JSON.parse(textoLimpo);
+      }catch(parseErr){
+        console.error('ImportadorCNPJ — resposta nao era JSON valido:',texto);
+        throw new Error('A IA não retornou um JSON válido. Tente novamente.');
+      }
 
       // Mapeia para campos do formulário
       onDadosExtraidos({
