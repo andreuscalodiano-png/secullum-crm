@@ -2625,7 +2625,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
     <div style={{fontFamily:'sans-serif'}}>
 
       {/* Integração Asaas — liga/desliga */}
-      {(currentUser?.perfil==='admin')&&(
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={{...sec,border:`2px solid ${asaasHabilitado?'#27ae60':'#e74c3c'}`}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
             <div>
@@ -5920,7 +5920,22 @@ export default function App(){
           const snap=await getDocs(collection(db,'usuarios'));
           const perfis={};
           snap.forEach(d=>perfis[d.id]={id:d.id,...d.data()});
-          const perfil=perfis[user.uid]||{email:user.email,perfil:'admin',nome:user.email};
+          let perfil=perfis[user.uid];
+          if(!perfil){
+            // Não achou pelo uid — tenta achar pelo email (caso de convite pendente
+            // cujo documento foi criado com ID temporário antes do primeiro login)
+            const porEmail=Object.values(perfis).find(p=>p.email?.toLowerCase()===user.email?.toLowerCase());
+            if(porEmail){
+              perfil={...porEmail,id:user.uid};
+              // Migra o documento para o uid correto e marca como ativo
+              try{
+                await setDoc(doc(db,'usuarios',user.uid),{...porEmail,status:'ativo'},{merge:true});
+                if(porEmail.id!==user.uid) await deleteDoc(doc(db,'usuarios',porEmail.id));
+              }catch(migErr){console.error('Erro ao migrar usuario:',migErr);}
+            } else {
+              perfil={id:user.uid,email:user.email,perfil:'admin',nome:user.email,status:'ativo'};
+            }
+          }
           setUserProfile(perfil);
           setUsuarios(Object.values(perfis));
           // Carregar ordem do menu do Firestore
