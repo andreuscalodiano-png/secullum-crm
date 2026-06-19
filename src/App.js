@@ -2896,9 +2896,31 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
   const [dragOverCol,setDragOverCol]=useState(null);
 
   // Form nova solicitação
-  const [form,setForm]=useState({titulo:'',nrBanco:'',clienteNome:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
+  const [form,setForm]=useState({titulo:'',nrBanco:'',clienteNome:'',clienteId:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
   const [salvando,setSalvando]=useState(false);
   const upF=(k,v)=>setForm(x=>({...x,[k]:v}));
+
+  // Autocomplete de cliente — busca nos clientes já cadastrados
+  const [buscaCliente,setBuscaCliente]=useState('');
+  const [sugestoesAbertas,setSugestoesAbertas]=useState(false);
+  const sugestoesCliente=buscaCliente.trim().length>=2
+    ? todos.filter(c=>c.nome?.toLowerCase().includes(buscaCliente.toLowerCase())||c.cnpj?.includes(buscaCliente)).slice(0,8)
+    : [];
+
+  function selecionarClienteSugerido(c){
+    setForm(x=>({...x,clienteNome:c.nome,clienteId:c.id}));
+    setBuscaCliente(c.nome);
+    setSugestoesAbertas(false);
+  }
+
+  function digitarCliente(v){
+    setBuscaCliente(v);
+    setForm(x=>({...x,clienteNome:v.toUpperCase(),clienteId:''})); // limpa vínculo se editar manualmente
+    setSugestoesAbertas(true);
+  }
+
+  // Apenas usuários ativos podem ser responsáveis por uma solicitação
+  const usuariosAtivos=usuarios.filter(u=>u.status==='ativo'||!u.status);
 
   // Comentário
   const [comentario,setComentario]=useState('');
@@ -2916,6 +2938,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       titulo:form.titulo.trim().toUpperCase(),
       nrBanco:form.nrBanco.trim(),
       clienteNome:form.clienteNome.trim().toUpperCase(),
+      clienteId:form.clienteId||'',
       categoria:form.categoria,
       prioridade:form.prioridade,
       descricao:form.descricao.trim().toUpperCase(),
@@ -2927,7 +2950,8 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
       criadoEm:new Date().toISOString(),
       comentarios:[],
     });
-    setForm({titulo:'',nrBanco:'',clienteNome:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
+    setForm({titulo:'',nrBanco:'',clienteNome:'',clienteId:'',categoria:'Suporte técnico',prioridade:'Média',descricao:'',responsavelId:''});
+    setBuscaCliente('');
     setSalvando(false);setSubAba('kanban');
   }
 
@@ -3015,7 +3039,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
             <label style={lbl}>Responsável</label>
             <select value={sol.responsavelId||''} onChange={e=>atualizarResponsavel(sol.id,e.target.value)} style={fi}>
               <option value="">— Sem responsável —</option>
-              {usuarios.map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+              {usuariosAtivos.map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
             </select>
           </div>
           {sol.descricao&&<div style={{background:'#f8f9fa',borderRadius:6,padding:'12px',fontSize:13,color:C.text,marginBottom:12,whiteSpace:'pre-wrap'}}>{sol.descricao}</div>}
@@ -3076,13 +3100,47 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
             <div><label style={lbl}>Nº Banco (Secullum)</label><input style={fi} value={form.nrBanco} onChange={e=>upF('nrBanco',e.target.value)}/></div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-            <div><label style={lbl}>Cliente</label>
-              <input style={{...fi,textTransform:'uppercase'}} value={form.clienteNome} onChange={e=>upF('clienteNome',e.target.value.toUpperCase())} placeholder="NOME DO CLIENTE"/>
+            <div style={{position:'relative'}}>
+              <label style={lbl}>Cliente</label>
+              <input
+                style={{...fi,textTransform:'uppercase',borderColor:form.clienteId?C.green:undefined}}
+                value={buscaCliente||form.clienteNome}
+                onChange={e=>digitarCliente(e.target.value)}
+                onFocus={()=>setSugestoesAbertas(true)}
+                onBlur={()=>setTimeout(()=>setSugestoesAbertas(false),150)}
+                placeholder="DIGITE PARA BUSCAR OU CADASTRAR..."
+              />
+              {form.clienteId&&(
+                <div style={{fontSize:9,color:C.green,fontWeight:700,marginTop:3,display:'flex',alignItems:'center',gap:4}}>
+                  <i className="ti ti-circle-check"/> Vinculado ao cadastro existente
+                </div>
+              )}
+              {!form.clienteId&&buscaCliente.trim().length>=2&&(
+                <div style={{fontSize:9,color:C.orange,fontWeight:700,marginTop:3}}>
+                  ⚠ Cliente não encontrado — será salvo como texto livre
+                </div>
+              )}
+              {sugestoesAbertas&&sugestoesCliente.length>0&&(
+                <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#fff',border:'1px solid #dde1e7',borderRadius:6,boxShadow:'0 4px 16px rgba(0,0,0,.12)',zIndex:50,maxHeight:240,overflowY:'auto',marginTop:2}}>
+                  {sugestoesCliente.map(c=>(
+                    <div key={c.id} onMouseDown={()=>selecionarClienteSugerido(c)}
+                      style={{padding:'8px 12px',cursor:'pointer',borderBottom:'1px solid #f5f6fa',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}
+                      onMouseEnter={e=>e.currentTarget.style.background='#f0f7ff'}
+                      onMouseLeave={e=>e.currentTarget.style.background='#fff'}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</div>
+                        <div style={{fontSize:10,color:C.textMuted}}>{c.cnpj}{c.contato?` • ${c.contato}`:''}</div>
+                      </div>
+                      <span style={{background:corStatus(c.status)+'22',color:corStatus(c.status),padding:'1px 6px',borderRadius:6,fontSize:9,fontWeight:700,flexShrink:0,whiteSpace:'nowrap'}}>{c.plano||'—'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div><label style={lbl}>Responsável *</label>
               <select style={fi} value={form.responsavelId} onChange={e=>upF('responsavelId',e.target.value)}>
                 <option value="">— Selecione o responsável —</option>
-                {usuarios.map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+                {usuariosAtivos.map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
               </select>
             </div>
           </div>
