@@ -2509,6 +2509,156 @@ function UsuariosLista({usuarios,currentUser}){
   );
 }
 
+// ─── CONFIGURAÇÃO DE EMAIL (SMTP) ──────────────────────────────────────────────
+// Permite editar host/porta/usuário/senha do servidor de envio direto na tela,
+// salvando em Firestore (config/smtp). A Cloud Function lê esses dados em tempo
+// real, evitando depender de variáveis de ambiente ou functions.config().
+function ConfigSMTP(){
+  const [form,setForm]=useState({host:'mail.guionstore.com.br',porta:'465',usuario:'crm@guionstore.com.br',senha:''});
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [mostrarSenha,setMostrarSenha]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [testando,setTestando]=useState(false);
+  const [resultadoTeste,setResultadoTeste]=useState(null); // {ok:bool,msg:string}
+
+  useEffect(()=>{
+    const ref=doc(db,'config','smtp');
+    const unsub=onSnapshot(ref,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setForm({
+          host:d.host||'mail.guionstore.com.br',
+          porta:String(d.porta||'465'),
+          usuario:d.usuario||'crm@guionstore.com.br',
+          senha:d.senha||'',
+        });
+      }
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
+
+  async function salvar(){
+    setSalvando(true);setResultadoTeste(null);
+    try{
+      await setDoc(doc(db,'config','smtp'),{
+        host:form.host.trim(),
+        porta:form.porta.trim(),
+        usuario:form.usuario.trim(),
+        senha:form.senha,
+        atualizadoEm:new Date().toISOString(),
+      },{merge:true});
+      setSalvo(true);
+      setTimeout(()=>setSalvo(false),2500);
+    }catch(e){
+      alert('Erro ao salvar configuração de email: '+e.message);
+    }
+    setSalvando(false);
+  }
+
+  async function testarEnvio(){
+    setTestando(true);setResultadoTeste(null);
+    try{
+      const destinatario=auth.currentUser?.email;
+      if(!destinatario){throw new Error('Não foi possível identificar seu email de login.');}
+      const resp=await fetch(`${FUNCTIONS_URL}/enviarEmailNotificacao`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          to:destinatario,
+          subject:'Teste de configuração SMTP — Secullum CRM',
+          html:emailWrapperHTML(
+            'Configuração de email funcionando! ✅',
+            '#27ae60',
+            '<p style="font-size:13px;color:#2c3e50;">Este é um email de teste enviado a partir da tela de Configurações. Se você recebeu esta mensagem, a configuração SMTP está correta e as notificações de responsável (Kanban e Solicitações) vão funcionar normalmente.</p>'
+          ),
+        }),
+      });
+      const data=await resp.json().catch(()=>({}));
+      if(!resp.ok||data.error){
+        throw new Error(data.error||'Erro desconhecido ao enviar.');
+      }
+      setResultadoTeste({ok:true,msg:`Email de teste enviado para ${destinatario}. Verifique a caixa de entrada (e spam).`});
+    }catch(e){
+      setResultadoTeste({ok:false,msg:'Falha no teste: '+e.message});
+    }
+    setTestando(false);
+  }
+
+  if(carregando){
+    return <div style={sec}><div style={{fontSize:12,color:'#7f8c8d'}}>Carregando configuração de email...</div></div>;
+  }
+
+  return(
+    <div style={sec}>
+      <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:4,textTransform:'uppercase'}}>📧 Configuração de Email (SMTP)</div>
+      <div style={{fontSize:12,color:'#7f8c8d',marginBottom:14}}>
+        Usado para notificar por email quando alguém é definido como responsável em uma Solicitação ou card do Kanban de Implantação.
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
+        <div>
+          <label style={lbl}>Servidor SMTP (host)</label>
+          <input style={fi} value={form.host} onChange={e=>setForm(f=>({...f,host:e.target.value}))} placeholder="mail.seudominio.com.br"/>
+        </div>
+        <div>
+          <label style={lbl}>Porta</label>
+          <input style={fi} value={form.porta} onChange={e=>setForm(f=>({...f,porta:e.target.value}))} placeholder="465"/>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+        <div>
+          <label style={lbl}>Usuário (email de envio)</label>
+          <input style={fi} value={form.usuario} onChange={e=>setForm(f=>({...f,usuario:e.target.value}))} placeholder="crm@seudominio.com.br"/>
+        </div>
+        <div>
+          <label style={lbl}>Senha</label>
+          <div style={{position:'relative'}}>
+            <input
+              type={mostrarSenha?'text':'password'}
+              style={{...fi,paddingRight:36}}
+              value={form.senha}
+              onChange={e=>setForm(f=>({...f,senha:e.target.value}))}
+              placeholder="Senha da conta de email"
+            />
+            <button onClick={()=>setMostrarSenha(s=>!s)} type="button"
+              style={{position:'absolute',right:6,top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',color:'#7f8c8d',fontSize:13}}>
+              <i className={mostrarSenha?'ti ti-eye-off':'ti ti-eye'}/>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {resultadoTeste&&(
+        <div style={{marginBottom:12,padding:'10px 12px',borderRadius:6,fontSize:12,
+          background:resultadoTeste.ok?'#f0fff4':'#fff5f5',
+          border:`1px solid ${resultadoTeste.ok?'#c6f6d5':'#fee2e2'}`,
+          color:resultadoTeste.ok?'#276749':'#c0392b'}}>
+          {resultadoTeste.ok?'✅ ':'❌ '}{resultadoTeste.msg}
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'9px 18px',borderRadius:6,border:'none',background:salvo?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Salvo!':'Salvar configuração'}
+        </button>
+        <button onClick={testarEnvio} disabled={testando||!form.senha}
+          title={!form.senha?'Salve a senha antes de testar':''}
+          style={{padding:'9px 18px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',color:'#2c3e50',fontWeight:700,cursor:(testando||!form.senha)?'default':'pointer',fontSize:12,opacity:(!form.senha)?.5:1}}>
+          {testando?'Enviando teste...':'📨 Testar envio'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates,asaasHabilitado,onToggleAsaas}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
@@ -2689,6 +2839,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             </div>
           )}
         </div>
+      )}
+
+      {/* Configuração de Email (SMTP) — notificações de responsável */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigSMTP/>
       )}
 
       {/* Sessão atual */}

@@ -10,35 +10,53 @@ const ASAAS_KEY = process.env.ASAAS_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_KEY || '';
 const ASAAS_URL = 'https://sandbox.asaas.com/api/v3';
 
-// Configuração SMTP — HostGator (guionstore.com.br)
-// Lê de variáveis de ambiente (.env na pasta functions/). Se não encontrar,
-// usa o fallback abaixo — TEMPORÁRIO, só para validar que o SMTP funciona.
-// IMPORTANTE: depois de confirmar o envio, mover a senha para functions/.env
-// e remover o valor fixo abaixo por segurança.
-const SMTP_HOST = process.env.SMTP_HOST || 'mail.guionstore.com.br';
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
-const SMTP_USER = process.env.SMTP_USER || 'crm@guionstore.com.br';
-const SMTP_PASS = process.env.SMTP_PASS || '@calodiano*793A';
-
-console.log('[email] config carregada — host:', SMTP_HOST, 'port:', SMTP_PORT, 'user:', SMTP_USER, 'pass definida:', !!SMTP_PASS, 'fonte pass:', process.env.SMTP_PASS ? 'env' : 'fallback');
-
-const mailTransporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: SMTP_PORT,
-  secure: SMTP_PORT === 465, // true para SSL (465), false para TLS (587)
-  auth: { user: SMTP_USER, pass: SMTP_PASS },
-});
-
-console.log('[email] config carregada — host:', SMTP_HOST, 'port:', SMTP_PORT, 'user:', SMTP_USER, 'pass definida:', !!SMTP_PASS);
+// ─── CONFIGURAÇÃO SMTP — lida do Firestore (config/smtp) ────────────────────
+// A senha e demais dados são editados pela tela de Configurações do CRM e
+// salvos em Firestore. Isso evita depender de functions.config() (que não
+// propaga de forma confiável dependendo da geração das functions) ou de
+// arquivos .env que precisam ser versionados manualmente.
+async function getSmtpConfig() {
+  try {
+    const snap = await db.collection('config').doc('smtp').get();
+    if (!snap.exists) {
+      console.log('[email] config/smtp não existe no Firestore ainda');
+      return null;
+    }
+    const d = snap.data();
+    if (!d.host || !d.usuario || !d.senha) {
+      console.log('[email] config/smtp incompleta — host/usuario/senha faltando');
+      return null;
+    }
+    return {
+      host: d.host,
+      port: parseInt(d.porta || '465', 10),
+      user: d.usuario,
+      pass: d.senha,
+    };
+  } catch (err) {
+    console.error('[email] erro ao buscar config/smtp:', err.message);
+    return null;
+  }
+}
 
 async function enviarEmail({ to, subject, html }) {
   if (!to) {
     console.log('[email] destinatário vazio, ignorando envio');
     return;
   }
+  const cfg = await getSmtpConfig();
+  if (!cfg) {
+    throw new Error('Configuração de email não encontrada. Configure em Configurações > Email (SMTP) no CRM.');
+  }
+  const transporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.port === 465,
+    auth: { user: cfg.user, pass: cfg.pass },
+  });
   try {
-    await mailTransporter.sendMail({
-      from: `"Secullum CRM" <${SMTP_USER}>`,
+    await transporter.sendMail({
+      from: `"Secullum CRM" <${cfg.user}>`,
       to,
       subject,
       html,
