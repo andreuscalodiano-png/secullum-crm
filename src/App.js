@@ -1084,7 +1084,6 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
 function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
-  const [procText,setProcText]=useState('');
   const [comentario,setComentario]=useState('');
   const [saved,setSaved]=useState(false);
   const [enviandoArquivo,setEnviandoArquivo]=useState(false);
@@ -1131,12 +1130,6 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
       alert('Erro ao remover arquivo: '+e.message);
     }
     setRemovendoIdx(null);
-  }
-  function addProc(){
-    if(!procText.trim())return;
-    const lbl=ETAPAS.find(e=>e.id===local.etapa)?.label||local.etapa;
-    setLocal(l=>({...l,processos:[...(l.processos||[]),{texto:procText,data:new Date().toLocaleDateString('pt-BR'),usuario:currentUser?.nome||currentUser?.email||'—',etapa:lbl}]}));
-    setProcText('');
   }
   function addComent(){
     if(!comentario.trim())return;
@@ -1193,17 +1186,13 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
           </div>
         </div>
         <div style={{marginBottom:14}}>
-          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>Processos</div>
-          {(local.processos||[]).map((p,i)=>(
-            <div key={i} style={{background:'#f8f9fa',borderRadius:5,padding:'8px 12px',marginBottom:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div><div style={{fontSize:12,fontWeight:600}}>{p.texto}</div><div style={{fontSize:10,color:'#7f8c8d'}}>{p.data} • {p.usuario}</div></div>
-              <span style={{background:'#ebf5fb',color:'#3498db',padding:'2px 8px',borderRadius:10,fontSize:10,fontWeight:700,flexShrink:0,marginLeft:8}}>{p.etapa}</span>
-            </div>
-          ))}
-          <div style={{display:'flex',gap:8,marginTop:6}}>
-            <input value={procText} onChange={e=>setProcText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addProc()} placeholder="Processo executado..." style={{...fi,flex:1}}/>
-            <button onClick={addProc} style={{padding:'6px 12px',borderRadius:5,border:'none',background:'#3498db',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>+ Add</button>
-          </div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>Descrição do Setup</div>
+          <textarea
+            value={local.descricaoSetup??(local.processos||[]).map(p=>p.texto).join('\n')}
+            onChange={e=>setLocal(l=>({...l,descricaoSetup:e.target.value}))}
+            placeholder="Descreva aqui o setup, processos executados, configurações realizadas... pressione Enter para nova linha"
+            style={{...fi,width:'100%',minHeight:160,resize:'vertical',fontFamily:'inherit',lineHeight:1.5,boxSizing:'border-box'}}
+          />
         </div>
         <div style={{marginBottom:14}}>
           <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>Arquivos</div>
@@ -6370,9 +6359,10 @@ export default function App(){
       if(responsavel?.email){
         const cliente=clienteImpl||todos.find(c=>c.id===id)||{};
         const etapaInfo=ETAPAS.find(e=>e.id===dados.etapa);
-        const processosHTML=(dados.processos||[]).length
-          ? '<ul style="margin:4px 0 0 0;padding-left:18px;">'+(dados.processos||[]).map(p=>`<li style="font-size:12px;color:#2c3e50;margin-bottom:3px;">${p.texto||p}</li>`).join('')+'</ul>'
-          : '<span style="font-size:12px;color:#aaa;">Nenhum processo registrado.</span>';
+        const descSetup=dados.descricaoSetup??(dados.processos||[]).map(p=>p.texto).join('\n');
+        const descricaoHTML=descSetup&&descSetup.trim()
+          ? `<div style="font-size:12px;color:#2c3e50;white-space:pre-wrap;line-height:1.5;">${descSetup}</div>`
+          : '<span style="font-size:12px;color:#aaa;">Nenhuma descrição registrada.</span>';
         const comentariosHTML=(dados.comentarios||[]).length
           ? (dados.comentarios||[]).slice(-5).map(c=>`<div style="border-left:3px solid #3498db;padding-left:10px;margin-bottom:8px;"><div style="font-size:11px;font-weight:700;color:#2c3e50;">${c.autor||'—'}</div><div style="font-size:12px;color:#2c3e50;">${c.texto||''}</div></div>`).join('')
           : '<span style="font-size:12px;color:#aaa;">Nenhum comentário ainda.</span>';
@@ -6386,8 +6376,8 @@ export default function App(){
             ${linhaInfoHTML('Etapa atual',etapaInfo?.label||dados.etapa)}
             ${linhaInfoHTML('Prazo',dados.prazo?new Date(dados.prazo+'T12:00:00').toLocaleDateString('pt-BR'):'Não definido')}
             <div style="margin-top:14px;">
-              <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Processos</span>
-              ${processosHTML}
+              <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Descrição do Setup</span>
+              ${descricaoHTML}
             </div>
             <div style="margin-top:14px;">
               <span style="font-size:10px;color:#7f8c8d;font-weight:700;text-transform:uppercase;display:block;margin-bottom:4px;">Últimos comentários</span>
