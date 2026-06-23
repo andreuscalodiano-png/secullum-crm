@@ -1317,8 +1317,8 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
       </div>
 
       {subAba==='kanban'&&(
-        <div style={{overflowX:'auto',paddingBottom:8}}>
-          <div style={{display:'flex',gap:10,minWidth:'max-content'}}>
+        <div style={{overflowX:'auto',overflowY:'hidden',paddingBottom:10}}>
+          <div style={{display:'flex',gap:10,minWidth:'max-content',alignItems:'flex-start'}}>
             {ETAPAS.filter(e=>filtroEtapa==='Todos'||e.id===filtroEtapa).map(etapa=>{
               const cols=cards.filter(c=>c.impl.etapa===etapa.id);
               const isOver=dragOver===etapa.id;
@@ -1331,7 +1331,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
                     <span style={{fontSize:11,fontWeight:700,lineHeight:1.2}}>{etapa.label}</span>
                     <span style={{background:'rgba(255,255,255,.3)',borderRadius:10,padding:'1px 7px',fontSize:11,fontWeight:700,marginLeft:4}}>{cols.length}</span>
                   </div>
-                  <div style={{background:isOver?'#d6eaf8':'#f0f2f5',borderRadius:'0 0 8px 8px',minHeight:140,padding:8,display:'flex',flexDirection:'column',gap:6,border:isOver?`2px dashed ${etapa.color}`:'2px solid transparent'}}>
+                  <div style={{background:isOver?'#d6eaf8':'#f0f2f5',borderRadius:'0 0 8px 8px',minHeight:140,maxHeight:'calc(100vh - 280px)',overflowY:'auto',padding:8,display:'flex',flexDirection:'column',gap:6,border:isOver?`2px dashed ${etapa.color}`:'2px solid transparent'}}>
                     {cols.map(c=>{
                       const prazoD=c.impl.prazo?new Date(c.impl.prazo):null;
                       const atrasado=prazoD&&prazoD<hoje;
