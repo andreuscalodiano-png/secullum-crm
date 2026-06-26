@@ -48,6 +48,25 @@ const ETAPAS=[
   {id:'agendado_treinamento',label:'Agendado Treinamento',  color:'#f39c12'},
   {id:'processo_finalizado',label:'Processo Finalizado',    color:'#2c3e50'},
 ];
+
+// Gera lista de horários (ex: "08:00","08:30","09:00"...) a partir da config
+// de horário de funcionamento salva em Firestore (config/horarioFuncionamento).
+// Se não houver configuração, usa padrão 08:00–18:00 a cada 30min.
+function gerarOpcoesHorario(config){
+  const abre=config?.abre||'08:00';
+  const fecha=config?.fecha||'18:00';
+  const intervaloMin=parseInt(config?.intervaloMin)||30;
+  const [hAbre,mAbre]=abre.split(':').map(Number);
+  const [hFecha,mFecha]=fecha.split(':').map(Number);
+  const inicioMin=hAbre*60+mAbre;
+  const fimMin=hFecha*60+mFecha;
+  const opcoes=[];
+  for(let m=inicioMin;m<=fimMin;m+=intervaloMin){
+    const h=Math.floor(m/60),min=m%60;
+    opcoes.push(`${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`);
+  }
+  return opcoes;
+}
 const PERFIS={
   admin:      {label:'Acesso total',      desc:'Todos os dados e configurações', icon:'ti-shield-check', color:'#e74c3c'},
   financeiro: {label:'Acesso financeiro', desc:'Dados financeiros, totais e pendentes', icon:'ti-currency-dollar', color:'#27ae60'},
@@ -1081,7 +1100,7 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
 }
 
 // --- CARD DETALHE (IMPLANTAÇÃO) -----------------------------------------------
-function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente}){
+function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente,horarioFuncionamento}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
   const [comentario,setComentario]=useState('');
@@ -1165,7 +1184,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
               return <div key={e.id} title={e.label} onClick={()=>setLocal(l=>({...l,etapa:e.id}))} style={{flex:1,height:8,borderRadius:4,background:active?e.color:done?e.color+'99':'#ecf0f1',cursor:'pointer',minWidth:16}}/>;
             })}
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
             <div>
               <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Etapa</label>
               <select value={local.etapa} onChange={e=>setLocal(l=>({...l,etapa:e.target.value}))} style={{...fi,borderLeft:`4px solid ${etapaAtual?.color||'#3498db'}`}}>
@@ -1175,6 +1194,13 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
             <div>
               <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Prazo</label>
               <input type="date" value={local.prazo||''} onChange={e=>setLocal(l=>({...l,prazo:e.target.value}))} style={fi}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase'}}>Horário</label>
+              <select value={local.horarioAgendado||''} onChange={e=>setLocal(l=>({...l,horarioAgendado:e.target.value}))} style={fi}>
+                <option value="">— Sem horário —</option>
+                {gerarOpcoesHorario(horarioFuncionamento).map(h=><option key={h} value={h}>{h}</option>)}
+              </select>
             </div>
           </div>
           <div>
@@ -1253,7 +1279,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente}){
+function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento}){
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
@@ -1263,6 +1289,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   const hoje_str=hoje.toISOString().split('T')[0];
   const [mesC,setMesC]=useState(hoje.getMonth());
   const [anoC,setAnoC]=useState(hoje.getFullYear());
+  const [dataAgenda,setDataAgenda]=useState(hoje_str); // dia selecionado na Agenda do dia
 
   function getImpl(id){return implantacoes[id]||{etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[]};}
   const cards=todos.map(c=>({...c,impl:getImpl(c.id)}));
@@ -1275,7 +1302,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   if(clienteKanban){
-    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios} onAbrirCliente={onAbrirCliente}/>;
+    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios} onAbrirCliente={onAbrirCliente} horarioFuncionamento={horarioFuncionamento}/>;
   }
 
   const subAbas=[
@@ -1284,6 +1311,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
     {id:'pendentes',icon:'ti-clock',l:`Pendentes (${pendentes.length})`},
     {id:'atrasados',icon:'ti-alert-circle',l:`Atrasados (${atrasados.length})`},
     {id:'calendario',icon:'ti-calendar',l:'Calendário'},
+    {id:'agenda',icon:'ti-clock-hour-4',l:'Agenda do dia'},
   ];
 
   return(
@@ -1438,10 +1466,10 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
               const eventos=eventosMes.filter(c=>c.impl.prazo===dataStr);
               const isHoje=dia===hoje.getDate()&&mesC===hoje.getMonth()&&anoC===hoje.getFullYear();
               return(
-                <div key={dia} style={{minHeight:56,background:isHoje?'#ebf5fb':'#f8f9fa',borderRadius:5,padding:'4px 5px',border:isHoje?'2px solid #3498db':'1px solid #ecf0f1'}}>
+                <div key={dia} onClick={()=>{setDataAgenda(dataStr);setSubAba('agenda');}} style={{minHeight:56,background:isHoje?'#ebf5fb':'#f8f9fa',borderRadius:5,padding:'4px 5px',border:isHoje?'2px solid #3498db':'1px solid #ecf0f1',cursor:'pointer'}}>
                   <div style={{fontSize:11,fontWeight:isHoje?700:400,color:isHoje?'#3498db':'#2c3e50',marginBottom:2}}>{dia}</div>
                   {eventos.slice(0,2).map(c=>{const etapa=ETAPAS.find(e=>e.id===c.impl.etapa);
-                    return <div key={c.id} onClick={()=>setClienteKanban(c)} style={{background:etapa?.color||'#3498db',color:'#fff',borderRadius:3,padding:'1px 4px',fontSize:9,fontWeight:700,cursor:'pointer',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:1}}>{c.nome}</div>;
+                    return <div key={c.id} onClick={e=>{e.stopPropagation();setClienteKanban(c);}} style={{background:etapa?.color||'#3498db',color:'#fff',borderRadius:3,padding:'1px 4px',fontSize:9,fontWeight:700,cursor:'pointer',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:1}}>{c.impl.horarioAgendado?c.impl.horarioAgendado+' ':''}{c.nome}</div>;
                   })}
                   {eventos.length>2&&<div style={{fontSize:9,color:'#7f8c8d'}}>+{eventos.length-2}</div>}
                 </div>
@@ -1450,6 +1478,90 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
           </div>
         </div>
       )}
+
+      {subAba==='agenda'&&(()=>{
+        const horarios=gerarOpcoesHorario(horarioFuncionamento);
+        const eventosDia=cards.filter(c=>c.impl.prazo===dataAgenda&&c.impl.etapa!=='processo_finalizado');
+        const dataObj=new Date(dataAgenda+'T12:00:00');
+        const isHojeAgenda=dataAgenda===hoje_str;
+
+        function mudarDia(delta){
+          const d=new Date(dataAgenda+'T12:00:00');
+          d.setDate(d.getDate()+delta);
+          setDataAgenda(d.toISOString().split('T')[0]);
+        }
+
+        // Agrupa eventos por horário — permite ver conflitos (mais de 1 no mesmo slot)
+        const porHorario={};
+        eventosDia.forEach(c=>{
+          const h=c.impl.horarioAgendado||'sem-horario';
+          if(!porHorario[h])porHorario[h]=[];
+          porHorario[h].push(c);
+        });
+        const semHorario=porHorario['sem-horario']||[];
+
+        return(
+          <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <button onClick={()=>mudarDia(-1)} style={{background:'#ecf0f1',border:'none',borderRadius:5,padding:'5px 14px',cursor:'pointer',fontSize:16,fontWeight:700}}>‹</button>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>
+                    {dataObj.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}
+                    {isHojeAgenda&&<span style={{marginLeft:8,fontSize:10,background:'#ebf5fb',color:'#3498db',padding:'2px 8px',borderRadius:8,fontWeight:700}}>HOJE</span>}
+                  </div>
+                  <div style={{fontSize:11,color:'#7f8c8d',marginTop:2}}>{eventosDia.length} agendamento(s)</div>
+                </div>
+                <button onClick={()=>mudarDia(1)} style={{background:'#ecf0f1',border:'none',borderRadius:5,padding:'5px 14px',cursor:'pointer',fontSize:16,fontWeight:700}}>›</button>
+              </div>
+              <input type="date" value={dataAgenda} onChange={e=>setDataAgenda(e.target.value)} style={fi}/>
+            </div>
+
+            {/* Itens sem horário definido — aparecem destacados no topo */}
+            {semHorario.length>0&&(
+              <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:6,padding:'10px 12px',marginBottom:14}}>
+                <div style={{fontSize:10,fontWeight:700,color:'#b45309',textTransform:'uppercase',marginBottom:6}}>⚠ Sem horário definido ({semHorario.length})</div>
+                <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                  {semHorario.map(c=>(
+                    <div key={c.id} onClick={()=>setClienteKanban(c)} style={{fontSize:12,color:'#2c3e50',cursor:'pointer',fontWeight:600}}>{c.nome}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Grade vertical estilo agenda — uma linha por horário disponível */}
+            <div style={{border:'1px solid #ecf0f1',borderRadius:6,overflow:'hidden'}}>
+              {horarios.map((h,i)=>{
+                const eventosHorario=porHorario[h]||[];
+                const temConflito=eventosHorario.length>1;
+                return(
+                  <div key={h} style={{display:'flex',borderTop:i>0?'1px solid #ecf0f1':'none',minHeight:44}}>
+                    <div style={{width:64,flexShrink:0,padding:'8px 10px',fontSize:11,color:'#7f8c8d',fontWeight:700,borderRight:'1px solid #ecf0f1',background:'#fafbfc'}}>
+                      {h}
+                    </div>
+                    <div style={{flex:1,padding:'6px 10px',display:'flex',flexDirection:'column',gap:4,background:temConflito?'#fff5f5':'#fff'}}>
+                      {eventosHorario.map(c=>{
+                        const etapa=ETAPAS.find(e=>e.id===c.impl.etapa);
+                        const resp=usuarios?.find(u=>u.id===c.impl.responsavelId);
+                        return(
+                          <div key={c.id} onClick={()=>setClienteKanban(c)}
+                            style={{background:(etapa?.color||'#3498db')+'18',borderLeft:`3px solid ${etapa?.color||'#3498db'}`,borderRadius:4,padding:'6px 10px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+                            <div style={{minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:700,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.nome}</div>
+                              <div style={{fontSize:10,color:'#7f8c8d'}}>{etapa?.label}{resp?` • ${resp.nome||resp.email}`:''}</div>
+                            </div>
+                            {temConflito&&<span style={{fontSize:9,background:'#e74c3c',color:'#fff',padding:'1px 6px',borderRadius:4,fontWeight:700,flexShrink:0}}>⚠ conflito</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2530,6 +2642,137 @@ function UsuariosLista({usuarios,currentUser}){
 // Permite editar host/porta/usuário/senha do servidor de envio direto na tela,
 // salvando em Firestore (config/smtp). A Cloud Function lê esses dados em tempo
 // real, evitando depender de variáveis de ambiente ou functions.config().
+// ─── MODAL DE CHANGELOG — novidades do sistema ──────────────────────────────
+const TIPO_CHANGELOG={
+  novidade:  {label:'Novidade',  emoji:'🆕', color:'#3498db'},
+  melhoria:  {label:'Melhoria',  emoji:'⚡', color:'#9b59b6'},
+  correcao:  {label:'Correção',  emoji:'🐛', color:'#e74c3c'},
+  funcionalidade:{label:'Nova funcionalidade',emoji:'🚀',color:'#27ae60'},
+};
+
+function ModalChangelog({changelog,onFechar}){
+  if(!changelog)return null;
+  const itens=changelog.itens||[];
+  const porTipo=Object.keys(TIPO_CHANGELOG).map(tipo=>({
+    tipo,
+    ...TIPO_CHANGELOG[tipo],
+    itens:itens.filter(it=>it.tipo===tipo),
+  })).filter(g=>g.itens.length>0);
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:99999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:14,maxWidth:520,width:'100%',maxHeight:'85vh',overflow:'hidden',boxShadow:'0 24px 70px rgba(0,0,0,.35)',display:'flex',flexDirection:'column'}}>
+        {/* Cabeçalho */}
+        <div style={{background:'linear-gradient(135deg,#3498db,#2b6cb0)',padding:'22px 24px',flexShrink:0}}>
+          <div style={{fontSize:11,color:'rgba(255,255,255,.8)',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Secullum CRM</div>
+          <div style={{fontSize:19,color:'#fff',fontWeight:700}}>🎉 {changelog.titulo||'Novidades do sistema'}</div>
+          {changelog.criadoEm&&<div style={{fontSize:11,color:'rgba(255,255,255,.75)',marginTop:4}}>{new Date(changelog.criadoEm).toLocaleDateString('pt-BR')}</div>}
+        </div>
+
+        {/* Corpo — scrollável */}
+        <div style={{padding:'20px 24px',overflowY:'auto',flex:1}}>
+          {porTipo.length===0&&<div style={{fontSize:13,color:'#7f8c8d'}}>Nenhum detalhe registrado para esta atualização.</div>}
+          {porTipo.map(grupo=>(
+            <div key={grupo.tipo} style={{marginBottom:18}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+                <span style={{fontSize:14}}>{grupo.emoji}</span>
+                <span style={{fontSize:12,fontWeight:700,color:grupo.color,textTransform:'uppercase',letterSpacing:.3}}>{grupo.label}</span>
+              </div>
+              <ul style={{margin:0,paddingLeft:20,display:'flex',flexDirection:'column',gap:6}}>
+                {grupo.itens.map((it,i)=>(
+                  <li key={i} style={{fontSize:13,color:'#2c3e50',lineHeight:1.5}}>{it.texto}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Rodapé */}
+        <div style={{padding:'14px 24px',borderTop:'1px solid #ecf0f1',flexShrink:0,display:'flex',justifyContent:'flex-end'}}>
+          <button onClick={onFechar} style={{padding:'10px 24px',borderRadius:7,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            Entendi, fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── HORÁRIO DE FUNCIONAMENTO — usado para limitar horários de agendamento ──
+function ConfigHorario(){
+  const [form,setForm]=useState({abre:'08:00',fecha:'18:00',intervaloMin:'30'});
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+
+  useEffect(()=>{
+    const ref=doc(db,'config','horarioFuncionamento');
+    const unsub=onSnapshot(ref,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setForm({
+          abre:d.abre||'08:00',
+          fecha:d.fecha||'18:00',
+          intervaloMin:String(d.intervaloMin||'30'),
+        });
+      }
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','horarioFuncionamento'),{
+        abre:form.abre,
+        fecha:form.fecha,
+        intervaloMin:parseInt(form.intervaloMin)||30,
+      },{merge:true});
+      setSalvo(true);
+      setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  if(carregando)return <div style={sec}><div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div></div>;
+
+  return(
+    <div style={sec}>
+      <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:4,textTransform:'uppercase'}}>🕐 Horário de Funcionamento</div>
+      <div style={{fontSize:12,color:'#7f8c8d',marginBottom:14}}>
+        Define os horários disponíveis para agendar instalações no Kanban de Implantação e na Agenda do dia.
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14}}>
+        <div>
+          <label style={lbl}>Abre às</label>
+          <input type="time" style={fi} value={form.abre} onChange={e=>setForm(f=>({...f,abre:e.target.value}))}/>
+        </div>
+        <div>
+          <label style={lbl}>Fecha às</label>
+          <input type="time" style={fi} value={form.fecha} onChange={e=>setForm(f=>({...f,fecha:e.target.value}))}/>
+        </div>
+        <div>
+          <label style={lbl}>Intervalo entre horários</label>
+          <select style={fi} value={form.intervaloMin} onChange={e=>setForm(f=>({...f,intervaloMin:e.target.value}))}>
+            <option value="15">15 minutos</option>
+            <option value="30">30 minutos</option>
+            <option value="60">1 hora</option>
+          </select>
+        </div>
+      </div>
+      <button onClick={salvar} disabled={salvando}
+        style={{padding:'9px 18px',borderRadius:6,border:'none',background:salvo?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+        {salvando?'Salvando...':salvo?'✓ Salvo!':'Salvar horário'}
+      </button>
+    </div>
+  );
+}
+
 function ConfigSMTP(){
   const [form,setForm]=useState({host:'mail.guionstore.com.br',porta:'465',usuario:'crm@guionstore.com.br',senha:''});
   const [carregando,setCarregando]=useState(true);
@@ -2672,6 +2915,148 @@ function ConfigSMTP(){
           {testando?'Enviando teste...':'📨 Testar envio'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── GESTÃO DE CHANGELOG — criar/editar novidades do sistema ────────────────
+function ConfigChangelog(){
+  const [versoes,setVersoes]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [editando,setEditando]=useState(null); // null | 'nova' | {id,...}
+  const [tForm,setTForm]=useState({titulo:'',itens:[]});
+  const [novoItemTexto,setNovoItemTexto]=useState('');
+  const [novoItemTipo,setNovoItemTipo]=useState('funcionalidade');
+  const [salvando,setSalvando]=useState(false);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'changelog'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      arr.sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||''));
+      setVersoes(arr);
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
+  const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
+
+  function iniciarNova(){
+    setTForm({titulo:'',itens:[]});
+    setEditando('nova');
+  }
+
+  function adicionarItem(){
+    if(!novoItemTexto.trim())return;
+    setTForm(f=>({...f,itens:[...f.itens,{tipo:novoItemTipo,texto:novoItemTexto.trim()}]}));
+    setNovoItemTexto('');
+  }
+
+  function removerItem(idx){
+    setTForm(f=>({...f,itens:f.itens.filter((_,i)=>i!==idx)}));
+  }
+
+  async function salvarVersao(){
+    if(!tForm.titulo.trim()){alert('Título obrigatório');return;}
+    if(tForm.itens.length===0){alert('Adicione ao menos um item');return;}
+    setSalvando(true);
+    try{
+      const ref=doc(collection(db,'changelog'));
+      await setDoc(ref,{
+        titulo:tForm.titulo.trim(),
+        itens:tForm.itens,
+        criadoEm:new Date().toISOString(),
+      });
+      setEditando(null);
+    }catch(e){alert('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function excluirVersao(id){
+    if(!window.confirm('Excluir esta entrada de changelog? Usuários que ainda não viram não verão mais.'))return;
+    try{await deleteDoc(doc(db,'changelog',id));}catch(e){alert('Erro ao excluir: '+e.message);}
+  }
+
+  return(
+    <div style={sec}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>📋 Changelog — novidades do sistema</div>
+        {!editando&&(
+          <button onClick={iniciarNova} style={{padding:'6px 14px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+            + Nova entrada
+          </button>
+        )}
+      </div>
+      <div style={{fontSize:12,color:'#7f8c8d',marginBottom:14}}>
+        A entrada mais recente aparece automaticamente como popup para todos os usuários no próximo login, uma única vez.
+      </div>
+
+      {editando==='nova'&&(
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:14,marginBottom:14,border:'1px solid #ecf0f1'}}>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Título da atualização</label>
+            <input style={fi} value={tForm.titulo} onChange={e=>setTForm(f=>({...f,titulo:e.target.value}))} placeholder="Ex: Atualização de Junho/2026"/>
+          </div>
+
+          {tForm.itens.length>0&&(
+            <div style={{marginBottom:10,display:'flex',flexDirection:'column',gap:5}}>
+              {tForm.itens.map((it,i)=>{
+                const t=TIPO_CHANGELOG[it.tipo];
+                return(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:8,background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #ecf0f1'}}>
+                    <span style={{fontSize:9,background:t.color+'22',color:t.color,padding:'2px 6px',borderRadius:5,fontWeight:700,flexShrink:0}}>{t.emoji} {t.label}</span>
+                    <span style={{fontSize:12,color:'#2c3e50',flex:1}}>{it.texto}</span>
+                    <button onClick={()=>removerItem(i)} style={{background:'none',border:'none',color:'#e74c3c',cursor:'pointer',fontSize:14,flexShrink:0}}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{display:'flex',gap:6}}>
+            <select value={novoItemTipo} onChange={e=>setNovoItemTipo(e.target.value)} style={{...fi,width:'auto',flexShrink:0}}>
+              {Object.entries(TIPO_CHANGELOG).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
+            </select>
+            <input value={novoItemTexto} onChange={e=>setNovoItemTexto(e.target.value)} onKeyDown={e=>e.key==='Enter'&&adicionarItem()} placeholder="Descreva o que mudou..." style={{...fi,flex:1}}/>
+            <button onClick={adicionarItem} style={{padding:'7px 14px',borderRadius:5,border:'none',background:'#ecf0f1',color:'#2c3e50',fontWeight:700,cursor:'pointer',fontSize:12,flexShrink:0}}>+ Add</button>
+          </div>
+
+          <div style={{display:'flex',gap:8,marginTop:14,justifyContent:'flex-end'}}>
+            <button onClick={()=>setEditando(null)} style={{padding:'8px 16px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>
+            <button onClick={salvarVersao} disabled={salvando} style={{padding:'8px 18px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {salvando?'Publicando...':'Publicar atualização'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {carregando&&<div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>}
+      {!carregando&&versoes.length===0&&!editando&&<div style={{fontSize:12,color:'#7f8c8d'}}>Nenhuma entrada de changelog ainda.</div>}
+
+      {versoes.map((v,vi)=>(
+        <div key={v.id} style={{borderTop:vi>0?'1px solid #ecf0f1':'none',paddingTop:vi>0?12:0,marginTop:vi>0?12:0}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{v.titulo}{vi===0&&<span style={{marginLeft:8,fontSize:9,background:'#d1fae5',color:'#276749',padding:'2px 6px',borderRadius:5,fontWeight:700}}>ATUAL</span>}</div>
+              <div style={{fontSize:10,color:'#7f8c8d'}}>{v.criadoEm?new Date(v.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+            </div>
+            <button onClick={()=>excluirVersao(v.id)} style={{background:'none',border:'none',color:'#e74c3c',cursor:'pointer',fontSize:11}}>🗑</button>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+            {(v.itens||[]).map((it,i)=>{
+              const t=TIPO_CHANGELOG[it.tipo]||TIPO_CHANGELOG.funcionalidade;
+              return(
+                <div key={i} style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:6}}>
+                  <span style={{color:t.color,fontWeight:700,flexShrink:0}}>{t.emoji}</span>
+                  <span>{it.texto}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2861,6 +3246,16 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* Configuração de Email (SMTP) — notificações de responsável */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <ConfigSMTP/>
+      )}
+
+      {/* Horário de Funcionamento — agenda de instalações */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigHorario/>
+      )}
+
+      {/* Changelog — novidades do sistema */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigChangelog/>
       )}
 
       {/* Sessão atual */}
@@ -6256,6 +6651,22 @@ export default function App(){
   const [metaSistema,setMetaSistema]=useState(0);
   const [metaEquip,setMetaEquip]=useState(0);
   const [asaasHabilitado,setAsaasHabilitado]=useState(true);
+  const [horarioFuncionamento,setHorarioFuncionamento]=useState({abre:'08:00',fecha:'18:00',intervaloMin:30});
+  // Carrega horário de funcionamento — usado para limitar opções de agendamento
+  useEffect(()=>{
+    const ref=doc(db,'config','horarioFuncionamento');
+    const unsub=onSnapshot(ref,snap=>{
+      if(snap.exists()){
+        const d=snap.data();
+        setHorarioFuncionamento({
+          abre:d.abre||'08:00',
+          fecha:d.fecha||'18:00',
+          intervaloMin:parseInt(d.intervaloMin)||30,
+        });
+      }
+    });
+    return()=>unsub();
+  },[]);
   // Carrega metas do Firestore ao montar
   useEffect(()=>{
     const refMeta=doc(db,'config','metas');
@@ -6349,6 +6760,43 @@ export default function App(){
       setAuthLoading(false);
     });
   },[]);
+
+  // ─── CHANGELOG — popup automático de novidades ──────────────────────────────
+  // Compara a versão mais recente em config/changelog com o que o usuário já
+  // viu (campo ultimaVersaoVista em usuarios/{uid}). Se for diferente, mostra
+  // o popup uma única vez; ao fechar, marca como visto.
+  const [changelogAtual,setChangelogAtual]=useState(null); // {versao,titulo,itens:[{tipo,texto}]}
+  const [mostrarChangelog,setMostrarChangelog]=useState(false);
+
+  useEffect(()=>{
+    if(!authUser||!userProfile)return;
+    (async()=>{
+      try{
+        const snap=await getDocs(collection(db,'changelog'));
+        if(snap.empty)return;
+        // Ordena por campo 'ordem' (numérico) ou por data de criação — pega o mais recente
+        const versoes=snap.docs.map(d=>({id:d.id,...d.data()}));
+        versoes.sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||''));
+        const maisRecente=versoes[0];
+        if(!maisRecente)return;
+        const jaViu=userProfile.ultimaVersaoVista===maisRecente.id;
+        if(!jaViu){
+          setChangelogAtual(maisRecente);
+          setMostrarChangelog(true);
+        }
+      }catch(e){console.error('Erro ao verificar changelog:',e);}
+    })();
+  },[authUser,userProfile?.id]);
+
+  async function fecharChangelog(){
+    setMostrarChangelog(false);
+    if(changelogAtual&&userProfile){
+      try{
+        await setDoc(doc(db,'usuarios',userProfile.id),{ultimaVersaoVista:changelogAtual.id},{merge:true});
+        setUserProfile(p=>({...p,ultimaVersaoVista:changelogAtual.id}));
+      }catch(e){console.error('Erro ao marcar changelog como visto:',e);}
+    }
+  }
 
   // Listeners do Firestore (tempo real)
   useEffect(()=>{
@@ -6498,6 +6946,8 @@ export default function App(){
 
   return(
     <div style={{display:'flex',minHeight:'100vh',fontFamily:"'Segoe UI',sans-serif",background:C.bg,fontSize:13}}>
+
+      {mostrarChangelog&&<ModalChangelog changelog={changelogAtual} onFechar={fecharChangelog}/>}
 
       {/* SIDEBAR */}
       <div style={{width:200,background:C.sidebar,flexShrink:0,display:'flex',flexDirection:'column'}}>
@@ -6688,7 +7138,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
