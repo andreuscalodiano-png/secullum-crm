@@ -1283,6 +1283,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
+  const [filtroResponsavel,setFiltroResponsavel]=useState('Todos');
   const [dragId,setDragId]=useState(null);
   const [dragOver,setDragOver]=useState(null);
   const hoje=new Date();hoje.setHours(0,0,0,0);
@@ -1292,7 +1293,12 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   const [dataAgenda,setDataAgenda]=useState(hoje_str); // dia selecionado na Agenda do dia
 
   function getImpl(id){return implantacoes[id]||{etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[]};}
-  const cards=todos.map(c=>({...c,impl:getImpl(c.id)}));
+  const cardsBase=todos.map(c=>({...c,impl:getImpl(c.id)}));
+  const cards=cardsBase.filter(c=>{
+    if(filtroResponsavel==='Todos')return true;
+    if(filtroResponsavel==='Sem_responsavel')return !c.impl.responsavelId;
+    return c.impl.responsavelId===filtroResponsavel;
+  });
   const atrasados=cards.filter(c=>{const p=c.impl.prazo?new Date(c.impl.prazo):null;return p&&p<hoje&&c.impl.etapa!=='processo_finalizado';});
   const doDia=cards.filter(c=>c.impl.prazo===hoje_str&&c.impl.etapa!=='processo_finalizado');
   const pendentes=cards.filter(c=>c.impl.etapa!=='processo_finalizado');
@@ -1324,7 +1330,12 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
         ))}
         {subAba==='kanban'&&(
           <>
-            <select value={filtroEtapa} onChange={e=>setFiltroEtapa(e.target.value)} style={{...fi,width:'auto',marginLeft:'auto',padding:'6px 10px'}}>
+            <select value={filtroResponsavel} onChange={e=>setFiltroResponsavel(e.target.value)} style={{...fi,width:'auto',marginLeft:'auto',padding:'6px 10px'}}>
+              <option value="Todos">👤 Todos responsáveis</option>
+              <option value="Sem_responsavel">Sem responsável</option>
+              {(usuarios||[]).filter(u=>u.status==='ativo'||!u.status).map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+            </select>
+            <select value={filtroEtapa} onChange={e=>setFiltroEtapa(e.target.value)} style={{...fi,width:'auto',padding:'6px 10px'}}>
               <option value="Todos">Todas etapas</option>
               {ETAPAS.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
             </select>
