@@ -1690,6 +1690,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
     if(!f.cidade.trim())e.cidade='Obrigatório';
     if(!f.plano)e.plano='Obrigatório';
     if(!f.equipTipo)e.equipTipo='Obrigatório';
+    if(!f.func||parseInt(f.func)<=0)e.func='Obrigatório';
     if(!f.vendedor||f.vendedor==='—')e.vendedor='Obrigatório';
     if(!f.vS&&parseValor(f.vS)===0)e.vS='Informe o valor';
     setErros(e);
@@ -1764,7 +1765,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={{...lbl,color:erros.tel?'#e74c3c':'#7f8c8d'}}>{erros.tel?'Celular — '+erros.tel:'Celular *'}</label><input style={fiErr('tel')} value={f.tel} onChange={e=>up('tel',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
           <div><label style={lbl}>Fone fixo</label><input style={fi} value={f.fone} onChange={e=>up('fone',mascaraTel(e.target.value))} placeholder="(00) 0000-0000" maxLength={14}/></div>
-          <div><label style={lbl}>Funcionários</label><input style={fi} type="number" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
+          <div><label style={{...lbl,color:erros.func?'#e74c3c':'#7f8c8d'}}>{erros.func?'Funcionários — '+erros.func:'Funcionários *'}</label><input style={fiErr('func')} type="number" min="1" value={f.func} onChange={e=>up('func',e.target.value)}/></div>
         </div>
         {/* Endereço */}
         <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
@@ -3066,7 +3067,55 @@ const PRIORIDADES_SOL=['Alta','Média','Baixa'];
 const COR_PRIOR={'Alta':'#e74c3c','Média':'#e67e22','Baixa':'#27ae60'};
 const COR_STATUS={'Aberta':'#3498db','Em andamento':'#e67e22','Resolvida':'#27ae60','Cancelada':'#7f8c8d'};
 
-function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
+// Histórico de negociação — card informativo, somente leitura, mostrado
+// quando uma solicitação está vinculada a um cliente real do cadastro.
+function HistoricoNegociacao({cliente,onAbrirCliente}){
+  if(!cliente)return null;
+  const vI=parseFloat(cliente.vI)||0;
+  const vE=parseFloat(cliente.vE)||0;
+  const vS=parseFloat(cliente.vS)||0;
+  const item=(label,valor)=>(
+    <div>
+      <div style={{fontSize:9,color:'#5a7a9a',fontWeight:700,textTransform:'uppercase',letterSpacing:.3}}>{label}</div>
+      <div style={{fontSize:12,fontWeight:600,color:'#1a3a5c',marginTop:2}}>{valor||'—'}</div>
+    </div>
+  );
+  return(
+    <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'14px 16px',marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',textTransform:'uppercase',display:'flex',alignItems:'center',gap:6}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Histórico de negociação
+        </div>
+        {onAbrirCliente&&(
+          <button onClick={()=>onAbrirCliente(cliente)} title="Ver cadastro completo do cliente"
+            style={{padding:'4px 10px',borderRadius:6,border:'1px solid #90cdf4',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:700,color:'#2b6cb0',display:'flex',alignItems:'center',gap:5}}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            Ver cadastro completo
+          </button>
+        )}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
+        {item('Vendedor',cliente.vendedor&&cliente.vendedor!=='—'?cliente.vendedor:null)}
+        {item('Plano',cliente.plano)}
+        {item('Equipamento',cliente.equipTipo)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:cliente.obs?10:0}}>
+        {item('Implantação',vI>0?`${moeda(vI)} • ${cliente.pagamentoI||'Boleto'} ${cliente.parcelasI>1?cliente.parcelasI+'x':''}`:'—')}
+        {item('Equipamento',vE>0?`${moeda(vE)} • ${cliente.pagamentoE||'Boleto'} ${cliente.parcelasE>1?cliente.parcelasE+'x':''}`:'—')}
+        {item('Sistema (mensal)',vS>0?`${moeda(vS)}/mês`:'—')}
+      </div>
+      {cliente.obs&&(
+        <div>
+          <div style={{fontSize:9,color:'#5a7a9a',fontWeight:700,textTransform:'uppercase',letterSpacing:.3,marginBottom:3}}>Observações</div>
+          <div style={{fontSize:12,color:'#1a3a5c',whiteSpace:'pre-wrap'}}>{cliente.obs}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirCliente}){
   const [subAba,setSubAba]=useState('kanban');
   const [solSel,setSolSel]=useState(null);
   const [novaForm,setNovaForm]=useState(false);
@@ -3263,6 +3312,11 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
           </div>
           {sol.descricao&&<div style={{background:'#f8f9fa',borderRadius:6,padding:'12px',fontSize:13,color:C.text,marginBottom:12,whiteSpace:'pre-wrap'}}>{sol.descricao}</div>}
         </div>
+
+        {sol.clienteId&&(
+          <HistoricoNegociacao cliente={todos.find(c=>c.id===sol.clienteId)} onAbrirCliente={onAbrirCliente}/>
+        )}
+
         <div style={sec}>
           <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>Comentários ({(sol.comentarios||[]).length})</div>
           {(sol.comentarios||[]).map((cm,i)=>(
@@ -3363,6 +3417,11 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser}){
               </select>
             </div>
           </div>
+
+          {form.clienteId&&(
+            <HistoricoNegociacao cliente={todos.find(c=>c.id===form.clienteId)} onAbrirCliente={onAbrirCliente}/>
+          )}
+
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
             <div><label style={lbl}>Categoria</label>
               <select style={fi} value={form.categoria} onChange={e=>upF('categoria',e.target.value)}>
@@ -6761,7 +6820,7 @@ export default function App(){
           />}
 
           {/* SOLICITAÇÕES */}
-          {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile}/>}
+          {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile} onAbrirCliente={c=>setClienteSel(c)}/>}
 
           {/* CLIENTES */}
           {!clienteSel&&page==='clientes'&&(
