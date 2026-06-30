@@ -1279,7 +1279,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento}){
+function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,buscaGlobal}){
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
@@ -1295,9 +1295,20 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   function getImpl(id){return implantacoes[id]||{etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[]};}
   const cardsBase=todos.map(c=>({...c,impl:getImpl(c.id)}));
   const cards=cardsBase.filter(c=>{
-    if(filtroResponsavel==='Todos')return true;
-    if(filtroResponsavel==='Sem_responsavel')return !c.impl.responsavelId;
-    return c.impl.responsavelId===filtroResponsavel;
+    // filtro por responsável
+    if(filtroResponsavel!=='Todos'){
+      if(filtroResponsavel==='Sem_responsavel'&&c.impl.responsavelId)return false;
+      if(filtroResponsavel!=='Sem_responsavel'&&c.impl.responsavelId!==filtroResponsavel)return false;
+    }
+    // busca global por nome ou CNPJ
+    if(buscaGlobal&&buscaGlobal.trim()){
+      const b=buscaGlobal.replace(/[^0-9]/g,'');
+      const nome=(c.nome||'').toLowerCase();
+      const cnpjNum=(c.cnpj||'').replace(/[^0-9]/g,'');
+      const cnpjStr=(c.cnpj||'').toLowerCase();
+      if(!nome.includes(buscaGlobal.toLowerCase())&&!(b&&cnpjNum.includes(b))&&!cnpjStr.includes(buscaGlobal.toLowerCase()))return false;
+    }
+    return true;
   });
   const atrasados=cards.filter(c=>{const p=c.impl.prazo?new Date(c.impl.prazo):null;return p&&p<hoje&&c.impl.etapa!=='processo_finalizado';});
   const doDia=cards.filter(c=>c.impl.prazo===hoje_str&&c.impl.etapa!=='processo_finalizado');
@@ -3486,6 +3497,9 @@ function HistoricoNegociacao({cliente,onAbrirCliente}){
       <div style={{fontSize:12,fontWeight:600,color:'#1a3a5c',marginTop:2}}>{valor||'—'}</div>
     </div>
   );
+  const dtBoleto=cliente.dtBoleto?new Date(cliente.dtBoleto+'T12:00:00').toLocaleDateString('pt-BR'):'—';
+  const temEnvio=cliente.equipRastreio||cliente.equipDataEnvio;
+
   return(
     <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'14px 16px',marginBottom:14}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
@@ -3501,18 +3515,39 @@ function HistoricoNegociacao({cliente,onAbrirCliente}){
           </button>
         )}
       </div>
+
+      {/* Linha 1 — identificação comercial */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
         {item('Vendedor',cliente.vendedor&&cliente.vendedor!=='—'?cliente.vendedor:null)}
         {item('Plano',cliente.plano)}
         {item('Equipamento',cliente.equipTipo)}
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:cliente.obs?10:0}}>
-        {item('Implantação',vI>0?`${moeda(vI)} • ${cliente.pagamentoI||'Boleto'} ${cliente.parcelasI>1?cliente.parcelasI+'x':''}`:'—')}
-        {item('Equipamento',vE>0?`${moeda(vE)} • ${cliente.pagamentoE||'Boleto'} ${cliente.parcelasE>1?cliente.parcelasE+'x':''}`:'—')}
+
+      {/* Linha 2 — valores e formas de pagamento */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10}}>
+        {item('Implantação',vI>0?`${moeda(vI)} • ${cliente.pagamentoI||'Boleto'} ${parseInt(cliente.parcelasI)||1}x`:'—')}
+        {item('Equipamento',vE>0?`${moeda(vE)} • ${cliente.pagamentoE||'Boleto'} ${parseInt(cliente.parcelasE)||1}x`:'—')}
         {item('Sistema (mensal)',vS>0?`${moeda(vS)}/mês`:'—')}
       </div>
+
+      {/* Linha 3 — dados do contrato */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:10,paddingTop:10,borderTop:'1px solid #bee3f8'}}>
+        {item('Data 1º boleto',dtBoleto)}
+        {item('Emitir NF-e',cliente.nfe||'Não')}
+        {item('Funcionários',cliente.func?String(cliente.func):null)}
+      </div>
+
+      {/* Linha 4 — envio do equipamento (só se houver dados) */}
+      {temEnvio&&(
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:10,paddingTop:10,borderTop:'1px solid #bee3f8'}}>
+          {item('Rastreio Sedex',cliente.equipRastreio||null)}
+          {item('Data de envio',cliente.equipDataEnvio?new Date(cliente.equipDataEnvio+'T12:00:00').toLocaleDateString('pt-BR'):null)}
+        </div>
+      )}
+
+      {/* Observações */}
       {cliente.obs&&(
-        <div>
+        <div style={{paddingTop:10,borderTop:'1px solid #bee3f8'}}>
           <div style={{fontSize:9,color:'#5a7a9a',fontWeight:700,textTransform:'uppercase',letterSpacing:.3,marginBottom:3}}>Observações</div>
           <div style={{fontSize:12,color:'#1a3a5c',whiteSpace:'pre-wrap'}}>{cliente.obs}</div>
         </div>
@@ -3521,7 +3556,7 @@ function HistoricoNegociacao({cliente,onAbrirCliente}){
   );
 }
 
-function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirCliente}){
+function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirCliente,buscaGlobal}){
   const [subAba,setSubAba]=useState('kanban');
   const [solSel,setSolSel]=useState(null);
   const [novaForm,setNovaForm]=useState(false);
@@ -3672,8 +3707,21 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
     setDragId(null);setDragOverCol(null);
   }
 
-  const solAtivas=solicitacoes.filter(s=>s.status!=='Resolvida'&&s.status!=='Cancelada');
-  const solResolvidas=solicitacoes.filter(s=>s.status==='Resolvida');
+  function filtrarSolPorBusca(lista){
+    if(!buscaGlobal||!buscaGlobal.trim())return lista;
+    const b=buscaGlobal.toLowerCase();
+    const bNum=buscaGlobal.replace(/[^0-9]/g,'');
+    return lista.filter(s=>{
+      const nome=(s.clienteNome||'').toLowerCase();
+      const titulo=(s.titulo||'').toLowerCase();
+      // busca por nome do cliente vinculado (real) se existir
+      const clienteReal=todos.find(c=>c.id===s.clienteId);
+      const cnpj=(clienteReal?.cnpj||s.cnpj||'').replace(/[^0-9]/g,'');
+      return nome.includes(b)||titulo.includes(b)||(bNum&&cnpj.includes(bNum));
+    });
+  }
+  const solAtivas=filtrarSolPorBusca(solicitacoes.filter(s=>s.status!=='Resolvida'&&s.status!=='Cancelada'));
+  const solResolvidas=filtrarSolPorBusca(solicitacoes.filter(s=>s.status==='Resolvida'));
   const subAbas=[
     {id:'kanban',   l:`Kanban (${solAtivas.length})`},
     {id:'lista',    l:`Lista (${solicitacoes.length})`},
@@ -7149,7 +7197,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
@@ -7281,7 +7329,7 @@ export default function App(){
           />}
 
           {/* SOLICITAÇÕES */}
-          {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile} onAbrirCliente={c=>setClienteSel(c)}/>}
+          {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile} onAbrirCliente={c=>setClienteSel(c)} buscaGlobal={busca}/>}
 
           {/* CLIENTES */}
           {!clienteSel&&page==='clientes'&&(
