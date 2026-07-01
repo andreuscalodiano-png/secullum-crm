@@ -2292,6 +2292,54 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
         </div>
       </div>
 
+      {/* Produtos e Valores */}
+      <div style={{...sec,borderLeft:`4px solid ${C.orange}`,opacity:1}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.orange,textTransform:'uppercase'}}>📦 Produtos e valores</div>
+          {f.status==='Faturado'&&(
+            <span style={{fontSize:11,color:'#fff',background:'#27ae60',padding:'3px 10px',borderRadius:10,fontWeight:700}}>
+              ✅ Faturado — valores bloqueados
+            </span>
+          )}
+        </div>
+        {f.status==='Faturado'&&!editMode&&(
+          <div style={{fontSize:11,color:'#7f8c8d',background:'#f8f9fa',borderRadius:6,padding:'8px 12px',marginBottom:10,display:'flex',alignItems:'center',gap:6}}>
+            <span>🔒</span> Cliente já faturado. Para editar os valores, altere o status primeiro.
+          </div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+          {/* Sistema/mês */}
+          <div>
+            <label style={lbl}>Sistema/mês (R$)</label>
+            {editMode&&f.status!=='Faturado'
+              ?<input style={fi} type="number" step="0.01" min="0" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
+              :<div style={{...fiView,fontWeight:700,color:'#8b5cf6'}}>{moeda(parseValor(f.vS)||0)}</div>
+            }
+          </div>
+          {/* Implantação */}
+          <div>
+            <label style={lbl}>Implantação (R$)</label>
+            {editMode&&f.status!=='Faturado'
+              ?<input style={fi} type="number" step="0.01" min="0" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
+              :<div style={{...fiView,fontWeight:700,color:'#f97316'}}>{moeda(parseValor(f.vI)||0)}</div>
+            }
+          </div>
+          {/* Equipamento */}
+          <div>
+            <label style={lbl}>Equipamento (R$)</label>
+            {editMode&&f.status!=='Faturado'
+              ?<input style={fi} type="number" step="0.01" min="0" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
+              :<div style={{...fiView,fontWeight:700,color:'#06b6d4'}}>{moeda(parseValor(f.vE)||0)}</div>
+            }
+          </div>
+        </div>
+        {/* Total */}
+        <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:8,padding:'8px 12px',background:'#f8f9fa',borderRadius:6}}>
+          <span style={{fontSize:11,color:C.textMuted,fontWeight:600}}>TOTAL DO CONTRATO:</span>
+          <span style={{fontSize:16,fontWeight:700,color:C.blue}}>{moeda((parseValor(f.vS)||0)+(parseValor(f.vI)||0)+(parseValor(f.vE)||0))}</span>
+        </div>
+      </div>
+
       {/* Contrato */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
