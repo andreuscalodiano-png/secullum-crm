@@ -2052,6 +2052,18 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
 }
 // --- DETALHE CLIENTE ----------------------------------------------------------
 // --- CAMPO HELPER (fora de DetalheCliente para evitar perda de foco) ----------
+
+// ─── HISTORICO DO CLIENTE ────────────────────────────────────────────────────
+async function registrarHistorico(clienteId, clienteNome, tipo, descricao, usuario){
+  try{
+    await setDoc(doc(collection(db,'historico_cliente')),{
+      clienteId, clienteNome, tipo, descricao,
+      usuario: usuario || auth.currentUser?.email || '—',
+      data: new Date().toISOString(),
+    });
+  }catch(e){ console.error('Erro ao registrar histórico:', e); }
+}
+
 function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
   type=type||'text';
   const upperTypes=['text'];
@@ -2082,7 +2094,7 @@ function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
   );
 }
 
-function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfil}){
+function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfil,usuarios}){
   const [editMode,setEditMode]=useState(false);
   const [saved,setSaved]=useState(false);
   const [modalFaturamento,setModalFaturamento]=useState(false);
@@ -2438,9 +2450,22 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
           const precisaFaturar=!c.asaas_id||(temImplBoleto||temEquipBoleto||temSistema);
           if(!precisaFaturar)return null;
           return(
-            <button onClick={()=>setModalFaturamento(true)} style={{width:'100%',marginTop:12,padding:'12px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
-              <span>Gerar Faturamento no Asaas</span>
-              {c.asaas_id&&<span style={{fontSize:10,fontWeight:400,opacity:.85}}>(processar pendencias)</span>}
+            <button onClick={()=>setModalFaturamento(true)}
+              style={{width:'100%',marginTop:12,padding:'12px',borderRadius:7,border:'none',
+                background:ASAAS_HABILITADO?'#27ae60':'#f5a623',
+                color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,
+                display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+              {ASAAS_HABILITADO?(
+                <>
+                  <span>💳 Gerar Faturamento no Asaas</span>
+                  {c.asaas_id&&<span style={{fontSize:10,fontWeight:400,opacity:.85}}>(processar pendências)</span>}
+                </>
+              ):(
+                <>
+                  <span>📋 Gerar Faturamento Manual</span>
+                  <span style={{fontSize:10,fontWeight:400,opacity:.85}}>(Asaas desativado)</span>
+                </>
+              )}
             </button>
           );
         })()}
@@ -2460,53 +2485,75 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
 
       {/* Modais */}
       {modalFaturamento&&(
-        <ModalGerarFaturamento
-          cliente={f}
-          onConfirmar={async(checks)=>{
-            try{
-              // 1. Criar/buscar cliente no Asaas
-              const asaasCliente=await asaasCriarOuBuscarCliente(f);
-              const asaasId=asaasCliente.id;
-              const hoje=new Date();
-              const dueDatePadrao=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()+3).padStart(2,'0')}`;
-
-              // 2. Cobrança implantação boleto
-              if(checks.impl&&f.vI>0){
-                await asaasCriarCobranca(asaasId,f.vI,f.parcelasI||1,'BOLETO',dueDatePadrao,'Implantação Secullum');
-              }
-              // 3. Cobrança equipamento boleto
-              if(checks.equip&&f.vE>0){
-                await asaasCriarCobranca(asaasId,f.vE,f.parcelasE||1,'BOLETO',dueDatePadrao,'Equipamento Secullum');
-              }
-              // 4. Assinatura mensal sistema
-              if(checks.sistema&&f.vS>0){
-                await asaasCriarAssinatura(asaasId,f.vS,f.dtBoleto);
-              }
-              // 5. Salvar asaas_id, status por cobrança e status geral correto
-              const dadosUpdate={...c,asaas_id:asaasId};
-              // Boleto implantação gerado → BOLETO_EMITIDO (aguarda pagamento)
-              if(checks.impl&&f.vI>0) dadosUpdate.asaas_status_impl='BOLETO_EMITIDO';
-              // Boleto equipamento gerado → BOLETO_EMITIDO
-              if(checks.equip&&f.vE>0) dadosUpdate.asaas_status_equip='BOLETO_EMITIDO';
-              // Sistema gerado → PENDING (recorrência ativa aguardando 1º boleto)
-              if(checks.sistema&&f.vS>0) dadosUpdate.asaas_status_sistema='PENDING';
-              // Status geral do cliente
-              dadosUpdate.status='Boletos emitidos';
-              await onUpdate(dadosUpdate);
-              // 6. Histórico
-              await setDoc(doc(collection(db,'historico_cliente')),{
-                clienteId:c.id,clienteNome:c.nome,tipo:'faturamento_gerado',
-                descricao:`Faturamento gerado no Asaas. ID: ${asaasId}. Impl: ${checks.impl}, Equip: ${checks.equip}, Sistema: ${checks.sistema}`,
-                usuario:auth.currentUser?.email||'—',data:new Date().toISOString(),
-              });
-              setModalFaturamento(false);
-              alert('✅ Faturamento gerado com sucesso no Asaas!');
-            }catch(err){
-              alert('❌ Erro ao gerar faturamento: '+err.message);
-            }
-          }}
-          onCancelar={()=>setModalFaturamento(false)}
-        />
+        ASAAS_HABILITADO
+        ? <ModalGerarFaturamento
+            cliente={f}
+            onConfirmar={async(checks)=>{
+              try{
+                // 1. Criar/buscar cliente no Asaas
+                const asaasCliente=await asaasCriarOuBuscarCliente(f);
+                const asaasId=asaasCliente.id;
+                const hoje=new Date();
+                const dueDatePadrao=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()+3).padStart(2,'0')}`;
+                // Cobranças
+                if(checks.impl&&f.vI>0) await asaasCriarCobranca(asaasId,f.vI,f.parcelasI||1,'BOLETO',dueDatePadrao,'Implantação Secullum');
+                if(checks.equip&&f.vE>0) await asaasCriarCobranca(asaasId,f.vE,f.parcelasE||1,'BOLETO',dueDatePadrao,'Equipamento Secullum');
+                if(checks.sistema&&f.vS>0) await asaasCriarAssinatura(asaasId,f.vS,f.dtBoleto);
+                // Atualizar cliente
+                const dadosUpdate={...c,asaas_id:asaasId};
+                if(checks.impl&&f.vI>0) dadosUpdate.asaas_status_impl='BOLETO_EMITIDO';
+                if(checks.equip&&f.vE>0) dadosUpdate.asaas_status_equip='BOLETO_EMITIDO';
+                if(checks.sistema&&f.vS>0) dadosUpdate.asaas_status_sistema='PENDING';
+                dadosUpdate.status='Boletos emitidos';
+                await onUpdate(dadosUpdate);
+                await registrarHistorico(c.id, c.nome, 'faturamento_gerado',
+                  `Faturamento gerado no Asaas. ID: ${asaasId}. Impl: ${checks.impl}, Equip: ${checks.equip}, Sistema: ${checks.sistema}`);
+                setModalFaturamento(false);
+                alert('✅ Faturamento gerado com sucesso no Asaas!');
+              }catch(err){ alert('❌ Erro ao gerar faturamento: '+err.message); }
+            }}
+            onCancelar={()=>setModalFaturamento(false)}
+          />
+        : <ModalFaturamentoManual
+            cliente={f}
+            usuarios={usuarios}
+            onConfirmar={async()=>{
+              try{
+                // Achar primeiro usuário financeiro
+                const financeiro=(usuarios||[]).find(u=>u.perfil==='financeiro'&&(u.status==='ativo'||!u.status));
+                const partes=[];
+                if(parseFloat(f.vI)>0) partes.push(`Implantação: ${moeda(parseFloat(f.vI))} (${f.pagamentoI||'Boleto'} ${f.parcelasI||1}x)`);
+                if(parseFloat(f.vE)>0) partes.push(`Equipamento: ${moeda(parseFloat(f.vE))} (${f.pagamentoE||'Boleto'} ${f.parcelasE||1}x)`);
+                if(parseFloat(f.vS)>0) partes.push(`Sistema/mês: ${moeda(parseFloat(f.vS))}`);
+                const descricao=`Cliente: ${f.nome}\nCNPJ: ${f.cnpj||'—'}\nPlano: ${f.plano||'—'}\nContato: ${f.contato||'—'}\nEmail: ${f.email||'—'}\nTelefone: ${f.tel||'—'}\nVendedor: ${f.vendedor||'—'}\n\nCobranças a cadastrar:\n${partes.join('\n')}\n\nForma pagamento Sistema: ${f.pagamento||'Boleto'}\nVencimento: ${f.dtBoleto?new Date(f.dtBoleto+'T12:00:00').toLocaleDateString('pt-BR'):'—'}`;
+                // Criar solicitação
+                const solId='sol_'+Date.now();
+                await setDoc(doc(db,'solicitacoes',solId),{
+                  id:solId,
+                  titulo:`CADASTRAR MANUALMENTE — ${f.nome.toUpperCase()}`,
+                  clienteNome:f.nome,
+                  categoria:'Financeiro',
+                  prioridade:'Alta',
+                  descricao,
+                  responsavelId:financeiro?.id||'',
+                  responsavelNome:financeiro?.nome||financeiro?.email||'',
+                  status:'Aberta',
+                  criadoPor:auth.currentUser?.email||'—',
+                  criadoPorId:auth.currentUser?.uid||'',
+                  clienteId:c.id,
+                  criadoEm:new Date().toISOString(),
+                  comentarios:[],
+                  _faturamentoManual:true,
+                });
+                // Histórico do cliente
+                await registrarHistorico(c.id, c.nome, 'faturamento_manual_solicitado',
+                  `Faturamento manual solicitado. Responsável: ${financeiro?.nome||financeiro?.email||'—'}. Aguardando processamento pelo financeiro.`);
+                setModalFaturamento(false);
+                alert('✅ Solicitação de faturamento manual criada! O financeiro receberá a tarefa em Solicitações.');
+              }catch(err){ alert('❌ Erro: '+err.message); }
+            }}
+            onCancelar={()=>setModalFaturamento(false)}
+          />
       )}
       {modalAlteracao&&(
         <ModalConfirmacaoFinanceira
@@ -2517,15 +2564,8 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
               await onUpdate({...c,asaas_status:'CANCELED',status:'Cancelado'});
             }
             // Registra histórico
-            await setDoc(doc(collection(db,'historico_cliente')),{
-              clienteId:c.id,clienteNome:c.nome,
-              tipo:modalAlteracao,
-              descricao:modalAlteracao==='cancelamento'?'Assinatura cancelada no Asaas':'Dados financeiros alterados',
-              solicitadoPor:quem,
-              motivo,
-              usuario:auth.currentUser?.email||'—',
-              data:new Date().toISOString(),
-            });
+            await registrarHistorico(c.id, c.nome, modalAlteracao,
+              (modalAlteracao==='cancelamento'?'Assinatura cancelada no Asaas':'Dados financeiros alterados')+`. Solicitado por: ${quem}. Motivo: ${motivo}`);
             setModalAlteracao(null);
           }}
           onCancelar={()=>setModalAlteracao(null)}
@@ -2543,6 +2583,15 @@ function UsuariosLista({usuarios,currentUser}){
   const [confirmRevogar,setConfirmRevogar]=useState(null); // usuario a revogar
 
   const ehOProprio=uid=>uid===currentUser?.id||uid===currentUser?.uid;
+
+  async function salvarNome(u){
+    if(!novoNome.trim())return;
+    const nome=novoNome.trim().toUpperCase();
+    await setDoc(doc(db,'usuarios',u.id),{nome},{merge:true});
+    setEditandoNome(null);
+    setSavedNome(u.id);
+    setTimeout(()=>setSavedNome(null),2000);
+  }
 
   async function salvarPerfil(u){
     if(!novoPerfil||novoPerfil===u.perfil){setEditandoPerfil(null);return;}
@@ -2627,9 +2676,30 @@ function UsuariosLista({usuarios,currentUser}){
           </div>
           {/* Info */}
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',display:'flex',alignItems:'center',gap:6}}>
-              {u.nome}
-              {ehOProprio(u.id)&&<span style={{fontSize:9,background:'#ebf8ff',color:'#2b6cb0',padding:'1px 5px',borderRadius:4,fontWeight:700}}>Você</span>}
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+              {editandoNome===u.id?(
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <input
+                    autoFocus
+                    value={novoNome}
+                    onChange={e=>setNovoNome(e.target.value.toUpperCase())}
+                    onKeyDown={e=>{if(e.key==='Enter')salvarNome(u);if(e.key==='Escape')setEditandoNome(null);}}
+                    style={{padding:'4px 8px',borderRadius:5,border:'2px solid #f5a623',fontSize:13,fontWeight:700,color:'#2c3e50',background:'#fff',width:180,textTransform:'uppercase'}}
+                  />
+                  <button onClick={()=>salvarNome(u)} style={{padding:'4px 10px',borderRadius:5,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>✓</button>
+                  <button onClick={()=>setEditandoNome(null)} style={{padding:'4px 8px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>✕</button>
+                </div>
+              ):(
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <span>{savedNome===u.id?'✓ Salvo!':u.nome}</span>
+                  {ehOProprio(u.id)&&<span style={{fontSize:9,background:'#ebf8ff',color:'#2b6cb0',padding:'1px 5px',borderRadius:4,fontWeight:700}}>Você</span>}
+                  <button onClick={()=>{setEditandoNome(u.id);setNovoNome(u.nome||'');setEditandoPerfil(null);}}
+                    title="Editar nome"
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#f5a623',fontSize:12,padding:'0 2px',display:'flex',alignItems:'center'}}>
+                    ✏️
+                  </button>
+                </div>
+              )}
             </div>
             <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
             {u.status==='pendente'&&<div style={{fontSize:9,color:C.orange,fontWeight:700,marginTop:2}}>⏳ Convite pendente — aguardando primeiro acesso</div>}
@@ -3711,6 +3781,17 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
     }
     await setDoc(doc(db,'solicitacoes',id),{status:novoStatus},{merge:true});
     if(solSel?.id===id)setSolSel(s=>({...s,status:novoStatus}));
+    // Se for solicitação de faturamento manual e foi resolvida → faturar o cliente
+    if(novoStatus==='Resolvida'){
+      const sol=solicitacoes.find(s=>s.id===id);
+      if(sol?._faturamentoManual&&sol?.clienteId){
+        try{
+          await setDoc(doc(db,'clientes',sol.clienteId),{status:'Faturado'},{merge:true});
+          await registrarHistorico(sol.clienteId, sol.clienteNome, 'faturamento_manual_concluido',
+            `Faturamento manual concluído pelo financeiro. Solicitação resolvida por ${auth.currentUser?.email||'—'}.`);
+        }catch(e){console.error('Erro ao atualizar cliente após faturamento manual:',e);}
+      }
+    }
   }
 
   async function atualizarResponsavel(id,novoRespId){
@@ -5773,6 +5854,108 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
 }
 
 // Modal Gerar Faturamento (financeiro)
+
+// ─── MODAL FATURAMENTO MANUAL ────────────────────────────────────────────────
+function ModalFaturamentoManual({cliente,usuarios,onConfirmar,onCancelar}){
+  const [loading,setLoading]=useState(false);
+  const financeiro=(usuarios||[]).find(u=>u.perfil==='financeiro'&&(u.status==='ativo'||!u.status));
+  const total=(parseFloat(cliente.vI)||0)+(parseFloat(cliente.vE)||0)+(parseFloat(cliente.vS)||0);
+
+  async function confirmar(){
+    setLoading(true);
+    await onConfirmar();
+    setLoading(false);
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px',maxWidth:520,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:14,borderBottom:'1px solid #e8eaed'}}>
+          <div style={{width:40,height:40,borderRadius:10,background:'#fff8ee',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,flexShrink:0}}>📋</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Gerar Faturamento Manual</div>
+            <div style={{fontSize:11,color:'#f5a623',fontWeight:600}}>Asaas desativado — será criada uma tarefa para o financeiro</div>
+          </div>
+        </div>
+
+        {/* Dados do cliente */}
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:8}}>{cliente.nome}</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+            {[
+              ['CNPJ',cliente.cnpj],
+              ['Plano',cliente.plano],
+              ['Contato',cliente.contato],
+              ['Email',cliente.email],
+              ['Telefone',cliente.tel],
+              ['Vendedor',cliente.vendedor],
+            ].map(([l,v])=>v&&(
+              <div key={l} style={{fontSize:11}}>
+                <span style={{color:'#7f8c8d',fontWeight:700}}>{l}: </span>
+                <span style={{color:'#2c3e50'}}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Cobranças */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:8}}>Cobranças a cadastrar manualmente</div>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            {parseFloat(cliente.vI)>0&&(
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:6,background:'#fff8ee',border:'1px solid #fde68a'}}>
+                <span style={{fontSize:12,fontWeight:600,color:'#b45309'}}>🔧 Implantação</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#b45309'}}>{moeda(parseFloat(cliente.vI))} • {cliente.pagamentoI||'Boleto'} {cliente.parcelasI||1}x</span>
+              </div>
+            )}
+            {parseFloat(cliente.vE)>0&&(
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:6,background:'#f0fff4',border:'1px solid #9ae6b4'}}>
+                <span style={{fontSize:12,fontWeight:600,color:'#276749'}}>💻 Equipamento</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#276749'}}>{moeda(parseFloat(cliente.vE))} • {cliente.pagamentoE||'Boleto'} {cliente.parcelasE||1}x</span>
+              </div>
+            )}
+            {parseFloat(cliente.vS)>0&&(
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:6,background:'#ebf8ff',border:'1px solid #bee3f8'}}>
+                <span style={{fontSize:12,fontWeight:600,color:'#2b6cb0'}}>☁️ Sistema/mês</span>
+                <span style={{fontSize:12,fontWeight:700,color:'#2b6cb0'}}>{moeda(parseFloat(cliente.vS))}/mês</span>
+              </div>
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',borderRadius:6,background:'#f5f6fa',borderTop:'2px solid #e8eaed',marginTop:2}}>
+              <span style={{fontSize:12,fontWeight:700,color:'#4a4a4a'}}>TOTAL</span>
+              <span style={{fontSize:14,fontWeight:700,color:'#27ae60'}}>{moeda(total)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Responsável */}
+        <div style={{background:'#fff8ee',borderRadius:8,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10,border:'1px solid #fde68a'}}>
+          <span style={{fontSize:18}}>👤</span>
+          <div>
+            <div style={{fontSize:11,color:'#b45309',fontWeight:700,textTransform:'uppercase'}}>Tarefa será atribuída a</div>
+            <div style={{fontSize:13,fontWeight:700,color:'#2c3e50'}}>{financeiro?`${financeiro.nome||financeiro.email} (Financeiro)`:'Sem responsável cadastrado'}</div>
+          </div>
+        </div>
+
+        {/* Aviso */}
+        <div style={{background:'#f8f9fa',borderRadius:6,padding:'8px 12px',fontSize:11,color:'#7f8c8d',marginBottom:16,lineHeight:1.5}}>
+          ℹ️ Uma solicitação <strong>CADASTRAR MANUALMENTE — {cliente.nome}</strong> será criada em <strong>Solicitações → Financeiro</strong>. O status do cliente só muda para <strong>Faturado</strong> quando a tarefa for concluída.
+        </div>
+
+        {/* Botões */}
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onCancelar} style={{flex:1,padding:'11px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d',fontWeight:600}}>
+            Cancelar
+          </button>
+          <button onClick={confirmar} disabled={loading} style={{flex:2,padding:'11px',borderRadius:7,border:'none',background:loading?'#dde1e7':'#f5a623',color:'#fff',fontWeight:700,cursor:loading?'default':'pointer',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            {loading?'Criando solicitação...':'📋 Criar solicitação de faturamento'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModalGerarFaturamento({cliente,onConfirmar,onCancelar}){
   // Determina o que ainda está pendente de processar
   const jaOkImpl=['BOLETO_EMITIDO','PENDING','RECEIVED','CONFIRMED','OVERDUE','REFUNDED'];
@@ -7242,7 +7425,7 @@ export default function App(){
           />}
 
           {/* DETALHE */}
-          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil}/>}
+          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil} usuarios={usuarios}/>}
 
           {/* IMPLANTAÇÃO */}
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca}/>}
