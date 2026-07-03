@@ -2585,10 +2585,13 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
 
 // --- CONFIGURAÇÕES ------------------------------------------------------------
 function UsuariosLista({usuarios,currentUser}){
-  const [editandoPerfil,setEditandoPerfil]=useState(null); // uid do usuário sendo editado
+  const [editandoPerfil,setEditandoPerfil]=useState(null);
   const [novoPerfil,setNovoPerfil]=useState('');
   const [loadingId,setLoadingId]=useState('');
-  const [confirmRevogar,setConfirmRevogar]=useState(null); // usuario a revogar
+  const [confirmRevogar,setConfirmRevogar]=useState(null);
+  const [editandoNome,setEditandoNome]=useState(null);
+  const [novoNome,setNovoNome]=useState('');
+  const [savedNome,setSavedNome]=useState(null);
 
   const ehOProprio=uid=>uid===currentUser?.id||uid===currentUser?.uid;
 
