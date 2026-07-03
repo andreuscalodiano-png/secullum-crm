@@ -3891,7 +3891,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
             </select>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
-            {[['Nº Banco',sol.nrBanco],['Cliente',sol.clienteNome],['Categoria',sol.categoria],['Prioridade',sol.prioridade],['Aberta por', sol.criadoPor || (usuarios.find(u=>u.id===sol.criadoPorId)?.nome) || sol.criadoPorId || '—'],['Data',sol.criadoEm?new Date(sol.criadoEm).toLocaleDateString('pt-BR'):'']].map(([l,v])=>(
+            {[['Nº Banco',sol.nrBanco],['Cliente',sol.clienteNome],['Categoria',sol.categoria],['Prioridade',sol.prioridade],['Aberta por', (()=>{const n=sol.criadoPor;const uid=sol.criadoPorId;const eUid=n&&n.length>20&&!n.includes(' ')&&!n.includes('@');const u=(usuarios||[]).find(u=>u.id===uid||u.id===n);return(!n||eUid)?(u?.nome||u?.email||'—'):n;})()],['Data',sol.criadoEm?new Date(sol.criadoEm).toLocaleDateString('pt-BR'):'']].map(([l,v])=>(
               <div key={l} style={{background:'#f8f9fa',borderRadius:5,padding:'8px 10px'}}>
                 <div style={{fontSize:9,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{l}</div>
                 <div style={{fontSize:12,fontWeight:600,color:C.text,marginTop:2}}>{v||'—'}</div>
