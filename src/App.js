@@ -1849,6 +1849,9 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
       renovacao:f.renovacao,obs:f.obs,
       despachado:f.despachado,equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio,
       pagamentoI:f.pagamentoI,parcelasI:f.parcelasI,pagamentoE:f.pagamentoE,parcelasE:f.parcelasE,
+      cadastradoPor:currentUser?.nome||currentUser?.email||'—',
+      cadastradoPorId:currentUser?.id||currentUser?.uid||'',
+      criadoEm:new Date().toISOString(),
     });
   }
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -2193,11 +2196,16 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
       equipPago:f.equipPago,
       equipRastreio:(f.equipRastreio||'').trim(),
       equipDataEnvio:f.equipDataEnvio||'',
+      ultimaEdicaoPor:auth.currentUser?.email||'—',
+      ultimaEdicaoEm:new Date().toISOString(),
     };
     // Remove campos undefined — Firestore rejeita com erro
     const updLimpo=Object.fromEntries(Object.entries(upd).filter(([,v])=>v!==undefined));
     try{
       await onUpdate(updLimpo);
+      // Registrar histórico da edição
+      await registrarHistorico(c.id,c.nome,'edicao_cadastro',
+        `Cadastro editado por ${auth.currentUser?.email||'—'}.`);
       // Sincroniza estado local com dados salvos
       setF(prev=>({...prev,...updLimpo}));
       setSaved(true);
@@ -3764,7 +3772,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
       responsavelNome:usuarios.find(u=>u.id===form.responsavelId)?.nome||'',
       status:'Aberta',
       criadoPor:currentUser?.nome||currentUser?.email||'',
-      criadoPorId:currentUser?.id||'',
+      criadoPorId:currentUser?.id||currentUser?.uid||auth.currentUser?.uid||'',
       criadoEm:new Date().toISOString(),
       comentarios:[],
     };
@@ -3806,7 +3814,8 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
 
   async function adicionarComentario(sol){
     if(!comentario.trim())return;
-    const novo={texto:comentario.trim().toUpperCase(),autor:currentUser?.nome||currentUser?.email||'',data:new Date().toISOString()};
+    const nomeAutor=currentUser?.nome||(currentUser?.email||'').split('@')[0]||'—';
+    const novo={texto:comentario.trim().toUpperCase(),autor:nomeAutor,autorEmail:currentUser?.email||'',data:new Date().toISOString()};
     const lista=[...(sol.comentarios||[]),novo];
     await setDoc(doc(db,'solicitacoes',sol.id),{comentarios:lista},{merge:true});
     setSolSel(s=>({...s,comentarios:lista}));
@@ -3879,7 +3888,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
             </select>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
-            {[['Nº Banco',sol.nrBanco],['Cliente',sol.clienteNome],['Categoria',sol.categoria],['Prioridade',sol.prioridade],['Aberta por',sol.criadoPor],['Data',sol.criadoEm?new Date(sol.criadoEm).toLocaleDateString('pt-BR'):'']].map(([l,v])=>(
+            {[['Nº Banco',sol.nrBanco],['Cliente',sol.clienteNome],['Categoria',sol.categoria],['Prioridade',sol.prioridade],['Aberta por', sol.criadoPor || (usuarios.find(u=>u.id===sol.criadoPorId)?.nome) || sol.criadoPorId || '—'],['Data',sol.criadoEm?new Date(sol.criadoEm).toLocaleDateString('pt-BR'):'']].map(([l,v])=>(
               <div key={l} style={{background:'#f8f9fa',borderRadius:5,padding:'8px 10px'}}>
                 <div style={{fontSize:9,color:C.textMuted,fontWeight:700,textTransform:'uppercase'}}>{l}</div>
                 <div style={{fontSize:12,fontWeight:600,color:C.text,marginTop:2}}>{v||'—'}</div>
