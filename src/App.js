@@ -408,20 +408,7 @@ function CardMeta({titulo,realizado,meta,onSetMeta,cor,icone}){
           {frase}
         </div>
 
-        {/* Badge percentual grande */}
-        {meta>0&&(
-          <div style={{
-            position:'absolute',top:16,right:editando?180:80,
-            width:44,height:44,borderRadius:'50%',
-            background:atingiu?'rgba(82,196,26,.25)':'rgba(255,255,255,.08)',
-            border:`2px solid ${atingiu?'#52c41a':corBarra}44`,
-            display:'flex',alignItems:'center',justifyContent:'center',
-            flexDirection:'column',
-          }}>
-            <span style={{fontSize:13,fontWeight:700,color:atingiu?'#52c41a':corBarra,lineHeight:1}}>{pct}</span>
-            <span style={{fontSize:8,color:'rgba(255,255,255,.4)',lineHeight:1}}>%</span>
-          </div>
-        )}
+
       </div>
     </div>
   );
