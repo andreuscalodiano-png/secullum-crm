@@ -949,6 +949,119 @@ const CLIENTES_BASE = CSV_BASE.trim().split('\n').filter(l=>l.replace(/;/g,'').t
 }).filter(c=>c.nome);
 
 
+// --- ETAPAS KANBAN DEFAULT ---------------------------------------------------
+const ETAPAS_DEFAULT=[
+  {id:'venda_fechada',       label:'Venda Fechada',          color:'#3498db',ordem:0,padrao:true, notifEmail:false,ativo:true},
+  {id:'aguardando_retorno',  label:'Aguardando Retorno',     color:'#e67e22',ordem:1,padrao:false,notifEmail:false,ativo:true},
+  {id:'em_configuracao',     label:'Em Configuração',        color:'#9b59b6',ordem:2,padrao:false,notifEmail:false,ativo:true},
+  {id:'envio_correios',      label:'Envio Correios',         color:'#1abc9c',ordem:3,padrao:false,notifEmail:false,ativo:true},
+  {id:'implantacao_cliente', label:'Implantação no Cliente', color:'#e74c3c',ordem:4,padrao:false,notifEmail:false,ativo:true},
+  {id:'implantacao_final',   label:'Implantação Finalizada', color:'#27ae60',ordem:5,padrao:false,notifEmail:false,ativo:true},
+  {id:'agendado_treinamento',label:'Agendado Treinamento',  color:'#f39c12',ordem:6,padrao:false,notifEmail:false,ativo:true},
+  {id:'processo_finalizado', label:'Processo Finalizado',   color:'#2c3e50',ordem:7,padrao:false,notifEmail:false,ativo:true},
+];
+
+// --- CONFIG KANBAN IMPLANTAÇÃO -----------------------------------------------
+function ConfigKanban(){
+  const [etapas,setEtapas]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [saved,setSaved]=useState(false);
+  const [dragId,setDragId]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const [novaEtapa,setNovaEtapa]=useState({label:'',color:'#3498db'});
+  const [adicionando,setAdicionando]=useState(false);
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'config_kanban'),snap=>{
+      if(snap.empty){setEtapas(ETAPAS_DEFAULT.map(e=>({...e})));}
+      else{const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setEtapas([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));}
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvarTudo(){
+    const batch=etapas.map((e,i)=>setDoc(doc(db,'config_kanban',e.id||('etapa_'+Date.now()+'_'+i)),{...e,ordem:i},{merge:true}));
+    await Promise.all(batch);
+    setSaved(true);setTimeout(()=>setSaved(false),2500);
+  }
+  async function adicionarEtapa(){
+    if(!novaEtapa.label.trim())return;
+    const id='etapa_'+Date.now();
+    await setDoc(doc(db,'config_kanban',id),{id,label:novaEtapa.label.trim().toUpperCase(),color:novaEtapa.color,ordem:etapas.length,padrao:false,notifEmail:false,ativo:true});
+    setNovaEtapa({label:'',color:'#3498db'});setAdicionando(false);
+  }
+  async function removerEtapa(id){
+    if(!window.confirm('Remover esta etapa?'))return;
+    await deleteDoc(doc(db,'config_kanban',id));
+  }
+  function upEtapa(id,k,v){setEtapas(es=>es.map(e=>e.id===id?{...e,[k]:v}:e));}
+  function setPadrao(id){setEtapas(es=>es.map(e=>({...e,padrao:e.id===id})));}
+  function onDragStart(id){setDragId(id);}
+  function onDragOver(e,id){e.preventDefault();setDragOver(id);}
+  function onDrop(targetId){
+    if(!dragId||dragId===targetId)return;
+    const arr=[...etapas];
+    const fi2=arr.findIndex(e=>e.id===dragId),ti=arr.findIndex(e=>e.id===targetId);
+    const [m]=arr.splice(fi2,1);arr.splice(ti,0,m);
+    setEtapas(arr.map((e,i)=>({...e,ordem:i})));
+    setDragId(null);setDragOver(null);
+  }
+
+  if(carregando)return<div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#9b59b6',marginBottom:4,textTransform:'uppercase'}}>🗂️ Etapas do Kanban de Implantação</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12}}>Arraste para reordenar. <strong>Padrão</strong> = onde novos clientes entram. <strong>📧</strong> = notifica por email ao mover para esta etapa.</div>
+      {etapas.map((e,idx)=>(
+        <div key={e.id} draggable onDragStart={()=>onDragStart(e.id)} onDragOver={ev=>onDragOver(ev,e.id)} onDrop={()=>onDrop(e.id)} onDragEnd={()=>{setDragId(null);setDragOver(null);}}
+          style={{display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:7,marginBottom:6,cursor:'grab',background:dragOver===e.id?'#ebf5fb':(e.ativo?'#f8f9fa':'#f0f0f0'),border:dragOver===e.id?'1.5px dashed #3498db':'1.5px solid #e8eaed',opacity:e.ativo?1:.55,transition:'all .15s'}}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#aaa"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>
+          <div style={{width:20,height:20,borderRadius:'50%',background:'#e8eaed',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'#7f8c8d',flexShrink:0}}>{idx+1}</div>
+          <input type="color" value={e.color} onChange={ev=>upEtapa(e.id,'color',ev.target.value)} style={{width:28,height:28,borderRadius:5,border:'1px solid #dde1e7',cursor:'pointer',padding:2,flexShrink:0}}/>
+          <div style={{width:3,height:28,borderRadius:2,background:e.color,flexShrink:0}}/>
+          <input value={e.label} onChange={ev=>upEtapa(e.id,'label',ev.target.value.toUpperCase())} style={{...fi,flex:1,fontWeight:600,fontSize:12,textTransform:'uppercase'}}/>
+          <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',flexShrink:0,fontSize:11,color:'#7f8c8d'}}>
+            <input type="radio" name="etapa_padrao" checked={!!e.padrao} onChange={()=>setPadrao(e.id)} style={{cursor:'pointer'}}/>
+            Padrão
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',flexShrink:0,fontSize:11}}>
+            <div onClick={()=>upEtapa(e.id,'notifEmail',!e.notifEmail)} style={{width:32,height:18,borderRadius:9,background:e.notifEmail?'#27ae60':'#dde1e7',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+              <div style={{position:'absolute',top:2,left:e.notifEmail?14:2,width:14,height:14,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 2px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+            </div>
+            <span style={{color:e.notifEmail?'#27ae60':'#7f8c8d'}}>📧</span>
+          </label>
+          <label style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',flexShrink:0,fontSize:11,color:'#7f8c8d'}}>
+            <div onClick={()=>upEtapa(e.id,'ativo',!e.ativo)} style={{width:32,height:18,borderRadius:9,background:e.ativo?'#3498db':'#dde1e7',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+              <div style={{position:'absolute',top:2,left:e.ativo?14:2,width:14,height:14,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 2px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+            </div>
+            Ativo
+          </label>
+          <button onClick={()=>removerEtapa(e.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+        </div>
+      ))}
+      {adicionando?(
+        <div style={{background:'#f0f7ff',borderRadius:7,padding:'10px 12px',border:'1px dashed #bee3f8',marginBottom:8,display:'flex',gap:8,alignItems:'center'}}>
+          <input type="color" value={novaEtapa.color} onChange={e=>setNovaEtapa(x=>({...x,color:e.target.value}))} style={{width:30,height:30,borderRadius:5,border:'1px solid #dde1e7',cursor:'pointer',padding:2}}/>
+          <input value={novaEtapa.label} onChange={e=>setNovaEtapa(x=>({...x,label:e.target.value.toUpperCase()}))} placeholder="NOME DA ETAPA" onKeyDown={e=>e.key==='Enter'&&adicionarEtapa()} style={{...fi,flex:1,textTransform:'uppercase'}}/>
+          <button onClick={adicionarEtapa} style={{padding:'7px 14px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>+ Adicionar</button>
+          <button onClick={()=>setAdicionando(false)} style={{padding:'7px 10px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>✕</button>
+        </div>
+      ):(
+        <button onClick={()=>setAdicionando(true)} style={{padding:'7px 14px',borderRadius:6,border:'1.5px dashed #dde1e7',background:'transparent',cursor:'pointer',fontSize:12,color:'#7f8c8d',marginBottom:8,fontWeight:600}}>+ Nova etapa</button>
+      )}
+      <div style={{display:'flex',gap:10,alignItems:'center',marginTop:4}}>
+        <button onClick={salvarTudo} style={{padding:'9px 20px',borderRadius:7,border:'none',background:saved?'#27ae60':'#9b59b6',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          {saved?'✓ Salvo!':'💾 Salvar configurações'}
+        </button>
+        {saved&&<span style={{fontSize:11,color:'#27ae60',fontWeight:600}}>Recarregue o Kanban para ver as mudanças.</span>}
+      </div>
+    </div>
+  );
+}
+
 // --- LOGOS SVG ----------------------------------------------------------------
 const LOGO_SIDEBAR_SVG=(
   <svg width="140" height="28" viewBox="0 0 140 28" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1279,7 +1392,8 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,buscaGlobal}){
+function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,buscaGlobal,etapasConfig}){
+  const ETAPAS_USE=(etapasConfig||ETAPAS_DEFAULT).filter(e=>e.ativo!==false);
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
   const [filtroEtapa,setFiltroEtapa]=useState('Todos');
@@ -1348,7 +1462,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
             </select>
             <select value={filtroEtapa} onChange={e=>setFiltroEtapa(e.target.value)} style={{...fi,width:'auto',padding:'6px 10px'}}>
               <option value="Todos">Todas etapas</option>
-              {ETAPAS.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
+              {ETAPAS_USE.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
             </select>
             <div style={{fontSize:10,color:'#7f8c8d'}}>← arraste para mover →</div>
           </>
@@ -1358,7 +1472,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
       {subAba==='kanban'&&(
         <div style={{overflowX:'auto',overflowY:'hidden',paddingBottom:10}}>
           <div style={{display:'flex',gap:10,minWidth:'max-content',alignItems:'flex-start'}}>
-            {ETAPAS.filter(e=>filtroEtapa==='Todos'||e.id===filtroEtapa).map(etapa=>{
+            {ETAPAS_USE.filter(e=>filtroEtapa==='Todos'||e.id===filtroEtapa).map(etapa=>{
               const cols=cards.filter(c=>c.impl.etapa===etapa.id);
               const isOver=dragOver===etapa.id;
               return(
@@ -1451,7 +1565,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
           <div>
             {lista.length===0&&<div style={{background:'#fff',borderRadius:8,padding:'30px',textAlign:'center',color:'#7f8c8d',fontSize:13}}>Nenhum item encontrado.</div>}
             {lista.map(c=>{
-              const etapa=ETAPAS.find(e=>e.id===c.impl.etapa);
+              const etapa=ETAPAS_USE.find(e=>e.id===c.impl.etapa);
               return(
                 <div key={c.id} onClick={()=>setClienteKanban(c)} style={{background:'#fff',borderRadius:8,padding:'12px 16px',marginBottom:8,cursor:'pointer',boxShadow:'0 1px 3px rgba(0,0,0,.06)',display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:`4px solid ${etapa?.color||cor}`}}>
                   <div>
@@ -1490,7 +1604,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
               return(
                 <div key={dia} onClick={()=>{setDataAgenda(dataStr);setSubAba('agenda');}} style={{minHeight:56,background:isHoje?'#ebf5fb':'#f8f9fa',borderRadius:5,padding:'4px 5px',border:isHoje?'2px solid #3498db':'1px solid #ecf0f1',cursor:'pointer'}}>
                   <div style={{fontSize:11,fontWeight:isHoje?700:400,color:isHoje?'#3498db':'#2c3e50',marginBottom:2}}>{dia}</div>
-                  {eventos.slice(0,2).map(c=>{const etapa=ETAPAS.find(e=>e.id===c.impl.etapa);
+                  {eventos.slice(0,2).map(c=>{const etapa=ETAPAS_USE.find(e=>e.id===c.impl.etapa);
                     return <div key={c.id} onClick={e=>{e.stopPropagation();setClienteKanban(c);}} style={{background:etapa?.color||'#3498db',color:'#fff',borderRadius:3,padding:'1px 4px',fontSize:9,fontWeight:700,cursor:'pointer',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:1}}>{c.impl.horarioAgendado?c.impl.horarioAgendado+' ':''}{c.nome}</div>;
                   })}
                   {eventos.length>2&&<div style={{fontSize:9,color:'#7f8c8d'}}>+{eventos.length-2}</div>}
@@ -1563,7 +1677,7 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
                     </div>
                     <div style={{flex:1,padding:'6px 10px',display:'flex',flexDirection:'column',gap:4,background:temConflito?'#fff5f5':'#fff'}}>
                       {eventosHorario.map(c=>{
-                        const etapa=ETAPAS.find(e=>e.id===c.impl.etapa);
+                        const etapa=ETAPAS_USE.find(e=>e.id===c.impl.etapa);
                         const resp=usuarios?.find(u=>u.id===c.impl.responsavelId);
                         return(
                           <div key={c.id} onClick={()=>setClienteKanban(c)}
@@ -3392,6 +3506,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             </div>
           )}
         </div>
+      )}
+
+      {/* Kanban de Implantação */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigKanban/></div>
       )}
 
       {/* Configuração de Email (SMTP) — notificações de responsável */}
@@ -6948,6 +7067,7 @@ export default function App(){
   const [orcServicos,setOrcServicos]=useState([]);
   const [orcFormas,setOrcFormas]=useState([]);
   const [orcTemplates,setOrcTemplates]=useState([]);
+  const [etapasKanban,setEtapasKanban]=useState([]);
   const [dadosImportados,setDadosImportados]=useState(null);
   const [menuOrder,setMenuOrder]=useState(null);
   const [metaSistema,setMetaSistema]=useState(0);
@@ -7138,6 +7258,10 @@ export default function App(){
     unsubs.push(onSnapshot(collection(db,'orc_templates'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcTemplates(arr);
     }));
+    unsubs.push(onSnapshot(collection(db,'config_kanban'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      if(arr.length>0)setEtapasKanban([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));
+    }));
     return()=>unsubs.forEach(u=>u());
   },[authUser]);
 
@@ -7145,6 +7269,9 @@ export default function App(){
   async function salvarCliente(dados){
     const ref=doc(collection(db,'clientes'));
     await setDoc(ref,{...dados,id:ref.id});
+    // Etapa inicial: usa etapa padrão configurada ou primeira etapa ativa
+    const etapaInicial=(etapasKanban.find(e=>e.padrao)||etapasKanban.filter(e=>e.ativo!==false)[0]||ETAPAS_DEFAULT[0])?.id||'venda_fechada';
+    await setDoc(doc(db,'implantacoes',ref.id),{etapa:etapaInicial,criadoEm:new Date().toISOString()},{merge:true});
   }
   async function atualizarCliente(id,dados){
     // Firestore nao aceita campos undefined — limpar antes de salvar
@@ -7440,7 +7567,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} perfil={perfil} usuarios={usuarios}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca} etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
@@ -7616,7 +7743,7 @@ export default function App(){
                           {/* Empresa */}
                           <td style={{padding:'8px 12px',fontSize:12,fontWeight:700,color:C.text,maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                             {temVencido&&<span title="Inadimplente" style={{color:'#e74c3c',marginRight:4}}>⚠</span>}
-                            {!c._base&&<span style={{background:'#d5f5e3',color:C.green,fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:4,fontWeight:700}}>novo</span>}
+                            {!c._base&&c.status!=='Faturado'&&<span style={{background:'#d5f5e3',color:C.green,fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:4,fontWeight:700}}>novo</span>}
                             {c.nome}
                           </td>
                           {/* CNPJ */}
