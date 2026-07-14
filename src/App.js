@@ -2642,7 +2642,12 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
             onConfirmar={async()=>{
               try{
                 // Achar primeiro usuário financeiro
-                const financeiro=(usuarios||[]).find(u=>u.perfil==='financeiro'&&(u.status==='ativo'||!u.status));
+                // Busca financeiro: case insensitive, não revogado, com email
+                const financeiro=(usuarios||[]).find(u=>
+                  u.perfil?.toLowerCase()==='financeiro'&&
+                  u.status!=='revogado'&&
+                  u.email
+                )||(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro');
                 const partes=[];
                 if(parseFloat(f.vI)>0) partes.push(`Implantação: ${moeda(parseFloat(f.vI))} (${f.pagamentoI||'Boleto'} ${f.parcelasI||1}x)`);
                 if(parseFloat(f.vE)>0) partes.push(`Equipamento: ${moeda(parseFloat(f.vE))} (${f.pagamentoE||'Boleto'} ${f.parcelasE||1}x)`);
@@ -5989,7 +5994,8 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
 // ─── MODAL FATURAMENTO MANUAL ────────────────────────────────────────────────
 function ModalFaturamentoManual({cliente,usuarios,onConfirmar,onCancelar}){
   const [loading,setLoading]=useState(false);
-  const financeiro=(usuarios||[]).find(u=>u.perfil==='financeiro'&&(u.status==='ativo'||!u.status));
+  const financeiro=(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro'&&u.status!=='revogado'&&u.email)
+    ||(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro');
   const total=(parseFloat(cliente.vI)||0)+(parseFloat(cliente.vE)||0)+(parseFloat(cliente.vS)||0);
 
   async function confirmar(){
@@ -7550,7 +7556,10 @@ export default function App(){
                   console.error('Erro ao gerar link Asaas:',err);
                 }
               }
-              // 3. Vai para o detalhe do cliente (não fecha para lista)
+              // 3. Criar documento de implantação com etapa padrão configurada
+              const etapaInicial=(etapasKanban.find(e=>e.padrao)||etapasKanban.filter(e=>e.ativo!==false)[0]||ETAPAS_DEFAULT[0])?.id||'venda_fechada';
+              await setDoc(doc(db,'implantacoes',novoId),{etapa:etapaInicial,criadoEm:new Date().toISOString()},{merge:true});
+              // 4. Vai para o detalhe do cliente
               const clienteCompleto={...dadosSalvos,...dadosAsaas};
               setDadosImportados(null);
               setClienteSel(clienteCompleto);
