@@ -318,52 +318,144 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
 }
 
 // --- META MENSAL -------------------------------------------------------------
-function CardMeta({titulo,realizado,meta,onSetMeta,cor}){
+function CardMeta({titulo,realizado,meta,onSetMeta,cor,icone}){
   const pct=meta>0?Math.min(Math.round((realizado/meta)*100),100):0;
+  const falta=meta>0?Math.max(meta-realizado,0):0;
+  const atingiu=meta>0&&realizado>=meta;
   const [editando,setEditando]=useState(false);
   const [val,setVal]=useState(String(meta||''));
+
+  // Cor dinâmica da barra por progresso
+  const corBarra=atingiu?'#27ae60':pct>=70?cor:'#f5a623';
+
+  // Frases motivacionais por faixa
+  const frase=meta<=0?'Defina sua meta para acompanhar o progresso!'
+    :atingiu?'🏆 META ATINGIDA! Parabéns, equipe!'
+    :pct>=90?'🔥 Quase lá! Último esforço!'
+    :pct>=70?'💪 Ótimo ritmo! Continue assim!'
+    :pct>=50?'📈 Na metade do caminho!'
+    :pct>=25?'⚡ Bora acelerar!'
+    :'🚀 O céu é o limite! Vamos lá!';
+
   return(
-    <div style={{background:C.card,borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',flex:1,minWidth:200,borderTop:`3px solid ${cor}`}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{fontWeight:700,fontSize:12,color:C.text,textTransform:'uppercase'}}>{titulo}</div>
-        {!editando
-          ?<button onClick={()=>setEditando(true)} style={{background:'none',border:'none',color:C.blue,cursor:'pointer',fontSize:11,fontWeight:600}}>✏️</button>
-          :<div style={{display:'flex',gap:4,alignItems:'center'}}>
-            <input value={val} onChange={e=>setVal(e.target.value)} placeholder="Ex: 50000" style={{padding:'3px 6px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,width:90}}/>
-            <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}} style={{background:C.green,color:'#fff',border:'none',borderRadius:5,padding:'3px 8px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
-            <button onClick={()=>setEditando(false)} style={{background:'none',border:'none',color:C.textMuted,cursor:'pointer',fontSize:11}}>✕</button>
+    <div style={{
+      flex:1,minWidth:280,borderRadius:12,overflow:'hidden',
+      boxShadow:'0 4px 20px rgba(0,0,0,.10)',
+      background:atingiu?`linear-gradient(135deg,#1a7a4a 0%,#27ae60 100%)`:`linear-gradient(135deg,#1a2a3a 0%,#2c3e50 100%)`,
+      position:'relative',
+    }}>
+      {/* Círculo decorativo de fundo */}
+      <div style={{position:'absolute',top:-30,right:-30,width:140,height:140,borderRadius:'50%',background:'rgba(255,255,255,.04)',pointerEvents:'none'}}/>
+      <div style={{position:'absolute',bottom:-40,left:-20,width:100,height:100,borderRadius:'50%',background:'rgba(255,255,255,.03)',pointerEvents:'none'}}/>
+
+      <div style={{padding:'20px 22px',position:'relative'}}>
+        {/* Header */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}>
+              <span style={{fontSize:18}}>{icone}</span>
+              <span style={{fontWeight:700,fontSize:11,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:1.2}}>{titulo}</span>
+            </div>
+            <div style={{fontSize:26,fontWeight:700,color:'#fff',letterSpacing:-.5}}>{moeda(realizado)}</div>
           </div>
-        }
-      </div>
-      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:6}}>
-        <span style={{color:C.textMuted}}>Realizado: <strong style={{color:cor}}>{moeda(realizado)}</strong></span>
-        {meta>0&&<span style={{color:C.textMuted}}>{moeda(meta)}</span>}
-      </div>
-      {meta>0&&<>
-        <div style={{height:8,borderRadius:4,background:'#ecf0f1',overflow:'hidden'}}>
-          <div style={{height:'100%',borderRadius:4,background:pct>=100?C.green:pct>=70?cor:C.orange,width:pct+'%',transition:'width .4s'}}/>
+          <div style={{textAlign:'right'}}>
+            {!editando?(
+              <div>
+                <div style={{fontSize:10,color:'rgba(255,255,255,.5)',marginBottom:2}}>Meta</div>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <span style={{fontSize:14,fontWeight:700,color:'rgba(255,255,255,.7)'}}>{meta>0?moeda(meta):'—'}</span>
+                  <button onClick={()=>{setVal(String(meta||''));setEditando(true);}} style={{background:'rgba(255,255,255,.12)',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',color:'rgba(255,255,255,.7)',fontSize:11}}>✏️</button>
+                </div>
+              </div>
+            ):(
+              <div style={{display:'flex',gap:4,alignItems:'center'}}>
+                <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}}} placeholder="Ex: 5000" style={{padding:'5px 8px',borderRadius:6,border:'1.5px solid rgba(255,255,255,.3)',fontSize:12,width:90,background:'rgba(255,255,255,.1)',color:'#fff',outline:'none'}}/>
+                <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}} style={{background:'#27ae60',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
+                <button onClick={()=>setEditando(false)} style={{background:'rgba(255,255,255,.1)',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'rgba(255,255,255,.6)',fontSize:11}}>✕</button>
+              </div>
+            )}
+          </div>
         </div>
-        <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:10,color:C.textMuted}}>
-          <span>{pct}% atingido</span>
-          {pct<100?<span style={{color:C.orange}}>Faltam {moeda(meta-realizado)}</span>:<span style={{color:C.green}}>✓ Meta atingida!</span>}
+
+        {/* Barra de progresso */}
+        {meta>0&&(
+          <div style={{marginBottom:12}}>
+            <div style={{height:10,borderRadius:5,background:'rgba(255,255,255,.12)',overflow:'hidden',marginBottom:6}}>
+              <div style={{
+                height:'100%',borderRadius:5,
+                background:atingiu
+                  ?'linear-gradient(90deg,#52c41a,#95de64)'
+                  :`linear-gradient(90deg,${corBarra},${corBarra}cc)`,
+                width:pct+'%',
+                transition:'width .6s cubic-bezier(.4,0,.2,1)',
+                boxShadow:`0 0 10px ${corBarra}88`,
+              }}/>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+              <span style={{color:'rgba(255,255,255,.6)',fontWeight:600}}>{pct}% atingido</span>
+              {!atingiu&&<span style={{color:'#f5a623',fontWeight:600}}>Faltam {moeda(falta)}</span>}
+              {atingiu&&<span style={{color:'#52c41a',fontWeight:700}}>✓ Superou a meta!</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Frase motivacional */}
+        <div style={{
+          background:'rgba(255,255,255,.07)',borderRadius:7,padding:'7px 12px',
+          fontSize:11,color:atingiu?'#95de64':'rgba(255,255,255,.75)',
+          fontWeight:600,textAlign:'center',letterSpacing:.3,
+        }}>
+          {frase}
         </div>
-      </>}
-      {!meta&&<div style={{fontSize:10,color:C.textMuted,marginTop:4}}>Clique em ✏️ para definir a meta.</div>}
+
+        {/* Badge percentual grande */}
+        {meta>0&&(
+          <div style={{
+            position:'absolute',top:16,right:editando?180:80,
+            width:44,height:44,borderRadius:'50%',
+            background:atingiu?'rgba(82,196,26,.25)':'rgba(255,255,255,.08)',
+            border:`2px solid ${atingiu?'#52c41a':corBarra}44`,
+            display:'flex',alignItems:'center',justifyContent:'center',
+            flexDirection:'column',
+          }}>
+            <span style={{fontSize:13,fontWeight:700,color:atingiu?'#52c41a':corBarra,lineHeight:1}}>{pct}</span>
+            <span style={{fontSize:8,color:'rgba(255,255,255,.4)',lineHeight:1}}>%</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
 function DuplasMetas({todos,metaSistema,metaEquip,onSetMetaSistema,onSetMetaEquip}){
   const hoje=new Date();
   const mesAtual=hoje.getMonth(),anoAtual=hoje.getFullYear();
   const csMes=todos.filter(c=>c.mes===mesAtual&&c.ano===anoAtual&&c.status==='Faturado');
-  const realSist=csMes.reduce((s,c)=>s+(c.vS||0),0);
-  const realEquip=csMes.reduce((s,c)=>s+(c.vE||0),0);
+  const realSist=csMes.reduce((s,c)=>s+(parseFloat(c.vS)||0),0);
+  const realEquip=csMes.reduce((s,c)=>s+(parseFloat(c.vE)||0),0);
+  const totalMes=realSist+realEquip;
+  const totalMeta=(metaSistema||0)+(metaEquip||0);
+  const pctTotal=totalMeta>0?Math.min(Math.round((totalMes/totalMeta)*100),100):0;
   return(
-    <div style={{marginBottom:14}}>
-      <div style={{fontSize:11,color:C.textMuted,fontWeight:700,textTransform:'uppercase',marginBottom:8}}>Metas — {MESES[mesAtual]}/{anoAtual}</div>
+    <div style={{marginBottom:16}}>
+      {/* Header da seção */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:3,height:16,borderRadius:2,background:'#f5a623'}}/>
+          <span style={{fontSize:11,color:'#4a4a4a',fontWeight:700,textTransform:'uppercase',letterSpacing:.8}}>Metas — {MESES[mesAtual]}/{anoAtual}</span>
+        </div>
+        {totalMeta>0&&(
+          <div style={{display:'flex',alignItems:'center',gap:6,background:'#f5f6fa',borderRadius:20,padding:'3px 12px',border:'1px solid #e8eaed'}}>
+            <span style={{fontSize:10,color:'#7f8c8d'}}>Total geral:</span>
+            <span style={{fontSize:12,fontWeight:700,color:pctTotal>=100?'#27ae60':'#f5a623'}}>{moeda(totalMes)}</span>
+            <span style={{fontSize:10,color:'#aaa'}}>/ {moeda(totalMeta)}</span>
+            <span style={{fontSize:11,fontWeight:700,color:pctTotal>=100?'#27ae60':'#4a4a4a'}}>{pctTotal}%</span>
+          </div>
+        )}
+      </div>
       <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
-        <CardMeta titulo="Meta Sistema" realizado={realSist} meta={metaSistema} onSetMeta={onSetMetaSistema} cor={C.purple}/>
-        <CardMeta titulo="Meta Equipamentos" realizado={realEquip} meta={metaEquip} onSetMeta={onSetMetaEquip} cor={C.teal}/>
+        <CardMeta titulo="Meta Sistema" icone="☁️" realizado={realSist} meta={metaSistema} onSetMeta={onSetMetaSistema} cor="#9b59b6"/>
+        <CardMeta titulo="Meta Equipamentos" icone="💻" realizado={realEquip} meta={metaEquip} onSetMeta={onSetMetaEquip} cor="#1abc9c"/>
       </div>
     </div>
   );
