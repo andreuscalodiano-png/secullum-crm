@@ -2852,7 +2852,35 @@ function UsuariosLista({usuarios,currentUser}){
 
   return(
     <div style={{background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16}}>
-      <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:12,textTransform:'uppercase'}}>Usuários ({ativos.length})</div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Usuários ({ativos.length})</div>
+        <button onClick={async()=>{
+          const snap=await getDocs(collection(db,'usuarios'));
+          const todos=[];snap.forEach(d=>todos.push({_docId:d.id,...d.data()}));
+          const porEmail={};const aRemover=[];
+          todos.forEach(u=>{
+            const email=(u.email||'').toLowerCase().trim();
+            if(!email)return;
+            if(!porEmail[email]){porEmail[email]=u;return;}
+            const existing=porEmail[email];
+            const uTemUid=u._docId&&!u._docId.includes('@')&&u._docId.length>15;
+            const exTemUid=existing._docId&&!existing._docId.includes('@')&&existing._docId.length>15;
+            if(uTemUid&&!exTemUid){
+              aRemover.push(existing._docId);
+              setDoc(doc(db,'usuarios',u._docId),{nome:existing.nome||u.nome,perfil:existing.perfil||u.perfil},{merge:true});
+              porEmail[email]=u;
+            } else {
+              aRemover.push(u._docId);
+            }
+          });
+          if(aRemover.length===0){alert('✅ Nenhum duplicado encontrado!');return;}
+          if(!window.confirm(`Encontrados ${aRemover.length} registro(s) duplicado(s).\nRemover agora?`))return;
+          await Promise.all(aRemover.map(id=>deleteDoc(doc(db,'usuarios',id))));
+          alert(`✅ ${aRemover.length} duplicata(s) removida(s)! Recarregue a página.`);
+        }} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #fde68a',background:'#fff8ee',cursor:'pointer',fontSize:11,color:'#b45309',fontWeight:600}}>
+          🧹 Limpar duplicatas
+        </button>
+      </div>
 
       {/* Modal confirmação revogar */}
       {confirmRevogar&&(
@@ -3920,7 +3948,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
   }
 
   // Apenas usuários ativos podem ser responsáveis por uma solicitação
-  const usuariosAtivos=usuarios.filter(u=>u.status==='ativo'||!u.status);
+  const usuariosAtivos=usuarios.filter(u=>u.status!=='revogado'&&u.status!=='pendente');
 
   // Comentário
   const [comentario,setComentario]=useState('');
@@ -7320,7 +7348,23 @@ export default function App(){
       const obj={};snap.forEach(d=>obj[d.id]=d.data());setImplantacoes(obj);
     }));
     unsubs.push(onSnapshot(collection(db,'usuarios'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setUsuarios(arr);
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      // Deduplicar por email — manter o registro mais completo (com uid/status)
+      const porEmail={};
+      arr.forEach(u=>{
+        const email=(u.email||'').toLowerCase().trim();
+        if(!email){return;}
+        const existing=porEmail[email];
+        if(!existing){porEmail[email]=u;return;}
+        // Preferir o que tem uid real (não email como id) ou status ativo
+        const uTemUid=u.id&&!u.id.includes('@')&&u.id.length>10;
+        const exTemUid=existing.id&&!existing.id.includes('@')&&existing.id.length>10;
+        if(uTemUid&&!exTemUid){porEmail[email]=u;}
+        else if(!uTemUid&&!exTemUid&&(u.nome&&!existing.nome)){porEmail[email]=u;}
+      });
+      // Usuários sem email também entram (não duplicados)
+      arr.filter(u=>!(u.email||'').trim()).forEach(u=>{porEmail[u.id]=u;});
+      setUsuarios(Object.values(porEmail));
     }));
     unsubs.push(onSnapshot(collection(db,'vendedores'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setVendedoresCad(arr);
