@@ -1473,7 +1473,10 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
           </div>
         </div>
         <div style={{marginBottom:14}}>
-          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:8,textTransform:'uppercase'}}>Descrição do Setup</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Descrição do Setup</div>
+            <BotaoMic onTranscricao={t=>setLocal(l=>({...l,descricaoSetup:(l.descricaoSetup?(l.descricaoSetup+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t}))}/>
+          </div>
           <textarea
             value={local.descricaoSetup??(local.processos||[]).map(p=>p.texto).join('\n')}
             onChange={e=>setLocal(l=>({...l,descricaoSetup:e.target.value}))}
@@ -1526,9 +1529,15 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
               <div style={{fontSize:10,color:'#7f8c8d',marginTop:3}}>{c.data} • {c.usuario}</div>
             </div>
           ))}
-          <div style={{display:'flex',gap:8,marginTop:6}}>
-            <input value={comentario} onChange={e=>setComentario(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComent()} placeholder="Comentário..." style={{...fi,flex:1}}/>
-            <button onClick={addComent} style={{padding:'6px 12px',borderRadius:5,border:'none',background:'#7f8c8d',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>Enviar</button>
+          <div style={{display:'flex',gap:8,marginTop:6,alignItems:'flex-end'}}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',gap:4}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase'}}>Novo comentário</span>
+                <BotaoMic onTranscricao={t=>setComentario(prev=>(prev?(prev+' '):'')+ t)}/>
+              </div>
+              <input value={comentario} onChange={e=>setComentario(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComent()} placeholder="Comentário..." style={{...fi}}/>
+            </div>
+            <button onClick={addComent} style={{padding:'6px 12px',borderRadius:5,border:'none',background:'#7f8c8d',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,flexShrink:0}}>Enviar</button>
           </div>
         </div>
         <button onClick={salvar} style={{width:'100%',padding:'12px',borderRadius:6,border:'none',background:saved?'#27ae60':'#2c3e50',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'background .3s'}}>
