@@ -1141,6 +1141,75 @@ function ConfigKanban(){
   );
 }
 
+
+// ─── BOTÃO MICROFONE — Web Speech API ────────────────────────────────────────
+function BotaoMic({onTranscricao,style}){
+  const [gravando,setGravando]=useState(false);
+  const [suportado]=useState(()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition));
+  const recRef=useRef(null);
+  useEffect(()=>{
+    if(!document.getElementById('mic-pulse-style')){
+      const s=document.createElement('style');
+      s.id='mic-pulse-style';
+      s.textContent='@keyframes mic-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}';
+      document.head.appendChild(s);
+    }
+  },[]);
+
+  function iniciar(){
+    if(!suportado){alert('Seu navegador não suporta reconhecimento de voz. Use o Chrome.');return;}
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    const rec=new SR();
+    rec.lang='pt-BR';
+    rec.continuous=true;
+    rec.interimResults=false;
+    recRef.current=rec;
+    rec.onresult=e=>{
+      let texto='';
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal) texto+=e.results[i][0].transcript+' ';
+      }
+      if(texto.trim()) onTranscricao(texto.trim());
+    };
+    rec.onerror=e=>{console.error('Mic erro:',e.error);setGravando(false);};
+    rec.onend=()=>setGravando(false);
+    rec.start();
+    setGravando(true);
+  }
+
+  function parar(){
+    recRef.current?.stop();
+    setGravando(false);
+  }
+
+  if(!suportado) return null;
+
+  return(
+    <button
+      type="button"
+      onClick={gravando?parar:iniciar}
+      title={gravando?'Clique para parar a gravação':'Clique para ditar por voz'}
+      style={{
+        padding:'6px 10px',borderRadius:6,border:'none',cursor:'pointer',
+        background:gravando?'#e74c3c':'#f5f6fa',
+        color:gravando?'#fff':'#7f8c8d',
+        fontSize:14,display:'flex',alignItems:'center',gap:5,
+        flexShrink:0,transition:'all .2s',
+        boxShadow:gravando?'0 0 0 3px rgba(231,76,60,.25)':'none',
+        ...style,
+      }}>
+      {gravando?(
+        <>
+          <span style={{width:8,height:8,borderRadius:'50%',background:'#fff',display:'inline-block',animation:'mic-pulse 1s infinite'}}/>
+          Gravando...
+        </>
+      ):(
+        <>🎤 Voz</>
+      )}
+    </button>
+  );
+}
+
 // --- LOGOS SVG ----------------------------------------------------------------
 const LOGO_SIDEBAR_SVG=(
   <svg width="140" height="28" viewBox="0 0 140 28" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2214,7 +2283,13 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,dadosImportados
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={lbl}>Emitir NF-e</label><select style={fi} value={f.nfe} onChange={e=>up('nfe',e.target.value)}><option>Sim</option><option>Não</option></select></div>
         </div>
-        <div><label style={lbl}>Observações</label><textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/></div>
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+            <label style={lbl}>Observações</label>
+            <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t.toUpperCase())}/>
+          </div>
+          <textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
+        </div>
       </div>
 
       {/* Despacho do equipamento */}
@@ -2576,7 +2651,16 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,perfi
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º boleto" field="dtBoleto" type="date"/>
         </div>
-        <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Observações" field="obs" type="textarea" span={2}/>
+        <div style={{gridColumn:'span 2'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                <label style={lbl}>Observações</label>
+                {editMode&&<BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t.toUpperCase())}/>}
+              </div>
+              {editMode
+                ?<textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase',width:'100%',boxSizing:'border-box'}} value={f.obs||''} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
+                :<div style={{...fiView,whiteSpace:'pre-wrap'}}>{f.obs||'—'}</div>
+              }
+            </div>
       </div>
 
       {/* Despacho do equipamento */}
@@ -4157,7 +4241,13 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
           ))}
           {(sol.comentarios||[]).length===0&&<div style={{fontSize:12,color:C.textMuted,marginBottom:12}}>Nenhum comentário ainda.</div>}
           <div style={{display:'flex',gap:8}}>
-            <textarea value={comentario} onChange={e=>setComentario(e.target.value.toUpperCase())} placeholder="ADICIONAR COMENTÁRIO..." style={{...fi,resize:'vertical',minHeight:60,flex:1,textTransform:'uppercase'}}/>
+            <div style={{flex:1,display:'flex',flexDirection:'column',gap:6}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase'}}>Comentário</span>
+                <BotaoMic onTranscricao={t=>setComentario(prev=>(prev?(prev+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t.toUpperCase())}/>
+              </div>
+              <textarea value={comentario} onChange={e=>setComentario(e.target.value.toUpperCase())} placeholder="ADICIONAR COMENTÁRIO..." style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}}/>
+            </div>
             <button onClick={()=>adicionarComentario(sol)} style={{padding:'8px 14px',borderRadius:5,border:'none',background:C.blue,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,alignSelf:'flex-end'}}>Enviar</button>
           </div>
         </div>
@@ -4261,7 +4351,10 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
             </div>
           </div>
           <div style={{marginBottom:14}}>
-            <label style={lbl}>Descreva a solicitação</label>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+              <label style={lbl}>Descreva a solicitação</label>
+              <BotaoMic onTranscricao={t=>upF('descricao',(form.descricao?(form.descricao+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t.toUpperCase())}/>
+            </div>
             <textarea value={form.descricao} onChange={e=>upF('descricao',e.target.value.toUpperCase())} style={{...fi,resize:'vertical',minHeight:80,textTransform:'uppercase'}} placeholder="DESCREVA AQUI OS DETALHES DA SOLICITAÇÃO..."/>
           </div>
           <div style={{display:'flex',gap:8}}>
@@ -5021,7 +5114,10 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
             </div>
           </div>
           <div style={{marginBottom:10}}>
-            <label style={lbl}>Observações / condições</label>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+              <label style={lbl}>Observações / condições</label>
+              <BotaoMic onTranscricao={t=>setDet(d=>({...d,obs:(d.obs?(d.obs+'\n\n🎤 Transcrição: '):'🎤 Transcrição: ')+t}))}/>
+            </div>
             <textarea style={{...fi,resize:'vertical',minHeight:60}} value={det.obs} onChange={e=>setDet(d=>({...d,obs:e.target.value}))} placeholder="Ex: Frete grátis. Envio após confirmação do pagamento."/>
           </div>
           <div style={{display:'flex',justifyContent:'space-between',marginTop:14}}>
