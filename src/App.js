@@ -83,6 +83,7 @@ const NAV_ITEMS_BASE=[
   {id:'relatorios',    icon:'ti-file-spreadsheet',  label:'Relatórios',     perfis:['admin','financeiro']},
   {id:'solicitacoes',  icon:'ti-message-circle',    label:'Solicitações',   perfis:['admin','financeiro','colaborador']},
   {id:'orcamentos',    icon:'ti-file-invoice',       label:'Orçamentos',     perfis:['admin','financeiro','colaborador']},
+  {id:'leads',         icon:'ti-target',             label:'Leads',          perfis:['admin','colaborador']},
 ];
 // Config sempre fixo no final, só admin
 const NAV_CONFIG={id:'config',icon:'ti-settings',label:'Configurações',perfis:['admin']};
@@ -7260,6 +7261,531 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas, inc
   );
 }
 
+
+
+// ─── MODAL: NOVO LEAD MANUAL ─────────────────────────────────────────────────
+function ModalNovoLead({onFechar}){
+  const [f,setF]=useState({nome:'',email:'',telefone:'',funcionarios:'',sistema_ponto:'',solucao:'',origem:'Manual',obs:''});
+  const [salvando,setSalvando]=useState(false);
+  const [erro,setErro]=useState('');
+  const up=(k,v)=>setF(x=>({...x,[k]:v}));
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  const FAIXAS=['Até 5 funcionários','De 6 a 10 funcionários','De 11 a 15 funcionários','De 16 a 20 funcionários','De 21 a 30 funcionários','De 31 a 50 funcionários','Mais de 50 funcionários'];
+  const SOLUCOES=['Reconhecimento facial em tablet/celular','Relógio de ponto fixo (Facial/Biométrico)'];
+
+  async function salvar(){
+    if(!f.nome.trim()){setErro('Informe o nome do contato.');return;}
+    setSalvando(true);setErro('');
+    try{
+      const id='lead_'+Date.now();
+      await setDoc(doc(db,'leads',id),{
+        nome:f.nome.trim().toUpperCase(),
+        email:f.email.trim(),
+        telefone:f.telefone.trim(),
+        funcionarios:f.funcionarios,
+        sistema_ponto:f.sistema_ponto,
+        solucao:f.solucao,
+        origem:f.origem||'Manual',
+        obs:f.obs,
+        status:'novo',
+        criadoEm:new Date().toISOString(),
+        atualizadoEm:new Date().toISOString(),
+        criadoPor:auth.currentUser?.email||'—',
+      });
+      onFechar();
+    }catch(e){setErro('Erro ao salvar: '+e.message);setSalvando(false);}
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'22px 24px',maxWidth:520,width:'100%',maxHeight:'90vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'1px solid #e8eaed'}}>
+          <div style={{width:36,height:36,borderRadius:9,background:'#fce7f3',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17}}>🎯</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Novo lead</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>Cadastro manual</div>
+          </div>
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Nome do contato *</label>
+          <input style={{...fi,textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())} autoFocus/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Email</label><input style={fi} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
+          <div><label style={lbl}>Telefone</label><input style={fi} value={f.telefone} onChange={e=>up('telefone',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Quantos funcionários</label>
+          <select style={fi} value={f.funcionarios} onChange={e=>up('funcionarios',e.target.value)}>
+            <option value="">— Selecione —</option>
+            {FAIXAS.map(x=><option key={x} value={x}>{x}</option>)}
+          </select>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <label style={lbl}>Já usa sistema de ponto?</label>
+            <select style={fi} value={f.sistema_ponto} onChange={e=>up('sistema_ponto',e.target.value)}>
+              <option value="">—</option><option value="Sim">Sim</option><option value="Não">Não</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Origem</label>
+            <select style={fi} value={f.origem} onChange={e=>up('origem',e.target.value)}>
+              <option value="Manual">Manual</option>
+              <option value="Meta Ads">Meta Ads</option>
+              <option value="Indicação">Indicação</option>
+              <option value="Site">Site</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Telefone">Telefone</option>
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Solução buscada</label>
+          <select style={fi} value={f.solucao} onChange={e=>up('solucao',e.target.value)}>
+            <option value="">— Selecione —</option>
+            {SOLUCOES.map(x=><option key={x} value={x}>{x}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+            <label style={lbl}>Observações</label>
+            <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+          </div>
+          <textarea style={{...fi,resize:'vertical',minHeight:60}} value={f.obs} onChange={e=>up('obs',e.target.value)}/>
+        </div>
+
+        {erro&&<div style={{fontSize:12,color:'#e74c3c',marginBottom:10}}>{erro}</div>}
+
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onFechar} style={{flex:1,padding:'11px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d',fontWeight:600}}>Cancelar</button>
+          <button onClick={salvar} disabled={salvando} style={{flex:2,padding:'11px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#e84393',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:13}}>
+            {salvando?'Salvando...':'＋ Cadastrar lead'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MODAL: IMPORTAR CSV DA META ─────────────────────────────────────────────
+function ModalImportarLeads({leadsExistentes,onFechar}){
+  const [linhas,setLinhas]=useState([]);
+  const [cabecalho,setCabecalho]=useState([]);
+  const [mapeamento,setMapeamento]=useState({});
+  const [etapa,setEtapa]=useState(1);
+  const [importando,setImportando]=useState(false);
+  const [resultado,setResultado]=useState(null);
+  const [erro,setErro]=useState('');
+
+  const CAMPOS=[
+    {id:'nome',label:'Nome',dicas:['full_name','nome','name','nome_completo']},
+    {id:'email',label:'Email',dicas:['email','e-mail']},
+    {id:'telefone',label:'Telefone',dicas:['phone_number','telefone','phone','celular']},
+    {id:'funcionarios',label:'Funcionários',dicas:['funcionarios','funcionários','employees']},
+    {id:'sistema_ponto',label:'Já usa sistema?',dicas:['sistema','controle_de_ponto','ponto']},
+    {id:'solucao',label:'Solução buscada',dicas:['solucao','solução','qual_solucao']},
+    {id:'criadoEm',label:'Data de criação',dicas:['created_time','data','created']},
+  ];
+
+  const fi={padding:'7px 9px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  // Parser de CSV que respeita aspas
+  function parseCSV(texto){
+    const linhas=[];let campo='';let linha=[];let dentroAspas=false;
+    for(let i=0;i<texto.length;i++){
+      const ch=texto[i],prox=texto[i+1];
+      if(dentroAspas){
+        if(ch==='"'&&prox==='"'){campo+='"';i++;}
+        else if(ch==='"'){dentroAspas=false;}
+        else campo+=ch;
+      }else{
+        if(ch==='"')dentroAspas=true;
+        else if(ch===','||ch===';'){linha.push(campo);campo='';}
+        else if(ch==='\n'){linha.push(campo);campo='';linhas.push(linha);linha=[];}
+        else if(ch==='\r'){/* ignora */}
+        else campo+=ch;
+      }
+    }
+    if(campo!==''||linha.length>0){linha.push(campo);linhas.push(linha);}
+    return linhas.filter(l=>l.some(x=>(x||'').trim()!==''));
+  }
+
+  function carregarArquivo(file){
+    if(!file)return;
+    setErro('');
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const dados=parseCSV(ev.target.result);
+        if(dados.length<2){setErro('Arquivo vazio ou sem linhas de dados.');return;}
+        const head=dados[0].map(h=>(h||'').trim());
+        setCabecalho(head);
+        setLinhas(dados.slice(1));
+        // Auto-mapear por palavras-chave
+        const auto={};
+        CAMPOS.forEach(campo=>{
+          const idx=head.findIndex(h=>{
+            const hl=h.toLowerCase().replace(/[^a-z_]/g,'');
+            return campo.dicas.some(d=>hl.includes(d.toLowerCase().replace(/[^a-z_]/g,'')));
+          });
+          if(idx>=0)auto[campo.id]=String(idx);
+        });
+        setMapeamento(auto);
+        setEtapa(2);
+      }catch(e){setErro('Erro ao ler o arquivo: '+e.message);}
+    };
+    reader.onerror=()=>setErro('Não foi possível ler o arquivo.');
+    reader.readAsText(file,'UTF-8');
+  }
+
+  async function importar(){
+    setImportando(true);
+    const emailsExistentes=new Set((leadsExistentes||[]).map(l=>(l.email||'').toLowerCase().trim()).filter(Boolean));
+    const telsExistentes=new Set((leadsExistentes||[]).map(l=>(l.telefone||'').replace(/\D/g,'')).filter(Boolean));
+    let ok=0,dup=0,err=0;
+
+    for(const linha of linhas){
+      try{
+        const val=id=>{
+          const idx=mapeamento[id];
+          if(idx===undefined||idx==='')return '';
+          return (linha[parseInt(idx,10)]||'').trim();
+        };
+        const email=val('email').toLowerCase();
+        const telRaw=val('telefone');
+        const telNum=telRaw.replace(/\D/g,'');
+        // Deduplicação por email ou telefone
+        if((email&&emailsExistentes.has(email))||(telNum&&telsExistentes.has(telNum))){dup++;continue;}
+
+        const nome=val('nome');
+        if(!nome&&!email&&!telRaw){continue;}
+
+        let criadoEm=new Date().toISOString();
+        const dataRaw=val('criadoEm');
+        if(dataRaw){
+          const d=new Date(dataRaw);
+          if(!isNaN(d.getTime()))criadoEm=d.toISOString();
+        }
+
+        const id='lead_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
+        await setDoc(doc(db,'leads',id),{
+          nome:nome.toUpperCase(),
+          email,
+          telefone:telRaw,
+          funcionarios:val('funcionarios'),
+          sistema_ponto:val('sistema_ponto'),
+          solucao:val('solucao'),
+          origem:'Meta Ads',
+          status:'novo',
+          criadoEm,
+          atualizadoEm:new Date().toISOString(),
+          importadoPor:auth.currentUser?.email||'—',
+        });
+        if(email)emailsExistentes.add(email);
+        if(telNum)telsExistentes.add(telNum);
+        ok++;
+      }catch(e){err++;}
+    }
+    setResultado({ok,dup,err});
+    setImportando(false);
+    setEtapa(3);
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'22px 24px',maxWidth:620,width:'100%',maxHeight:'90vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16,paddingBottom:12,borderBottom:'1px solid #e8eaed'}}>
+          <div style={{width:36,height:36,borderRadius:9,background:'#ebf8ff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17}}>📥</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Importar leads (CSV)</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>Arquivo baixado do Meta Business Suite</div>
+          </div>
+          <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#aaa',fontSize:20,lineHeight:1}}>×</button>
+        </div>
+
+        {/* ETAPA 1 — selecionar arquivo */}
+        {etapa===1&&(
+          <div>
+            <div style={{background:'#f0f7ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 14px',marginBottom:14,fontSize:11,color:'#2b6cb0',lineHeight:1.7}}>
+              <strong>Como obter o arquivo:</strong><br/>
+              Meta Business Suite → Formulários de anúncios de lead → selecione o formulário → botão <strong>Baixar</strong> → escolha CSV.
+            </div>
+            <label style={{display:'block',border:'2px dashed #dde1e7',borderRadius:10,padding:'30px 20px',textAlign:'center',cursor:'pointer',background:'#fafafa'}}>
+              <div style={{fontSize:30,marginBottom:8}}>📄</div>
+              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:4}}>Clique para selecionar o arquivo CSV</div>
+              <div style={{fontSize:11,color:'#7f8c8d'}}>Formatos aceitos: .csv</div>
+              <input type="file" accept=".csv,text/csv" style={{display:'none'}} onChange={e=>{carregarArquivo(e.target.files[0]);e.target.value='';}}/>
+            </label>
+            {erro&&<div style={{fontSize:12,color:'#e74c3c',marginTop:10}}>{erro}</div>}
+          </div>
+        )}
+
+        {/* ETAPA 2 — mapear colunas */}
+        {etapa===2&&(
+          <div>
+            <div style={{fontSize:12,color:'#7f8c8d',marginBottom:12}}>
+              <strong style={{color:'#2c3e50'}}>{linhas.length}</strong> linha(s) encontrada(s). Confirme para qual campo vai cada coluna:
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:14}}>
+              {CAMPOS.map(campo=>(
+                <div key={campo.id} style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div style={{width:150,fontSize:12,fontWeight:600,color:'#2c3e50',flexShrink:0}}>{campo.label}</div>
+                  <select style={fi} value={mapeamento[campo.id]??''} onChange={e=>setMapeamento(m=>({...m,[campo.id]:e.target.value}))}>
+                    <option value="">— Não importar —</option>
+                    {cabecalho.map((h,i)=><option key={i} value={String(i)}>{h||`Coluna ${i+1}`}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            {/* Prévia */}
+            {linhas.length>0&&(
+              <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:14}}>
+                <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Prévia da 1ª linha</div>
+                <div style={{fontSize:11,color:'#2c3e50',lineHeight:1.7}}>
+                  {CAMPOS.filter(c=>mapeamento[c.id]!==undefined&&mapeamento[c.id]!=='').map(c=>(
+                    <div key={c.id}><strong>{c.label}:</strong> {(linhas[0][parseInt(mapeamento[c.id],10)]||'—')}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12}}>
+              ℹ️ Leads com email ou telefone já existentes serão ignorados automaticamente.
+            </div>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>setEtapa(1)} style={{flex:1,padding:'11px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d',fontWeight:600}}>← Voltar</button>
+              <button onClick={importar} disabled={importando} style={{flex:2,padding:'11px',borderRadius:7,border:'none',background:importando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:importando?'default':'pointer',fontSize:13}}>
+                {importando?'Importando...':`📥 Importar ${linhas.length} lead(s)`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ETAPA 3 — resultado */}
+        {etapa===3&&resultado&&(
+          <div style={{textAlign:'center',padding:'10px 0'}}>
+            <div style={{fontSize:40,marginBottom:10}}>✅</div>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50',marginBottom:14}}>Importação concluída!</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:18}}>
+              <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',border:'1px solid #9ae6b4'}}>
+                <div style={{fontSize:22,fontWeight:700,color:'#276749'}}>{resultado.ok}</div>
+                <div style={{fontSize:10,color:'#276749',fontWeight:600,textTransform:'uppercase'}}>Importados</div>
+              </div>
+              <div style={{background:'#fff8ee',borderRadius:8,padding:'12px',border:'1px solid #fde68a'}}>
+                <div style={{fontSize:22,fontWeight:700,color:'#b45309'}}>{resultado.dup}</div>
+                <div style={{fontSize:10,color:'#b45309',fontWeight:600,textTransform:'uppercase'}}>Duplicados</div>
+              </div>
+              <div style={{background:resultado.err>0?'#fee2e2':'#f8f9fa',borderRadius:8,padding:'12px',border:`1px solid ${resultado.err>0?'#fca5a5':'#e8eaed'}`}}>
+                <div style={{fontSize:22,fontWeight:700,color:resultado.err>0?'#e74c3c':'#7f8c8d'}}>{resultado.err}</div>
+                <div style={{fontSize:10,color:resultado.err>0?'#e74c3c':'#7f8c8d',fontWeight:600,textTransform:'uppercase'}}>Erros</div>
+              </div>
+            </div>
+            <button onClick={onFechar} style={{padding:'11px 30px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>Fechar</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── LEADS — Meta Ads / Facebook ─────────────────────────────────────────────
+const STATUS_LEAD=[
+  {id:'novo',        label:'Novo',           color:'#3498db'},
+  {id:'contatado',   label:'Contatado',      color:'#f5a623'},
+  {id:'qualificado', label:'Qualificado',    color:'#9b59b6'},
+  {id:'convertido',  label:'Convertido',     color:'#27ae60'},
+  {id:'perdido',     label:'Perdido',        color:'#e74c3c'},
+];
+const COR_LEAD={novo:'#3498db',contatado:'#f5a623',qualificado:'#9b59b6',convertido:'#27ae60',perdido:'#e74c3c'};
+
+function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
+  const [sel,setSel]=useState(null);
+  const [filtroStatus,setFiltroStatus]=useState('todos');
+  const [busca,setBusca]=useState('');
+  const [obsEdit,setObsEdit]=useState('');
+  const [salvando,setSalvando]=useState(false);
+  const [modalNovo,setModalNovo]=useState(false);
+  const [modalImport,setModalImport]=useState(false);
+  const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  async function atualizarStatus(id,status){
+    await setDoc(doc(db,'leads',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
+    if(sel?.id===id)setSel(s=>({...s,status}));
+  }
+  async function salvarObs(lead){
+    setSalvando(true);
+    const obs=obsEdit!==''?obsEdit:(lead.obs||'');
+    await setDoc(doc(db,'leads',lead.id),{obs,atualizadoEm:new Date().toISOString()},{merge:true});
+    setSel(s=>({...s,obs}));
+    setSalvando(false);
+  }
+  async function excluir(id){
+    if(!window.confirm('Remover este lead?'))return;
+    await deleteDoc(doc(db,'leads',id));
+    setSel(null);
+  }
+
+  const contadores={todos:leads.length};
+  STATUS_LEAD.forEach(s=>contadores[s.id]=leads.filter(l=>l.status===s.id).length);
+
+  const leadsFiltrados=leads.filter(l=>{
+    if(filtroStatus!=='todos'&&l.status!==filtroStatus)return false;
+    if(busca){const b=busca.toLowerCase();return(l.nome||'').toLowerCase().includes(b)||(l.email||'').toLowerCase().includes(b)||(l.telefone||'').toLowerCase().includes(b);}
+    return true;
+  });
+
+  if(sel){
+    const lead=leads.find(l=>l.id===sel.id)||sel;
+    return(
+      <div>
+        <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:16,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
+        <div style={{background:'#fff',borderRadius:10,padding:'20px 24px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:12,marginBottom:14}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:18,color:'#2c3e50',marginBottom:4}}>{lead.nome||'—'}</div>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap',fontSize:12,color:'#7f8c8d'}}>
+                {lead.email&&<span>✉️ {lead.email}</span>}
+                {lead.telefone&&<span>📞 {lead.telefone}</span>}
+                {lead.criadoEm&&<span>📅 {new Date(lead.criadoEm).toLocaleDateString('pt-BR')}</span>}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              <select value={lead.status||'novo'} onChange={e=>atualizarStatus(lead.id,e.target.value)} style={{padding:'7px 10px',borderRadius:6,border:`1.5px solid ${COR_LEAD[lead.status||'novo']}`,fontWeight:700,color:COR_LEAD[lead.status||'novo'],background:'#fff',fontSize:12,cursor:'pointer'}}>
+                {STATUS_LEAD.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+              <button onClick={()=>onConverterCliente(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>👤 Converter em Cliente</button>
+              <button onClick={()=>onConverterOrcamento(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>📋 Gerar Orçamento</button>
+              <button onClick={()=>excluir(lead.id)} style={{padding:'8px 10px',borderRadius:6,border:'none',background:'#fee2e2',color:'#e74c3c',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:8}}>
+            {[['Funcionários',lead.funcionarios],['Solução buscada',lead.solucao],['Usa sistema de ponto?',lead.sistema_ponto],['Origem',lead.origem||'Meta Ads'],['Campanha',lead.campanha],['Formulário',lead.formulario]].map(([l,v])=>v?(
+              <div key={l} style={{background:'#f8f9fa',borderRadius:6,padding:'8px 12px'}}>
+                <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:2}}>{l}</div>
+                <div style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{v}</div>
+              </div>
+            ):null)}
+          </div>
+        </div>
+        {/* Obs */}
+        <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Observações</div>
+            <BotaoMic onTranscricao={t=>setObsEdit(prev=>(prev?(prev+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+          </div>
+          <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value)} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="Anotações sobre este lead..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8}}/>
+          <button onClick={()=>salvarObs(lead)} disabled={salvando} style={{padding:'7px 16px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>{salvando?'Salvando...':'💾 Salvar'}</button>
+        </div>
+        {/* WhatsApp */}
+        {lead.telefone&&(
+          <div style={{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4',display:'flex',alignItems:'center',gap:12}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:12,color:'#276749',marginBottom:2}}>Contato via WhatsApp</div>
+              <div style={{fontSize:11,color:'#7f8c8d'}}>{lead.nome} • {lead.telefone}</div>
+            </div>
+            <a href={`https://wa.me/${ (lead.telefone||'').replace(/\D/g,'').length===11?'55'+(lead.telefone||'').replace(/\D/g,''):(lead.telefone||'').replace(/\D/g,'') }?text=${encodeURIComponent('Olá '+(lead.nome||'').split(' ')[0]+'! Vi que você tem interesse em nosso sistema de ponto. Posso te ajudar? 😊 — Guion Informática')}`}
+              target="_blank" rel="noopener noreferrer"
+              style={{padding:'9px 18px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:13,textDecoration:'none',display:'flex',alignItems:'center',gap:6}}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+              WhatsApp
+            </a>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      {/* Ações */}
+      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        <button onClick={()=>setModalImport(true)} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6}}>
+          📥 Importar CSV da Meta
+        </button>
+        <button onClick={()=>setModalNovo(true)} style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#e84393',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:6}}>
+          ＋ Novo lead
+        </button>
+      </div>
+
+      {modalNovo&&<ModalNovoLead onFechar={()=>setModalNovo(false)}/>}
+      {modalImport&&<ModalImportarLeads leadsExistentes={leads} onFechar={()=>setModalImport(false)}/>}
+
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+          {[{id:'todos',label:`Todos (${leads.length})`},...STATUS_LEAD.map(s=>({id:s.id,label:`${s.label} (${contadores[s.id]||0})`}))].map(s=>(
+            <button key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{padding:'6px 14px',borderRadius:20,border:'none',background:filtroStatus===s.id?(COR_LEAD[s.id]||'#2c3e50'):'#ecf0f1',color:filtroStatus===s.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===s.id?700:400}}>{s.label}</button>
+          ))}
+        </div>
+        <div style={{position:'relative'}}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',pointerEvents:'none'}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar lead..." style={{paddingLeft:30,paddingRight:8,height:32,borderRadius:7,border:'1.5px solid #e8eaed',background:'#f5f6fa',fontSize:12,width:200,outline:'none'}}/>
+        </div>
+      </div>
+
+      {/* Cards resumo */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:16}}>
+        {STATUS_LEAD.map(s=>(
+          <div key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:'pointer',borderTop:`3px solid ${s.color}`}}>
+            <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.label}</div>
+            <div style={{fontSize:22,fontWeight:700,color:'#2c3e50'}}>{contadores[s.id]||0}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Lista */}
+      {leadsFiltrados.length===0?(
+        <div style={{background:'#fff',borderRadius:10,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:36,marginBottom:10}}>🎯</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>{leads.length===0?'Nenhum lead ainda':'Nenhum lead com este filtro'}</div>
+          <div style={{fontSize:12,color:'#7f8c8d',marginBottom:16}}>{leads.length===0?'Cadastre manualmente, importe o CSV da Meta, ou aguarde a integração automática.':'Tente outro filtro.'}</div>
+          {leads.length===0&&(
+            <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+              <button onClick={()=>setModalNovo(true)} style={{padding:'10px 20px',borderRadius:7,border:'none',background:'#e84393',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>＋ Novo lead</button>
+              <button onClick={()=>setModalImport(true)} style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,color:'#4a4a4a'}}>📥 Importar CSV</button>
+            </div>
+          )}
+        </div>
+      ):(
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {leadsFiltrados.map(lead=>{
+            const st=STATUS_LEAD.find(s=>s.id===lead.status)||STATUS_LEAD[0];
+            return(
+              <div key={lead.id} onClick={()=>{setSel(lead);setObsEdit('');}} style={{background:'#fff',borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.06)',cursor:'pointer',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
+                <div style={{width:38,height:38,borderRadius:'50%',background:st.color+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,fontWeight:700,color:st.color,flexShrink:0}}>{(lead.nome||'?')[0].toUpperCase()}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.nome||'Sem nome'}</div>
+                  <div style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:10,flexWrap:'wrap'}}>
+                    {lead.email&&<span>✉️ {lead.email}</span>}
+                    {lead.telefone&&<span>📞 {lead.telefone}</span>}
+                    {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
+                  </div>
+                </div>
+                <div style={{textAlign:'right',flexShrink:0}}>
+                  <span style={{background:st.color+'22',color:st.color,padding:'2px 10px',borderRadius:10,fontSize:10,fontWeight:700,display:'block',marginBottom:3}}>{st.label}</span>
+                  {lead.solucao&&<div style={{fontSize:10,color:'#7f8c8d',maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.solucao}</div>}
+                  <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{lead.criadoEm?new Date(lead.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Info webhook */}
+      <div style={{background:'#f0f7ff',borderRadius:10,padding:'14px 18px',marginTop:20,border:'1px solid #bee3f8'}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0',marginBottom:4}}>📡 Integração Meta Ads</div>
+        <div style={{fontSize:11,color:'#4a5568',lineHeight:1.7}}>
+          Leads chegam automaticamente via webhook quando alguém preenche seu formulário do Facebook/Instagram.<br/>
+          <strong>Webhook URL:</strong> <code style={{background:'#e8f4fd',padding:'1px 6px',borderRadius:4,fontSize:11,userSelect:'all'}}>https://us-central1-secullum-crm.cloudfunctions.net/metaLeads</code>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- APP PRINCIPAL ------------------------------------------------------------
 export default function App(){
   const [authUser,setAuthUser]=useState(null);
@@ -7286,6 +7812,7 @@ export default function App(){
   const [orcFormas,setOrcFormas]=useState([]);
   const [orcTemplates,setOrcTemplates]=useState([]);
   const [etapasKanban,setEtapasKanban]=useState([]);
+  const [leads,setLeads]=useState([]);
   const [dadosImportados,setDadosImportados]=useState(null);
   const [menuOrder,setMenuOrder]=useState(null);
   const [metaSistema,setMetaSistema]=useState(0);
@@ -7496,10 +8023,36 @@ export default function App(){
       const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
       if(arr.length>0)setEtapasKanban([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));
     }));
+    unsubs.push(onSnapshot(collection(db,'leads'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      setLeads([...arr].sort((a,b)=>new Date(b.criadoEm||0)-new Date(a.criadoEm||0)));
+    }));
     return()=>unsubs.forEach(u=>u());
   },[authUser]);
 
   // Funções de persistência
+  // Converter lead em cliente
+  function converterLeadEmCliente(lead){
+    const dados={
+      nome:(lead.nome||'').toUpperCase(),
+      contato:(lead.nome||'').toUpperCase(),
+      tel:mascaraTel(lead.telefone||''),
+      email:lead.email||'',
+      func:0,obs:`Lead gerado via Meta Ads em ${lead.criadoEm?new Date(lead.criadoEm).toLocaleDateString('pt-BR'):''}. Solução: ${lead.solucao||'—'}. Funcionários: ${lead.funcionarios||'—'}`,
+      status:'Aguardando',plano:'Basic',vendedor:'',
+    };
+    setDadosImportados(dados);
+    // Atualizar status do lead para convertido
+    if(lead.id) setDoc(doc(db,'leads',lead.id),{status:'convertido',atualizadoEm:new Date().toISOString()},{merge:true});
+    setPage('novo');
+  }
+
+  function converterLeadEmOrcamento(lead){
+    // Abre o módulo de orçamentos com dados pré-preenchidos
+    if(lead.id) setDoc(doc(db,'leads',lead.id),{status:'qualificado',atualizadoEm:new Date().toISOString()},{merge:true});
+    setPage('orcamentos');
+  }
+
   async function salvarCliente(dados){
     const ref=doc(collection(db,'clientes'));
     await setDoc(ref,{...dados,id:ref.id});
@@ -7622,7 +8175,7 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','config':'#95a5a6'};
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','leads':'#e84393','config':'#95a5a6'};
             const svgIcons={
               // Dashboard: monitor com gráfico
               dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
@@ -7643,6 +8196,7 @@ export default function App(){
               // Solicitações: caixa de entrada / ticket
               solicitacoes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>,
               orcamentos:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+              leads:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
               // Configurações: engrenagem
               config:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
             };
@@ -7936,6 +8490,13 @@ export default function App(){
           />}
 
           {/* SOLICITAÇÕES */}
+          {/* LEADS */}
+          {!clienteSel&&page==='leads'&&<LeadsView
+            leads={leads}
+            onConverterCliente={converterLeadEmCliente}
+            onConverterOrcamento={converterLeadEmOrcamento}
+          />}
+
           {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile} onAbrirCliente={c=>setClienteSel(c)} buscaGlobal={busca}/>}
 
           {/* CLIENTES */}
