@@ -7323,7 +7323,9 @@ function PainelCampanhas({leads}){
   const grupos={};
   leadsFiltrados.forEach(l=>{
     const chave=(l[agrupar]||'').trim()||'(não informado)';
-    if(!grupos[chave])grupos[chave]={total:0,convertidos:0,qualificados:0,perdidos:0,novos:0};
+    if(!grupos[chave])grupos[chave]={total:0,convertidos:0,qualificados:0,perdidos:0,novos:0,tempos:[]};
+    const t=tempoRespostaMs(l);
+    if(t!==null)grupos[chave].tempos.push(t);
     grupos[chave].total++;
     if(l.status==='convertido')grupos[chave].convertidos++;
     else if(l.status==='qualificado')grupos[chave].qualificados++;
@@ -7332,7 +7334,11 @@ function PainelCampanhas({leads}){
   });
 
   const linhas=Object.entries(grupos)
-    .map(([nome,d])=>({nome,...d,taxa:d.total>0?Math.round((d.convertidos/d.total)*100):0}))
+    .map(([nome,d])=>({
+      nome,...d,
+      taxa:d.total>0?Math.round((d.convertidos/d.total)*100):0,
+      mediaResp:d.tempos.length?d.tempos.reduce((a,b)=>a+b,0)/d.tempos.length:null,
+    }))
     .sort((a,b)=>b.total-a.total);
 
   const maxTotal=linhas.reduce((m,l)=>Math.max(m,l.total),0)||1;
@@ -7378,6 +7384,26 @@ function PainelCampanhas({leads}){
       </div>
 
       {/* Resumo */}
+      {(()=>{
+        const tempos=leadsFiltrados.map(tempoRespostaMs).filter(t=>t!==null);
+        const media=tempos.length?tempos.reduce((a,b)=>a+b,0)/tempos.length:null;
+        const semResposta=leadsFiltrados.filter(l=>!l.primeiroContatoEm).length;
+        return(
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:10,marginBottom:16}}>
+            <div style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${media!==null?corSLA(media):'#7f8c8d'}`}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>⏱ Tempo médio de resposta</div>
+              <div style={{fontSize:20,fontWeight:700,color:media!==null?corSLA(media):'#7f8c8d'}}>{media!==null?formatarDuracao(media):'—'}</div>
+              <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{tempos.length} lead(s) respondido(s)</div>
+            </div>
+            <div style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${semResposta>0?'#e74c3c':'#27ae60'}`}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Sem contato ainda</div>
+              <div style={{fontSize:20,fontWeight:700,color:semResposta>0?'#e74c3c':'#27ae60'}}>{semResposta}</div>
+              <div style={{fontSize:10,color:'#aaa',marginTop:2}}>aguardando primeiro retorno</div>
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginBottom:16}}>
         {[
           ['Total de leads',totalGeral,'#3498db'],
@@ -7405,8 +7431,9 @@ function PainelCampanhas({leads}){
                   <span style={{width:20,height:20,borderRadius:'50%',background:i===0?'#f5a623':'#e8eaed',color:i===0?'#fff':'#7f8c8d',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,flexShrink:0}}>{i+1}</span>
                   <span style={{fontSize:12,fontWeight:600,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nome}</span>
                 </div>
-                <div style={{display:'flex',gap:12,flexShrink:0,fontSize:11}}>
+                <div style={{display:'flex',gap:12,flexShrink:0,fontSize:11,alignItems:'baseline'}}>
                   <span style={{color:'#7f8c8d'}}><strong style={{color:'#2c3e50',fontSize:13}}>{l.total}</strong> lead{l.total!==1?'s':''}</span>
+                  {l.mediaResp!==null&&<span style={{color:corSLA(l.mediaResp),fontWeight:600}} title="Tempo médio de resposta">⏱ {formatarDuracao(l.mediaResp)}</span>}
                   <span style={{color:l.taxa>=20?'#27ae60':l.taxa>=10?'#f5a623':'#7f8c8d',fontWeight:700,minWidth:60,textAlign:'right'}}>{l.taxa}% conv.</span>
                 </div>
               </div>
@@ -7840,6 +7867,49 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
   );
 }
 
+// ─── TEMPO DE RESPOSTA DOS LEADS ─────────────────────────────────────────────
+// primeiroContatoEm marca a primeira acao humana sobre o lead (mudanca de
+// status, WhatsApp ou observacao). A diferenca para criadoEm e o SLA.
+function formatarDuracao(ms){
+  if(ms===null||ms===undefined||isNaN(ms))return '—';
+  const min=Math.floor(ms/60000);
+  if(min<1)return 'menos de 1 min';
+  if(min<60)return `${min} min`;
+  const h=Math.floor(min/60),m=min%60;
+  if(h<24)return m>0?`${h}h ${m}min`:`${h}h`;
+  const d=Math.floor(h/24),hr=h%24;
+  return hr>0?`${d}d ${hr}h`:`${d}d`;
+}
+function tempoRespostaMs(lead){
+  if(!lead?.criadoEm||!lead?.primeiroContatoEm)return null;
+  const ini=new Date(lead.criadoEm).getTime();
+  const fim=new Date(lead.primeiroContatoEm).getTime();
+  if(isNaN(ini)||isNaN(fim)||fim<ini)return null;
+  return fim-ini;
+}
+function corSLA(ms){
+  if(ms===null)return '#7f8c8d';
+  const min=ms/60000;
+  if(min<=15)return '#27ae60';
+  if(min<=60)return '#f5a623';
+  return '#e74c3c';
+}
+// Registra evento no historico do lead e marca o primeiro contato
+async function registrarEventoLead(lead,evento,detalhe){
+  if(!lead?.id)return;
+  try{
+    const agora=new Date().toISOString();
+    const item={evento,detalhe:detalhe||'',data:agora,usuario:auth.currentUser?.email||'—'};
+    const patch={
+      historico:[...(lead.historico||[]),item],
+      atualizadoEm:agora,
+    };
+    // Primeira acao humana define o tempo de resposta
+    if(!lead.primeiroContatoEm)patch.primeiroContatoEm=agora;
+    await setDoc(doc(db,'leads',lead.id),patch,{merge:true});
+  }catch(e){console.error('[lead] erro ao registrar evento:',e);}
+}
+
 // ─── LEADS — Meta Ads / Facebook ─────────────────────────────────────────────
 const STATUS_LEAD=[
   {id:'novo',        label:'Novo',           color:'#3498db'},
@@ -7859,16 +7929,22 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
   const [modalNovo,setModalNovo]=useState(false);
   const [modalImport,setModalImport]=useState(false);
   const [aba,setAba]=useState('lista');
+  const [sincronizando,setSincronizando]=useState(false);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   async function atualizarStatus(id,status){
+    const lead=leads.find(l=>l.id===id)||sel;
+    const anterior=lead?.status||'novo';
     await setDoc(doc(db,'leads',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
+    const rotulo=s=>STATUS_LEAD.find(x=>x.id===s)?.label||s;
+    await registrarEventoLead({...lead,id},'status',`${rotulo(anterior)} → ${rotulo(status)}`);
     if(sel?.id===id)setSel(s=>({...s,status}));
   }
   async function salvarObs(lead){
     setSalvando(true);
     const obs=obsEdit!==''?obsEdit:(lead.obs||'');
     await setDoc(doc(db,'leads',lead.id),{obs,atualizadoEm:new Date().toISOString()},{merge:true});
+    await registrarEventoLead(lead,'observacao','Observação atualizada');
     setSel(s=>({...s,obs}));
     setSalvando(false);
   }
@@ -7929,6 +8005,61 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
           <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value)} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="Anotações sobre este lead..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8}}/>
           <button onClick={()=>salvarObs(lead)} disabled={salvando} style={{padding:'7px 16px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>{salvando?'Salvando...':'💾 Salvar'}</button>
         </div>
+        {/* Tempo de resposta + histórico */}
+        <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Histórico</div>
+            {(()=>{
+              const ms=tempoRespostaMs(lead);
+              if(ms!==null)return(
+                <div style={{display:'flex',alignItems:'center',gap:6,background:corSLA(ms)+'18',border:`1px solid ${corSLA(ms)}55`,borderRadius:20,padding:'4px 12px'}}>
+                  <span style={{fontSize:11,color:'#7f8c8d'}}>Tempo de resposta:</span>
+                  <strong style={{fontSize:12,color:corSLA(ms)}}>{formatarDuracao(ms)}</strong>
+                </div>
+              );
+              if(lead.criadoEm){
+                const esp=Date.now()-new Date(lead.criadoEm).getTime();
+                return(
+                  <div style={{display:'flex',alignItems:'center',gap:6,background:corSLA(esp)+'18',border:`1px solid ${corSLA(esp)}55`,borderRadius:20,padding:'4px 12px'}}>
+                    <span style={{fontSize:11,color:'#7f8c8d'}}>Aguardando há:</span>
+                    <strong style={{fontSize:12,color:corSLA(esp)}}>{formatarDuracao(esp)}</strong>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+          </div>
+          {(()=>{
+            const ICONES={status:'🔄',whatsapp:'📲',observacao:'📝',criado:'🎯',conversao:'👤'};
+            const eventos=[
+              ...(lead.criadoEm?[{evento:'criado',detalhe:`Lead recebido via ${lead.origem||'Meta Ads'}`,data:lead.criadoEm,usuario:''}]:[]),
+              ...(lead.historico||[]),
+            ].sort((a,b)=>new Date(a.data)-new Date(b.data));
+            if(eventos.length===0)return <div style={{fontSize:12,color:'#7f8c8d'}}>Nenhum evento registrado ainda.</div>;
+            return(
+              <div style={{display:'flex',flexDirection:'column',gap:0}}>
+                {eventos.map((ev,i)=>{
+                  const d=new Date(ev.data);
+                  const dataStr=isNaN(d.getTime())?'—':d.toLocaleDateString('pt-BR')+' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+                  const ultimo=i===eventos.length-1;
+                  return(
+                    <div key={i} style={{display:'flex',gap:10}}>
+                      <div style={{display:'flex',flexDirection:'column',alignItems:'center',flexShrink:0}}>
+                        <div style={{width:26,height:26,borderRadius:'50%',background:'#f5f6fa',border:'1px solid #e8eaed',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12}}>{ICONES[ev.evento]||'•'}</div>
+                        {!ultimo&&<div style={{width:2,flex:1,minHeight:14,background:'#e8eaed'}}/>}
+                      </div>
+                      <div style={{paddingBottom:ultimo?0:12,flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,color:'#2c3e50',fontWeight:600}}>{ev.detalhe||ev.evento}</div>
+                        <div style={{fontSize:10,color:'#aaa'}}>{dataStr}{ev.usuario?' • '+ev.usuario:''}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+
         {/* WhatsApp */}
         {lead.telefone&&(
           <div style={{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4',display:'flex',alignItems:'center',gap:12}}>
@@ -7937,6 +8068,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
               <div style={{fontSize:11,color:'#7f8c8d'}}>{lead.nome} • {lead.telefone}</div>
             </div>
             <a href={linkWaLead(lead)}
+              onClick={()=>registrarEventoLead(lead,'whatsapp','Contato via WhatsApp')}
               target="_blank" rel="noopener noreferrer"
               style={{padding:'9px 18px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:13,textDecoration:'none',display:'flex',alignItems:'center',gap:6}}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
@@ -7958,8 +8090,21 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
           ))}
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <button onClick={async()=>{
+          if(sincronizando)return;
+          setSincronizando(true);
+          try{
+            const r=await fetch('https://us-central1-secullum-crm.cloudfunctions.net/syncLeadsManual',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+            const d=await r.json();
+            if(d.error)alert('Erro na sincronização: '+d.error);
+            else alert(d.novos>0?`✅ ${d.novos} novo(s) lead(s) importado(s)!`:'Nenhum lead novo na planilha.');
+          }catch(e){alert('Erro ao sincronizar: '+e.message);}
+          setSincronizando(false);
+        }} disabled={sincronizando} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:sincronizando?'default':'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6,opacity:sincronizando?.6:1}}>
+          {sincronizando?'⏳ Sincronizando...':'🔄 Sincronizar agora'}
+        </button>
         <button onClick={()=>setModalImport(true)} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6}}>
-          📥 Importar CSV da Meta
+          📥 Importar CSV
         </button>
         <button onClick={()=>setModalNovo(true)} style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#e84393',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:6}}>
           ＋ Novo lead
@@ -8026,7 +8171,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
                 {/* WhatsApp direto do card */}
                 {lead.telefone&&(
                   <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
-                    onClick={e=>e.stopPropagation()}
+                    onClick={e=>{e.stopPropagation();registrarEventoLead(lead,'whatsapp','Contato via WhatsApp');}}
                     title={`Chamar ${lead.nome||''} no WhatsApp`}
                     style={{flexShrink:0,width:34,height:34,borderRadius:'50%',background:'#25D366',display:'flex',alignItems:'center',justifyContent:'center',textDecoration:'none',boxShadow:'0 1px 4px rgba(37,211,102,.4)'}}>
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
@@ -8034,6 +8179,15 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
                 )}
                 <div style={{textAlign:'right',flexShrink:0}}>
                   <span style={{background:st.color+'22',color:st.color,padding:'2px 10px',borderRadius:10,fontSize:10,fontWeight:700,display:'block',marginBottom:3}}>{st.label}</span>
+                  {(()=>{
+                    const ms=tempoRespostaMs(lead);
+                    if(ms!==null)return <div style={{fontSize:10,color:corSLA(ms),fontWeight:600}}>⏱ {formatarDuracao(ms)}</div>;
+                    if(lead.criadoEm&&lead.status==='novo'){
+                      const esperando=Date.now()-new Date(lead.criadoEm).getTime();
+                      return <div style={{fontSize:10,color:corSLA(esperando),fontWeight:600}}>⏳ {formatarDuracao(esperando)}</div>;
+                    }
+                    return null;
+                  })()}
                   {lead.solucao&&<div style={{fontSize:10,color:'#7f8c8d',maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.solucao}</div>}
                   <div style={{fontSize:10,color:'#aaa',marginTop:2}}>{lead.criadoEm?new Date(lead.criadoEm).toLocaleDateString('pt-BR'):''}</div>
                 </div>
@@ -8049,8 +8203,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
       <div style={{background:'#f0f7ff',borderRadius:10,padding:'14px 18px',marginTop:20,border:'1px solid #bee3f8'}}>
         <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0',marginBottom:4}}>📡 Integração Meta Ads</div>
         <div style={{fontSize:11,color:'#4a5568',lineHeight:1.7}}>
-          Leads chegam automaticamente via webhook quando alguém preenche seu formulário do Facebook/Instagram.<br/>
-          <strong>Webhook URL:</strong> <code style={{background:'#e8f4fd',padding:'1px 6px',borderRadius:4,fontSize:11,userSelect:'all'}}>https://us-central1-secullum-crm.cloudfunctions.net/metaLeads</code>
+          A cada <strong>5 minutos</strong> o sistema busca novos leads da planilha do Google Sheets conectada aos seus formulários — funciona mesmo com o CRM fechado. Novos leads tocam um alerta sonoro.
         </div>
       </div>
     </div>
@@ -8161,6 +8314,37 @@ export default function App(){
     if(novos.length>0)tocarSino(3);
     prevClienteIds.current=new Set(clientes.map(c=>c.id));
   },[clientes]);
+
+  // Sino para novos leads (chegam da planilha via Cloud Function agendada)
+  const prevLeadIds=useRef(null);
+  useEffect(()=>{
+    if(prevLeadIds.current===null){prevLeadIds.current=new Set(leads.map(l=>l.id));return;}
+    const novos=leads.filter(l=>!prevLeadIds.current.has(l.id));
+    if(novos.length>0){
+      tocarSino(3);
+      // Notificacao do navegador, se permitida
+      try{
+        if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
+          const n=novos.length;
+          new Notification(n===1?'Novo lead recebido!':`${n} novos leads recebidos!`,{
+            body:n===1?(novos[0].nome||'Lead sem nome'):'Confira no menu Leads.',
+            icon:'/favicon.ico',
+          });
+        }
+      }catch(e){}
+    }
+    prevLeadIds.current=new Set(leads.map(l=>l.id));
+  },[leads]);
+
+  // Pede permissao de notificacao uma vez apos o login
+  useEffect(()=>{
+    if(!userProfile)return;
+    try{
+      if(typeof Notification!=='undefined'&&Notification.permission==='default'){
+        Notification.requestPermission().catch(()=>{});
+      }
+    }catch(e){}
+  },[userProfile]);
 
   // Auth listener
   useEffect(()=>{
