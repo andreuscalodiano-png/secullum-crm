@@ -3548,7 +3548,15 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   // Ordenação do menu (drag)
   const [dragMenuId,setDragMenuId]=useState(null);
   const [dragOverId,setDragOverId]=useState(null);
-  const [localOrder,setLocalOrder]=useState(()=>menuOrder||NAV_ITEMS_BASE.map(n=>n.id));
+  // Mescla a ordem salva com itens novos que ainda nao estavam nela (ex: menus
+  // adicionados em versoes posteriores). Sem isso, um menu novo nunca aparece
+  // aqui para quem ja salvou uma ordem antes dele existir.
+  const [localOrder,setLocalOrder]=useState(()=>{
+    const todos=NAV_ITEMS_BASE.map(n=>n.id);
+    if(!menuOrder||!menuOrder.length)return todos;
+    const faltando=todos.filter(id=>!menuOrder.includes(id));
+    return[...menuOrder,...faltando];
+  });
 
   const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
