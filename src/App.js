@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc
+  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, updateDoc, deleteField
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
@@ -1161,6 +1161,100 @@ const ETAPAS_DEFAULT=[
   {id:'processo_finalizado', label:'Processo Finalizado',   color:'#2c3e50',ordem:7,padrao:false,notifEmail:false,ativo:true},
 ];
 
+
+// --- MANUTENÇÃO: corrige documentos com campo "id" cruzado -------------------
+// Clones antigos copiavam o campo "id" do original. Como o listener montava
+// {id:d.id, ...data}, esse campo mascarava o ID real e a edição do clone
+// gravava por cima do original.
+function ConfigManutencao(){
+  const COLECOES=['orc_servicos','orc_formas','orc_templates','equipamentos','config_kanban','usuarios'];
+  const [achados,setAchados]=useState(null);
+  const [rodando,setRodando]=useState(false);
+  const [log,setLog]=useState([]);
+
+  async function analisar(){
+    setRodando(true);setLog([]);
+    const out=[];
+    try{
+      for(const col of COLECOES){
+        const snap=await getDocs(collection(db,col));
+        snap.forEach(d=>{
+          const data=d.data();
+          if(data.id!==undefined&&data.id!==d.id){
+            out.push({col,docId:d.id,campoId:String(data.id),nome:data.nome||data.label||'(sem nome)'});
+          }
+        });
+      }
+      setAchados(out);
+    }catch(e){setLog([`Erro ao analisar: ${e.message}`]);}
+    setRodando(false);
+  }
+
+  async function corrigir(){
+    if(!achados?.length)return;
+    if(!window.confirm(`Corrigir ${achados.length} registro(s)?\n\nApenas o campo "id" duplicado é removido — nenhum registro é excluído.`))return;
+    setRodando(true);
+    const linhas=[];
+    for(const a of achados){
+      try{
+        await updateDoc(doc(db,a.col,a.docId),{id:deleteField()});
+        linhas.push(`✓ ${a.col} — ${a.nome}`);
+      }catch(e){linhas.push(`✗ ${a.col} — ${a.nome}: ${e.message}`);}
+      setLog([...linhas]);
+    }
+    linhas.push(`\nConcluído. Recarregue a página para ver o resultado.`);
+    setLog([...linhas]);
+    setAchados([]);
+    setRodando(false);
+  }
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#e67e22',marginBottom:4,textTransform:'uppercase'}}>🔧 Manutenção de dados</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        Procura registros cujo campo <code>id</code> aponta para outro documento — o que fazia a edição de um item salvar por cima de outro.
+        A correção remove só esse campo. <strong>Nenhum registro é excluído.</strong>
+      </div>
+
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
+        <button onClick={analisar} disabled={rodando}
+          style={{padding:'8px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:rodando?'default':'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a'}}>
+          {rodando?'Verificando...':'🔍 Verificar base'}
+        </button>
+        {achados&&achados.length>0&&(
+          <button onClick={corrigir} disabled={rodando}
+            style={{padding:'8px 18px',borderRadius:7,border:'none',background:'#e67e22',color:'#fff',cursor:rodando?'default':'pointer',fontSize:12,fontWeight:700}}>
+            🔧 Corrigir {achados.length} registro(s)
+          </button>
+        )}
+      </div>
+
+      {achados&&achados.length===0&&log.length===0&&(
+        <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'10px 14px',fontSize:12,color:'#276749'}}>
+          ✓ Nenhum problema encontrado — a base está consistente.
+        </div>
+      )}
+
+      {achados&&achados.length>0&&(
+        <div style={{marginBottom:10}}>
+          {achados.map((a,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:6,background:'#fff5f5',border:'1px solid #fca5a5',marginBottom:5,flexWrap:'wrap'}}>
+              <span style={{flex:1,fontSize:12,fontWeight:600,color:'#2c3e50',minWidth:140}}>{a.nome}</span>
+              <span style={{fontSize:10,color:'#7f8c8d'}}>{a.col}</span>
+              <span style={{fontSize:10,color:'#991b1b',background:'#fee2e2',padding:'2px 8px',borderRadius:10,fontWeight:700}}>id aponta para {a.campoId}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {log.length>0&&(
+        <div style={{background:'#1e1e1e',borderRadius:7,padding:'12px',fontSize:11,color:'#86efac',fontFamily:'monospace',whiteSpace:'pre-wrap',maxHeight:220,overflowY:'auto'}}>
+          {log.join('\n')}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- CONFIG: PLANILHAS DE LEADS (Google Sheets) ------------------------------
 function ConfigPlanilhas(){
@@ -4442,6 +4536,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
       {/* ══ ABA: Sistema ══ */}
       {abaConfig==='sistema'&&<>
+      {/* Manutenção de dados */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigManutencao/></div>
+      )}
+
       {/* Changelog — novidades do sistema */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <ConfigChangelog/>
