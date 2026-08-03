@@ -8127,7 +8127,173 @@ const STATUS_LEAD=[
 ];
 const COR_LEAD={novo:'#3498db',contatado:'#f5a623',qualificado:'#9b59b6',convertido:'#27ae60',perdido:'#e74c3c'};
 
-function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
+
+// --- PROPOSTA DO LEAD (plano, serviços e equipamento) ------------------------
+// Componente no escopo do modulo: se ficasse dentro do render, o React
+// remontaria os inputs a cada tecla e o campo perderia o foco.
+function BlocoPropostaLead({lead,orcServicos,equipamentosCad}){
+  const [p,setP]=useState({
+    plano:lead.plano||'',
+    equipTipo:lead.equipTipo||'',
+    vS:lead.vS??'',
+    vI:lead.vI??'',
+    vE:lead.vE??'',
+    servicos:lead.servicos||[],
+  });
+  const [salvo,setSalvo]=useState(false);
+  const [salvando,setSalvando]=useState(false);
+
+  // Recarrega quando muda de lead
+  useEffect(()=>{
+    setP({
+      plano:lead.plano||'',
+      equipTipo:lead.equipTipo||'',
+      vS:lead.vS??'',
+      vI:lead.vI??'',
+      vE:lead.vE??'',
+      servicos:lead.servicos||[],
+    });
+    setSalvo(false);
+  },[lead.id]);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setP(x=>({...x,[k]:v}));setSalvo(false);};
+
+  function alternarServico(sv){
+    setSalvo(false);
+    setP(x=>{
+      const ja=x.servicos.find(s=>s.id===sv.id);
+      const servicos=ja
+        ? x.servicos.filter(s=>s.id!==sv.id)
+        : [...x.servicos,{id:sv.id,nome:sv.nome,valor:Number(sv.valor)||0}];
+      return {...x,servicos};
+    });
+  }
+  function mudarValorServico(id,valor){
+    setSalvo(false);
+    setP(x=>({...x,servicos:x.servicos.map(s=>s.id===id?{...s,valor}:s)}));
+  }
+
+  const totalServicos=p.servicos.reduce((t,s)=>t+(parseFloat(String(s.valor).replace(',','.'))||0),0);
+  const num=v=>parseFloat(String(v??'').replace(',','.'))||0;
+  const totalGeral=num(p.vS)+num(p.vI)+num(p.vE);
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'leads',lead.id),{
+        plano:p.plano,
+        equipTipo:p.equipTipo,
+        vS:p.vS===''?'':num(p.vS),
+        vI:p.vI===''?'':num(p.vI),
+        vE:p.vE===''?'':num(p.vE),
+        servicos:p.servicos.map(s=>({...s,valor:num(s.valor)})),
+        atualizadoEm:new Date().toISOString(),
+      },{merge:true});
+      await registrarEventoLead(lead,'proposta',`Proposta atualizada${p.plano?' — plano '+p.plano:''}`);
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro ao salvar proposta: '+e.message);}
+    setSalvando(false);
+  }
+
+  return(
+    <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>💼 Proposta ao cliente</div>
+        {totalGeral>0&&<div style={{fontSize:12,color:'#7f8c8d'}}>Total: <strong style={{color:'#27ae60',fontSize:14}}>{moeda(totalGeral)}</strong></div>}
+      </div>
+
+      {/* Plano e equipamento */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+        <div>
+          <label style={lbl}>Plano oferecido</label>
+          <select style={fi} value={p.plano} onChange={e=>up('plano',e.target.value)}>
+            <option value="">— Selecione —</option>
+            {PLANOS.map(x=><option key={x} value={x}>{x}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Equipamento</label>
+          <select style={fi} value={p.equipTipo} onChange={e=>up('equipTipo',e.target.value)}>
+            <option value="">— Selecione —</option>
+            {(equipamentosCad||[]).map(e=><option key={e.id} value={e.nome}>{e.nome}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Serviços cadastrados */}
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Serviços e produtos</label>
+        {(orcServicos||[]).length===0
+          ?<div style={{fontSize:11,color:'#7f8c8d',background:'#f8f9fa',borderRadius:6,padding:'10px 12px'}}>
+             Nenhum serviço cadastrado. Cadastre em <strong>Configurações → Orçamentos → Serviços</strong>.
+           </div>
+          :<div style={{display:'flex',flexDirection:'column',gap:6,maxHeight:220,overflowY:'auto'}}>
+             {(orcServicos||[]).map(sv=>{
+               const sel=p.servicos.find(x=>x.id===sv.id);
+               return(
+                 <div key={sv.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderRadius:7,
+                   background:sel?'#f0fff4':'#f8f9fa',border:`1px solid ${sel?'#9ae6b4':'#e8eaed'}`}}>
+                   <input type="checkbox" checked={!!sel} onChange={()=>alternarServico(sv)} style={{width:15,height:15,cursor:'pointer',flexShrink:0}}/>
+                   <div style={{flex:1,minWidth:0}}>
+                     <div style={{fontSize:12,fontWeight:600,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sv.nome}</div>
+                     {sv.descricao&&<div style={{fontSize:10,color:'#aaa',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sv.descricao}</div>}
+                   </div>
+                   {sel
+                     ?<div style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
+                        <span style={{fontSize:10,color:'#7f8c8d'}}>R$</span>
+                        <input type="number" step="0.01" min="0" value={sel.valor}
+                          onChange={e=>mudarValorServico(sv.id,e.target.value)}
+                          style={{width:88,padding:'4px 7px',borderRadius:5,border:'1px solid #9ae6b4',fontSize:12,textAlign:'right'}}/>
+                      </div>
+                     :<span style={{fontSize:11,color:'#27ae60',fontWeight:700,flexShrink:0}}>{moeda(Number(sv.valor)||0)}</span>}
+                 </div>
+               );
+             })}
+           </div>}
+        {p.servicos.length>0&&(
+          <div style={{textAlign:'right',fontSize:11,color:'#7f8c8d',marginTop:6}}>
+            {p.servicos.length} selecionado(s) — <strong style={{color:'#27ae60'}}>{moeda(totalServicos)}</strong>
+          </div>
+        )}
+      </div>
+
+      {/* Valores do contrato */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
+        <div>
+          <label style={lbl}>Sistema/mês (R$)</label>
+          <input style={fi} type="number" step="0.01" min="0" value={p.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
+        </div>
+        <div>
+          <label style={lbl}>Implantação (R$)</label>
+          <input style={fi} type="number" step="0.01" min="0" value={p.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
+        </div>
+        <div>
+          <label style={lbl}>Equipamento (R$)</label>
+          <input style={fi} type="number" step="0.01" min="0" value={p.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
+        </div>
+      </div>
+
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'9px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Salvo!':'💾 Salvar proposta'}
+        </button>
+        {totalServicos>0&&(
+          <button onClick={()=>{up('vI',String(totalServicos));}}
+            title="Copia o total dos serviços selecionados para o campo Implantação"
+            style={{padding:'9px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+            ↓ Usar total dos serviços na implantação
+          </button>
+        )}
+        <span style={{fontSize:10,color:'#aaa'}}>Estes dados vão preenchidos ao converter em cliente.</span>
+      </div>
+    </div>
+  );
+}
+
+function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,equipamentosCad,vendedoresCad}){
   const [sel,setSel]=useState(null);
   const [filtroStatus,setFiltroStatus]=useState('todos');
   const [busca,setBusca]=useState('');
@@ -8224,6 +8390,9 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
           <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value)} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="Anotações sobre este lead..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8}}/>
           <button onClick={()=>salvarObs(lead)} disabled={salvando} style={{padding:'7px 16px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>{salvando?'Salvando...':'💾 Salvar'}</button>
         </div>
+        {/* Proposta: plano, serviços e valores */}
+        <BlocoPropostaLead lead={lead} orcServicos={orcServicos} equipamentosCad={equipamentosCad}/>
+
         {/* Tempo de resposta + histórico */}
         <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
@@ -8738,17 +8907,46 @@ export default function App(){
   // Funções de persistência
   // Converter lead em cliente
   function converterLeadEmCliente(lead){
+    // Extrai o numero de funcionarios da faixa textual ("De 6 a 10 funcionários" -> 10)
+    const numeros=String(lead.funcionarios||'').match(/\d+/g);
+    const func=numeros&&numeros.length?parseInt(numeros[numeros.length-1],10):'';
+
+    // Monta a observacao com o que foi levantado no lead
+    const linhas=[
+      `Origem: ${lead.origem||'Meta Ads'}${lead.plataforma?' ('+lead.plataforma+')':''}`,
+      lead.criadoEm?`Lead recebido em ${new Date(lead.criadoEm).toLocaleDateString('pt-BR')}`:null,
+      lead.campanha?`Campanha: ${lead.campanha}`:null,
+      lead.anuncio?`Anúncio: ${lead.anuncio}`:null,
+      lead.funcionarios?`Porte informado: ${lead.funcionarios}`:null,
+      lead.solucao?`Solução buscada: ${lead.solucao}`:null,
+      lead.sistema_ponto?`Já usa sistema de ponto: ${lead.sistema_ponto}`:null,
+      (lead.servicos&&lead.servicos.length)
+        ? 'Serviços da proposta: '+lead.servicos.map(s=>`${s.nome} (${moeda(Number(s.valor)||0)})`).join(', ')
+        : null,
+      lead.obs?`\nAnotações do lead:\n${lead.obs}`:null,
+    ].filter(Boolean);
+
     const dados={
       nome:(lead.nome||'').toUpperCase(),
       contato:(lead.nome||'').toUpperCase(),
       tel:mascaraTel(lead.telefone||''),
       email:lead.email||'',
-      func:0,obs:`Lead gerado via Meta Ads em ${lead.criadoEm?new Date(lead.criadoEm).toLocaleDateString('pt-BR'):''}. Solução: ${lead.solucao||'—'}. Funcionários: ${lead.funcionarios||'—'}`,
-      status:'Aguardando',plano:'Basic',vendedor:'',
+      func,
+      // Proposta montada no lead — cai direto nos campos do cadastro
+      plano:lead.plano||'Basic',
+      equipTipo:lead.equipTipo||undefined,
+      vS:lead.vS!==''&&lead.vS!==undefined?lead.vS:'',
+      vI:lead.vI!==''&&lead.vI!==undefined?lead.vI:'',
+      vE:lead.vE!==''&&lead.vE!==undefined?lead.vE:'',
+      obs:linhas.join('\n'),
+      vendedor:'',
+      _leadId:lead.id||'',
     };
     setDadosImportados(dados);
-    // Atualizar status do lead para convertido
-    if(lead.id) setDoc(doc(db,'leads',lead.id),{status:'convertido',atualizadoEm:new Date().toISOString()},{merge:true});
+    if(lead.id){
+      setDoc(doc(db,'leads',lead.id),{status:'convertido',atualizadoEm:new Date().toISOString()},{merge:true});
+      registrarEventoLead(lead,'conversao','Convertido em cliente');
+    }
     setPage('novo');
   }
 
@@ -9198,6 +9396,9 @@ export default function App(){
           {/* LEADS */}
           {!clienteSel&&page==='leads'&&<LeadsView
             leads={leads}
+            orcServicos={orcServicos}
+            equipamentosCad={equipamentosCad}
+            vendedoresCad={vendedoresCad}
             onConverterCliente={converterLeadEmCliente}
             onConverterOrcamento={converterLeadEmOrcamento}
           />}
