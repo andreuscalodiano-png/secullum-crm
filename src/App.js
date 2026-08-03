@@ -3703,6 +3703,16 @@ function ConfigChangelog(){
   );
 }
 
+// Abas da tela de Configurações — só agrupam as seções existentes
+const ABAS_CONFIG=[
+  {id:'usuarios',    icone:'👥',  label:'Usuários e acessos'},
+  {id:'cadastros',   icone:'🏢',  label:'Cadastros'},
+  {id:'fluxo',       icone:'🔄',  label:'Fluxo de trabalho'},
+  {id:'orcamentos',  icone:'📋',  label:'Orçamentos'},
+  {id:'integracoes', icone:'🔌',  label:'Integrações'},
+  {id:'sistema',     icone:'ℹ️',  label:'Sistema'},
+];
+
 function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates,asaasHabilitado,onToggleAsaas}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
@@ -3733,6 +3743,7 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
   const sec={background:'#fff',borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)',marginBottom:16};
   const [salvandoToggle,setSalvandoToggle]=useState(false);
+  const [abaConfig,setAbaConfig]=useState('usuarios');
 
   async function handleToggleAsaas(){
     setSalvandoToggle(true);
@@ -3860,64 +3871,22 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   return(
     <div style={{fontFamily:'sans-serif'}}>
 
-      {/* Integração Asaas — liga/desliga */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <div style={{...sec,border:`2px solid ${asaasHabilitado?'#27ae60':'#e74c3c'}`}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
-            <div>
-              <div style={{fontWeight:700,fontSize:12,color:asaasHabilitado?'#27ae60':'#e74c3c',marginBottom:4,textTransform:'uppercase'}}>
-                {asaasHabilitado?'🟢':'🔴'} Integração Asaas
-              </div>
-              <div style={{fontSize:12,color:'#7f8c8d',maxWidth:480}}>
-                {asaasHabilitado
-                  ? 'Ativa. O sistema gera cobranças, links e mensagens reais no Asaas normalmente.'
-                  : 'Desativada. Nenhuma cobrança, link, assinatura ou mensagem será enviada ao Asaas — útil durante testes. O CRM segue funcionando sem nenhuma integração externa.'}
-              </div>
-            </div>
-            <button onClick={handleToggleAsaas} disabled={salvandoToggle}
-              style={{
-                position:'relative',width:64,height:32,borderRadius:16,border:'none',cursor:salvandoToggle?'wait':'pointer',
-                background:asaasHabilitado?'#27ae60':'#dde1e7',transition:'background .2s',flexShrink:0,
-              }}>
-              <div style={{
-                position:'absolute',top:3,left:asaasHabilitado?34:3,width:26,height:26,borderRadius:'50%',
-                background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s',
-              }}/>
-            </button>
-          </div>
-          {!asaasHabilitado&&(
-            <div style={{marginTop:10,padding:'8px 12px',background:'#fff5f5',border:'1px solid #fee2e2',borderRadius:6,fontSize:11,color:'#c0392b'}}>
-              ⚠ Enquanto desativado: botão "Gerar Faturamento" e geração de links Pix/Cartão vão exibir erro ao tentar usar o Asaas. Isso é esperado — reative quando terminar os testes.
-            </div>
-          )}
-        </div>
-      )}
+      {/* Navegação por abas — apenas organiza visualmente as seções */}
+      <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap',borderBottom:'1px solid #e8eaed',paddingBottom:12}}>
+        {ABAS_CONFIG.map(a=>(
+          <button key={a.id} onClick={()=>setAbaConfig(a.id)}
+            style={{padding:'9px 16px',borderRadius:8,border:'none',
+              background:abaConfig===a.id?'#2c3e50':'#ecf0f1',
+              color:abaConfig===a.id?'#fff':'#7f8c8d',
+              cursor:'pointer',fontSize:12,fontWeight:abaConfig===a.id?700:500,
+              display:'flex',alignItems:'center',gap:6,transition:'all .15s'}}>
+            <span>{a.icone}</span>{a.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Kanban de Implantação */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <div style={sec}><ConfigKanban/></div>
-      )}
-
-      {/* Planilhas de leads */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <div style={sec}><ConfigPlanilhas/></div>
-      )}
-
-      {/* Configuração de Email (SMTP) — notificações de responsável */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <ConfigSMTP/>
-      )}
-
-      {/* Horário de Funcionamento — agenda de instalações */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <ConfigHorario/>
-      )}
-
-      {/* Changelog — novidades do sistema */}
-      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <ConfigChangelog/>
-      )}
-
+      {/* ══ ABA: Usuários e acessos ══ */}
+      {abaConfig==='usuarios'&&<>
       {/* Sessão atual */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Sessão atual</div>
@@ -3965,29 +3934,10 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* Usuários cadastrados */}
       <UsuariosLista usuarios={usuarios} currentUser={currentUser}/>
 
-      {/* Mapeamento de vendedores antigos */}
-      {nomesParaMapear.length>0&&(
-        <div style={{...sec,borderTop:`3px solid ${C.orange}`}}>
-          <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:4,textTransform:'uppercase'}}>Vincular vendedores antigos</div>
-          <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>Esses nomes existem nos dados históricos mas não correspondem a nenhum vendedor cadastrado. Vincule cada um ao vendedor correto.</div>
-          {nomesParaMapear.map(n=>(
-            <div key={n} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
-              <div style={{width:120,fontSize:12,fontWeight:700,color:C.text,background:'#f8f9fa',padding:'6px 10px',borderRadius:5,flexShrink:0}}>{n}</div>
-              <i className="ti ti-arrow-right" style={{color:C.textMuted,fontSize:14,flexShrink:0}}/>
-              <select style={{...fi}} value={mapa[n]||''} onChange={e=>setMapa(x=>({...x,[n]:e.target.value}))}>
-                <option value="">— Selecione o vendedor —</option>
-                {vendedoresCad.map(v=><option key={v.id} value={v.nome}>{v.nome}</option>)}
-              </select>
-            </div>
-          ))}
-          {mapaStatus==='ok'&&<div style={{background:'#d5f5e3',color:'#1e8449',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>✓ Clientes atualizados com sucesso!</div>}
-          {mapaStatus==='erro'&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>Erro ao salvar. Tente novamente.</div>}
-          <button onClick={salvarMapeamento} disabled={mapaStatus==='salvando'} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.orange,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
-            <i className="ti ti-device-floppy"/>{mapaStatus==='salvando'?'Salvando...':'Salvar mapeamento'}
-          </button>
-        </div>
-      )}
+      </>}
 
+      {/* ══ ABA: Cadastros ══ */}
+      {abaConfig==='cadastros'&&<>
       {/* Vendedores */}
       <div style={sec}>
         <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Vendedores ({vendedoresCad.length})</div>
@@ -4053,11 +4003,42 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
         </div>
       </div>
 
-      {/* Orçamento — Serviços, Formas de pagamento e Templates */}
-      <div style={{...sec,borderTop:`3px solid #f5a623`}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:12,textTransform:'uppercase'}}>⚙️ Configurações de orçamento</div>
-        <OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>
-      </div>
+      {/* Mapeamento de vendedores antigos */}
+      {nomesParaMapear.length>0&&(
+        <div style={{...sec,borderTop:`3px solid ${C.orange}`}}>
+          <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:4,textTransform:'uppercase'}}>Vincular vendedores antigos</div>
+          <div style={{fontSize:11,color:C.textMuted,marginBottom:12}}>Esses nomes existem nos dados históricos mas não correspondem a nenhum vendedor cadastrado. Vincule cada um ao vendedor correto.</div>
+          {nomesParaMapear.map(n=>(
+            <div key={n} style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <div style={{width:120,fontSize:12,fontWeight:700,color:C.text,background:'#f8f9fa',padding:'6px 10px',borderRadius:5,flexShrink:0}}>{n}</div>
+              <i className="ti ti-arrow-right" style={{color:C.textMuted,fontSize:14,flexShrink:0}}/>
+              <select style={{...fi}} value={mapa[n]||''} onChange={e=>setMapa(x=>({...x,[n]:e.target.value}))}>
+                <option value="">— Selecione o vendedor —</option>
+                {vendedoresCad.map(v=><option key={v.id} value={v.nome}>{v.nome}</option>)}
+              </select>
+            </div>
+          ))}
+          {mapaStatus==='ok'&&<div style={{background:'#d5f5e3',color:'#1e8449',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>✓ Clientes atualizados com sucesso!</div>}
+          {mapaStatus==='erro'&&<div style={{background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:6,fontSize:12,marginBottom:10}}>Erro ao salvar. Tente novamente.</div>}
+          <button onClick={salvarMapeamento} disabled={mapaStatus==='salvando'} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.orange,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+            <i className="ti ti-device-floppy"/>{mapaStatus==='salvando'?'Salvando...':'Salvar mapeamento'}
+          </button>
+        </div>
+      )}
+
+      </>}
+
+      {/* ══ ABA: Fluxo de trabalho ══ */}
+      {abaConfig==='fluxo'&&<>
+      {/* Kanban de Implantação */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigKanban/></div>
+      )}
+
+      {/* Horário de Funcionamento — agenda de instalações */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigHorario/>
+      )}
 
       {/* Ordenação do menu */}
       <div style={sec}>
@@ -4109,6 +4090,74 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
           </button>
         </div>
       </div>
+
+      </>}
+
+      {/* ══ ABA: Orçamentos ══ */}
+      {abaConfig==='orcamentos'&&<>
+      {/* Orçamento — Serviços, Formas de pagamento e Templates */}
+      <div style={{...sec,borderTop:`3px solid #f5a623`}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:12,textTransform:'uppercase'}}>⚙️ Configurações de orçamento</div>
+        <OrcConfigView orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates}/>
+      </div>
+
+      </>}
+
+      {/* ══ ABA: Integrações ══ */}
+      {abaConfig==='integracoes'&&<>
+      {/* Integração Asaas — liga/desliga */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={{...sec,border:`2px solid ${asaasHabilitado?'#27ae60':'#e74c3c'}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:12}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:12,color:asaasHabilitado?'#27ae60':'#e74c3c',marginBottom:4,textTransform:'uppercase'}}>
+                {asaasHabilitado?'🟢':'🔴'} Integração Asaas
+              </div>
+              <div style={{fontSize:12,color:'#7f8c8d',maxWidth:480}}>
+                {asaasHabilitado
+                  ? 'Ativa. O sistema gera cobranças, links e mensagens reais no Asaas normalmente.'
+                  : 'Desativada. Nenhuma cobrança, link, assinatura ou mensagem será enviada ao Asaas — útil durante testes. O CRM segue funcionando sem nenhuma integração externa.'}
+              </div>
+            </div>
+            <button onClick={handleToggleAsaas} disabled={salvandoToggle}
+              style={{
+                position:'relative',width:64,height:32,borderRadius:16,border:'none',cursor:salvandoToggle?'wait':'pointer',
+                background:asaasHabilitado?'#27ae60':'#dde1e7',transition:'background .2s',flexShrink:0,
+              }}>
+              <div style={{
+                position:'absolute',top:3,left:asaasHabilitado?34:3,width:26,height:26,borderRadius:'50%',
+                background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s',
+              }}/>
+            </button>
+          </div>
+          {!asaasHabilitado&&(
+            <div style={{marginTop:10,padding:'8px 12px',background:'#fff5f5',border:'1px solid #fee2e2',borderRadius:6,fontSize:11,color:'#c0392b'}}>
+              ⚠ Enquanto desativado: botão "Gerar Faturamento" e geração de links Pix/Cartão vão exibir erro ao tentar usar o Asaas. Isso é esperado — reative quando terminar os testes.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Planilhas de leads */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigPlanilhas/></div>
+      )}
+
+      {/* Configuração de Email (SMTP) — notificações de responsável */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigSMTP/>
+      )}
+
+      </>}
+
+      {/* ══ ABA: Sistema ══ */}
+      {abaConfig==='sistema'&&<>
+      {/* Changelog — novidades do sistema */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <ConfigChangelog/>
+      )}
+
+      </>}
 
     </div>
   );
