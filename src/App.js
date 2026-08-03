@@ -180,6 +180,24 @@ function mascaraTel(v){
   if(n.length<=10) return '('+n.slice(0,2)+') '+n.slice(2,6)+'-'+n.slice(6);
   return '('+n.slice(0,2)+') '+n.slice(2,7)+'-'+n.slice(7);
 }
+// Numero de WhatsApp para leads. Diferente de telParaWa: o export da Meta ja
+// traz o telefone com +55, entao adicionar 55 de novo quebraria o link.
+function waLead(tel){
+  const n=(tel||'').replace(/\D/g,'');
+  if(!n)return '';
+  if(n.startsWith('55')&&n.length>=12)return n;
+  const limpo=n.startsWith('0')?n.slice(1):n;
+  return '55'+limpo;
+}
+function linkWaLead(lead){
+  const num=waLead(lead.telefone);
+  if(!num)return '';
+  const primeiro=(lead.nome||'').trim().split(' ')[0];
+  const saud=primeiro?`Olá ${primeiro}!`:'Olá!';
+  const msg=encodeURIComponent(`${saud} 😊\n\nVi que você tem interesse em nosso sistema de controle de ponto. Posso te ajudar?\n\n_Guion Informática_`);
+  return `https://wa.me/${num}?text=${msg}`;
+}
+
 function telParaWa(tel){
   // Remove tudo que não for número e adiciona código do Brasil
   const n=tel.replace(/\D/g,'');
@@ -7271,6 +7289,166 @@ Quando gerar mensagem de cobrança, formate para WhatsApp, máximo 4 linhas, inc
 
 
 
+
+// ─── PAINEL DE DESEMPENHO DAS CAMPANHAS ──────────────────────────────────────
+function PainelCampanhas({leads}){
+  const [agrupar,setAgrupar]=useState('campanha');
+  const [periodo,setPeriodo]=useState('todos');
+
+  const OPCOES=[
+    {id:'campanha',label:'Campanha'},
+    {id:'conjunto',label:'Conjunto'},
+    {id:'anuncio',label:'Anúncio'},
+    {id:'plataforma',label:'Plataforma'},
+    {id:'solucao',label:'Solução buscada'},
+    {id:'funcionarios',label:'Porte da empresa'},
+  ];
+  const PERIODOS=[
+    {id:'todos',label:'Todo o período'},
+    {id:'7',label:'Últimos 7 dias'},
+    {id:'30',label:'Últimos 30 dias'},
+    {id:'90',label:'Últimos 90 dias'},
+  ];
+
+  // Filtra por periodo
+  const agora=Date.now();
+  const leadsFiltrados=leads.filter(l=>{
+    if(periodo==='todos')return true;
+    if(!l.criadoEm)return false;
+    const dias=(agora-new Date(l.criadoEm).getTime())/86400000;
+    return dias<=parseInt(periodo,10);
+  });
+
+  // Agrupa e calcula conversao
+  const grupos={};
+  leadsFiltrados.forEach(l=>{
+    const chave=(l[agrupar]||'').trim()||'(não informado)';
+    if(!grupos[chave])grupos[chave]={total:0,convertidos:0,qualificados:0,perdidos:0,novos:0};
+    grupos[chave].total++;
+    if(l.status==='convertido')grupos[chave].convertidos++;
+    else if(l.status==='qualificado')grupos[chave].qualificados++;
+    else if(l.status==='perdido')grupos[chave].perdidos++;
+    else if(l.status==='novo')grupos[chave].novos++;
+  });
+
+  const linhas=Object.entries(grupos)
+    .map(([nome,d])=>({nome,...d,taxa:d.total>0?Math.round((d.convertidos/d.total)*100):0}))
+    .sort((a,b)=>b.total-a.total);
+
+  const maxTotal=linhas.reduce((m,l)=>Math.max(m,l.total),0)||1;
+  const totalGeral=leadsFiltrados.length;
+  const convGeral=leadsFiltrados.filter(l=>l.status==='convertido').length;
+  const taxaGeral=totalGeral>0?Math.round((convGeral/totalGeral)*100):0;
+
+  // Leads por dia (ultimos 14 dias com dados)
+  const porDia={};
+  leadsFiltrados.forEach(l=>{
+    if(!l.criadoEm)return;
+    const d=new Date(l.criadoEm);
+    if(isNaN(d.getTime()))return;
+    const k=d.toISOString().slice(0,10);
+    porDia[k]=(porDia[k]||0)+1;
+  });
+  const dias=Object.entries(porDia).sort((a,b)=>a[0].localeCompare(b[0])).slice(-14);
+  const maxDia=dias.reduce((m,[,n])=>Math.max(m,n),0)||1;
+
+  const fi={padding:'7px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',cursor:'pointer'};
+
+  if(leads.length===0){
+    return(
+      <div style={{background:'#fff',borderRadius:10,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+        <div style={{fontSize:36,marginBottom:10}}>📊</div>
+        <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>Sem dados de campanha ainda</div>
+        <div style={{fontSize:12,color:'#7f8c8d'}}>Importe o CSV da Meta para ver o desempenho por campanha, conjunto e anúncio.</div>
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      {/* Filtros */}
+      <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:11,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase'}}>Agrupar por</span>
+        <select style={fi} value={agrupar} onChange={e=>setAgrupar(e.target.value)}>
+          {OPCOES.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <select style={fi} value={periodo} onChange={e=>setPeriodo(e.target.value)}>
+          {PERIODOS.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+      </div>
+
+      {/* Resumo */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10,marginBottom:16}}>
+        {[
+          ['Total de leads',totalGeral,'#3498db'],
+          ['Convertidos',convGeral,'#27ae60'],
+          ['Taxa de conversão',taxaGeral+'%',taxaGeral>=20?'#27ae60':taxaGeral>=10?'#f5a623':'#e74c3c'],
+          [OPCOES.find(o=>o.id===agrupar)?.label+'s ativas',linhas.length,'#9b59b6'],
+        ].map(([l,v,cor])=>(
+          <div key={l} style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${cor}`}}>
+            <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{l}</div>
+            <div style={{fontSize:22,fontWeight:700,color:'#2c3e50'}}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Ranking */}
+      <div style={{background:'#fff',borderRadius:10,padding:'18px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase',letterSpacing:.6,marginBottom:14}}>
+          Ranking por {OPCOES.find(o=>o.id===agrupar)?.label.toLowerCase()}
+        </div>
+        <div style={{display:'flex',flexDirection:'column',gap:12}}>
+          {linhas.map((l,i)=>(
+            <div key={l.nome}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:5,gap:10}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:1}}>
+                  <span style={{width:20,height:20,borderRadius:'50%',background:i===0?'#f5a623':'#e8eaed',color:i===0?'#fff':'#7f8c8d',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,flexShrink:0}}>{i+1}</span>
+                  <span style={{fontSize:12,fontWeight:600,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.nome}</span>
+                </div>
+                <div style={{display:'flex',gap:12,flexShrink:0,fontSize:11}}>
+                  <span style={{color:'#7f8c8d'}}><strong style={{color:'#2c3e50',fontSize:13}}>{l.total}</strong> lead{l.total!==1?'s':''}</span>
+                  <span style={{color:l.taxa>=20?'#27ae60':l.taxa>=10?'#f5a623':'#7f8c8d',fontWeight:700,minWidth:60,textAlign:'right'}}>{l.taxa}% conv.</span>
+                </div>
+              </div>
+              {/* Barra empilhada */}
+              <div style={{display:'flex',height:8,borderRadius:4,overflow:'hidden',background:'#f0f0f0',width:`${Math.max((l.total/maxTotal)*100,8)}%`}}>
+                {l.convertidos>0&&<div style={{width:`${(l.convertidos/l.total)*100}%`,background:'#27ae60'}}/>}
+                {l.qualificados>0&&<div style={{width:`${(l.qualificados/l.total)*100}%`,background:'#9b59b6'}}/>}
+                {l.novos>0&&<div style={{width:`${(l.novos/l.total)*100}%`,background:'#3498db'}}/>}
+                {l.perdidos>0&&<div style={{width:`${(l.perdidos/l.total)*100}%`,background:'#e74c3c'}}/>}
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Legenda */}
+        <div style={{display:'flex',gap:14,marginTop:14,paddingTop:12,borderTop:'1px solid #f0f0f0',flexWrap:'wrap'}}>
+          {[['Convertido','#27ae60'],['Qualificado','#9b59b6'],['Novo','#3498db'],['Perdido','#e74c3c']].map(([l,cor])=>(
+            <div key={l} style={{display:'flex',alignItems:'center',gap:5,fontSize:10,color:'#7f8c8d'}}>
+              <span style={{width:9,height:9,borderRadius:2,background:cor}}/>{l}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Leads por dia */}
+      {dias.length>1&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'18px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase',letterSpacing:.6,marginBottom:16}}>Leads por dia</div>
+          <div style={{display:'flex',alignItems:'flex-end',gap:4,height:120}}>
+            {dias.map(([dia,n])=>(
+              <div key={dia} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:4,minWidth:0}}>
+                <span style={{fontSize:10,fontWeight:700,color:'#2c3e50'}}>{n}</span>
+                <div title={`${dia}: ${n} lead(s)`} style={{width:'100%',height:`${(n/maxDia)*80}px`,minHeight:4,background:'linear-gradient(180deg,#e84393,#c2185b)',borderRadius:'3px 3px 0 0'}}/>
+                <span style={{fontSize:9,color:'#aaa',whiteSpace:'nowrap'}}>{dia.slice(8,10)}/{dia.slice(5,7)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MODAL: NOVO LEAD MANUAL ─────────────────────────────────────────────────
 function ModalNovoLead({onFechar}){
   const [f,setF]=useState({nome:'',email:'',telefone:'',funcionarios:'',sistema_ponto:'',solucao:'',origem:'Manual',obs:''});
@@ -7390,19 +7568,38 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
   const [erro,setErro]=useState('');
 
   const CAMPOS=[
-    {id:'nome',label:'Nome',dicas:['full_name','nome','name','nome_completo']},
+    {id:'nome',label:'Nome',dicas:['full_name','nome_completo','nome','name']},
     {id:'email',label:'Email',dicas:['email','e-mail']},
     {id:'telefone',label:'Telefone',dicas:['phone_number','telefone','phone','celular']},
     {id:'funcionarios',label:'Funcionários',dicas:['funcionarios','funcionários','employees']},
-    {id:'sistema_ponto',label:'Já usa sistema?',dicas:['sistema','controle_de_ponto','ponto']},
-    {id:'solucao',label:'Solução buscada',dicas:['solucao','solução','qual_solucao']},
-    {id:'criadoEm',label:'Data de criação',dicas:['created_time','data','created']},
+    {id:'sistema_ponto',label:'Já usa sistema?',dicas:['controle_de_ponto','sistema']},
+    {id:'solucao',label:'Solução buscada',dicas:['solucao','solução']},
+    {id:'campanha',label:'Campanha',dicas:['campaign_name']},
+    {id:'conjunto',label:'Conjunto de anúncios',dicas:['adset_name']},
+    {id:'anuncio',label:'Anúncio',dicas:['ad_name']},
+    {id:'plataforma',label:'Plataforma',dicas:['platform']},
+    {id:'formulario',label:'Formulário',dicas:['form_name']},
+    {id:'criadoEm',label:'Data de criação',dicas:['created_time','created','data']},
   ];
 
   const fi={padding:'7px 9px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
+  // Detecta o delimitador olhando a primeira linha. O export da Meta usa TAB.
+  function detectarDelimitador(texto){
+    const primeira=texto.split(/\r?\n/)[0]||'';
+    const cont={'\t':0,';':0,',':0};
+    let dentroAspas=false;
+    for(const ch of primeira){
+      if(ch==='"'){dentroAspas=!dentroAspas;continue;}
+      if(!dentroAspas&&cont[ch]!==undefined)cont[ch]++;
+    }
+    let melhor='\t',max=0;
+    for(const [d,n] of Object.entries(cont)){if(n>max){max=n;melhor=d;}}
+    return max>0?melhor:'\t';
+  }
+
   // Parser de CSV que respeita aspas
-  function parseCSV(texto){
+  function parseCSV(texto,delim){
     const linhas=[];let campo='';let linha=[];let dentroAspas=false;
     for(let i=0;i<texto.length;i++){
       const ch=texto[i],prox=texto[i+1];
@@ -7412,7 +7609,7 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
         else campo+=ch;
       }else{
         if(ch==='"')dentroAspas=true;
-        else if(ch===','||ch===';'){linha.push(campo);campo='';}
+        else if(ch===delim){linha.push(campo);campo='';}
         else if(ch==='\n'){linha.push(campo);campo='';linhas.push(linha);linha=[];}
         else if(ch==='\r'){/* ignora */}
         else campo+=ch;
@@ -7422,32 +7619,65 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
     return linhas.filter(l=>l.some(x=>(x||'').trim()!==''));
   }
 
+  // Normaliza valores do export da Meta:
+  // remove prefixos (p:, l:, ag:), aspas e converte snake_case em texto legivel
+  function limpar(v){
+    let s=(v||'').trim();
+    s=s.replace(/^"(.*)"$/s,'$1');
+    s=s.replace(/^(p|l|ag|as|c|f):/,'');
+    return s.trim();
+  }
+  function humanizar(v){
+    let s=limpar(v);
+    if(!s)return '';
+    s=s.replace(/_/g,' ').trim();
+    return s.charAt(0).toUpperCase()+s.slice(1);
+  }
+
   function carregarArquivo(file){
     if(!file)return;
     setErro('');
     const reader=new FileReader();
+    // O export da Meta vem em UTF-16 LE com BOM. Detectamos pelo BOM e
+    // relemos com o encoding certo, senao o conteudo vira caracteres soltos.
     reader.onload=ev=>{
+      const buf=new Uint8Array(ev.target.result);
+      let encoding='UTF-8';
+      if(buf.length>1){
+        if(buf[0]===0xFF&&buf[1]===0xFE)encoding='UTF-16LE';
+        else if(buf[0]===0xFE&&buf[1]===0xFF)encoding='UTF-16BE';
+      }
+      let texto;
       try{
-        const dados=parseCSV(ev.target.result);
+        texto=new TextDecoder(encoding).decode(buf);
+      }catch(e){
+        texto=new TextDecoder('UTF-8').decode(buf);
+      }
+      texto=texto.replace(/^\uFEFF/,'');
+      try{
+        const delim=detectarDelimitador(texto);
+        const dados=parseCSV(texto,delim);
         if(dados.length<2){setErro('Arquivo vazio ou sem linhas de dados.');return;}
         const head=dados[0].map(h=>(h||'').trim());
         setCabecalho(head);
         setLinhas(dados.slice(1));
         // Auto-mapear por palavras-chave
         const auto={};
+        const usadas=new Set();
+        const norm=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z_]/g,'');
         CAMPOS.forEach(campo=>{
-          const idx=head.findIndex(h=>{
-            const hl=h.toLowerCase().replace(/[^a-z_]/g,'');
-            return campo.dicas.some(d=>hl.includes(d.toLowerCase().replace(/[^a-z_]/g,'')));
-          });
-          if(idx>=0)auto[campo.id]=String(idx);
+          // 1) match exato do nome da coluna
+          let idx=head.findIndex((h,i)=>!usadas.has(i)&&campo.dicas.some(d=>norm(h)===norm(d)));
+          // 2) match parcial como fallback
+          if(idx<0)idx=head.findIndex((h,i)=>!usadas.has(i)&&campo.dicas.some(d=>norm(h).includes(norm(d))));
+          if(idx>=0){auto[campo.id]=String(idx);usadas.add(idx);}
         });
         setMapeamento(auto);
         setEtapa(2);
       }catch(e){setErro('Erro ao ler o arquivo: '+e.message);}
     };
     reader.onerror=()=>setErro('Não foi possível ler o arquivo.');
-    reader.readAsText(file,'UTF-8');
+    reader.readAsArrayBuffer(file);
   }
 
   async function importar(){
@@ -7461,7 +7691,12 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
         const val=id=>{
           const idx=mapeamento[id];
           if(idx===undefined||idx==='')return '';
-          return (linha[parseInt(idx,10)]||'').trim();
+          return limpar(linha[parseInt(idx,10)]||'');
+        };
+        const valH=id=>{
+          const idx=mapeamento[id];
+          if(idx===undefined||idx==='')return '';
+          return humanizar(linha[parseInt(idx,10)]||'');
         };
         const email=val('email').toLowerCase();
         const telRaw=val('telefone');
@@ -7479,14 +7714,20 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
           if(!isNaN(d.getTime()))criadoEm=d.toISOString();
         }
 
+        const plat=val('plataforma').toLowerCase();
         const id='lead_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);
         await setDoc(doc(db,'leads',id),{
           nome:nome.toUpperCase(),
           email,
           telefone:telRaw,
-          funcionarios:val('funcionarios'),
-          sistema_ponto:val('sistema_ponto'),
-          solucao:val('solucao'),
+          funcionarios:valH('funcionarios'),
+          sistema_ponto:valH('sistema_ponto'),
+          solucao:valH('solucao'),
+          campanha:val('campanha'),
+          conjunto:val('conjunto'),
+          anuncio:val('anuncio'),
+          formulario:val('formulario'),
+          plataforma:plat==='ig'?'Instagram':plat==='fb'?'Facebook':valH('plataforma'),
           origem:'Meta Ads',
           status:'novo',
           criadoEm,
@@ -7555,7 +7796,7 @@ function ModalImportarLeads({leadsExistentes,onFechar}){
                 <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Prévia da 1ª linha</div>
                 <div style={{fontSize:11,color:'#2c3e50',lineHeight:1.7}}>
                   {CAMPOS.filter(c=>mapeamento[c.id]!==undefined&&mapeamento[c.id]!=='').map(c=>(
-                    <div key={c.id}><strong>{c.label}:</strong> {(linhas[0][parseInt(mapeamento[c.id],10)]||'—')}</div>
+                    <div key={c.id}><strong>{c.label}:</strong> {humanizar(linhas[0][parseInt(mapeamento[c.id],10)])||'—'}</div>
                   ))}
                 </div>
               </div>
@@ -7617,6 +7858,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
   const [salvando,setSalvando]=useState(false);
   const [modalNovo,setModalNovo]=useState(false);
   const [modalImport,setModalImport]=useState(false);
+  const [aba,setAba]=useState('lista');
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   async function atualizarStatus(id,status){
@@ -7670,7 +7912,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:8}}>
-            {[['Funcionários',lead.funcionarios],['Solução buscada',lead.solucao],['Usa sistema de ponto?',lead.sistema_ponto],['Origem',lead.origem||'Meta Ads'],['Campanha',lead.campanha],['Formulário',lead.formulario]].map(([l,v])=>v?(
+            {[['Funcionários',lead.funcionarios],['Solução buscada',lead.solucao],['Usa sistema de ponto?',lead.sistema_ponto],['Origem',lead.origem||'Meta Ads'],['Plataforma',lead.plataforma],['Campanha',lead.campanha],['Conjunto',lead.conjunto],['Anúncio',lead.anuncio],['Formulário',lead.formulario]].map(([l,v])=>v?(
               <div key={l} style={{background:'#f8f9fa',borderRadius:6,padding:'8px 12px'}}>
                 <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:2}}>{l}</div>
                 <div style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{v}</div>
@@ -7694,7 +7936,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
               <div style={{fontWeight:700,fontSize:12,color:'#276749',marginBottom:2}}>Contato via WhatsApp</div>
               <div style={{fontSize:11,color:'#7f8c8d'}}>{lead.nome} • {lead.telefone}</div>
             </div>
-            <a href={`https://wa.me/${ (lead.telefone||'').replace(/\D/g,'').length===11?'55'+(lead.telefone||'').replace(/\D/g,''):(lead.telefone||'').replace(/\D/g,'') }?text=${encodeURIComponent('Olá '+(lead.nome||'').split(' ')[0]+'! Vi que você tem interesse em nosso sistema de ponto. Posso te ajudar? 😊 — Guion Informática')}`}
+            <a href={linkWaLead(lead)}
               target="_blank" rel="noopener noreferrer"
               style={{padding:'9px 18px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:13,textDecoration:'none',display:'flex',alignItems:'center',gap:6}}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
@@ -7708,19 +7950,29 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
 
   return(
     <div>
-      {/* Ações */}
-      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+      {/* Abas + Ações */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:6}}>
+          {[{id:'lista',l:'🎯 Leads'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
+            <button key={a.id} onClick={()=>setAba(a.id)} style={{padding:'8px 16px',borderRadius:7,border:'none',background:aba===a.id?'#e84393':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>{a.l}</button>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button onClick={()=>setModalImport(true)} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6}}>
           📥 Importar CSV da Meta
         </button>
         <button onClick={()=>setModalNovo(true)} style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#e84393',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:6}}>
           ＋ Novo lead
         </button>
+        </div>
       </div>
 
       {modalNovo&&<ModalNovoLead onFechar={()=>setModalNovo(false)}/>}
       {modalImport&&<ModalImportarLeads leadsExistentes={leads} onFechar={()=>setModalImport(false)}/>}
 
+      {aba==='campanhas'&&<PainelCampanhas leads={leads}/>}
+
+      {aba==='lista'&&<>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
           {[{id:'todos',label:`Todos (${leads.length})`},...STATUS_LEAD.map(s=>({id:s.id,label:`${s.label} (${contadores[s.id]||0})`}))].map(s=>(
@@ -7771,6 +8023,15 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
                     {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
                   </div>
                 </div>
+                {/* WhatsApp direto do card */}
+                {lead.telefone&&(
+                  <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
+                    onClick={e=>e.stopPropagation()}
+                    title={`Chamar ${lead.nome||''} no WhatsApp`}
+                    style={{flexShrink:0,width:34,height:34,borderRadius:'50%',background:'#25D366',display:'flex',alignItems:'center',justifyContent:'center',textDecoration:'none',boxShadow:'0 1px 4px rgba(37,211,102,.4)'}}>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                  </a>
+                )}
                 <div style={{textAlign:'right',flexShrink:0}}>
                   <span style={{background:st.color+'22',color:st.color,padding:'2px 10px',borderRadius:10,fontSize:10,fontWeight:700,display:'block',marginBottom:3}}>{st.label}</span>
                   {lead.solucao&&<div style={{fontSize:10,color:'#7f8c8d',maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.solucao}</div>}
@@ -7781,6 +8042,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
           })}
         </div>
       )}
+
+      </>}
 
       {/* Info webhook */}
       <div style={{background:'#f0f7ff',borderRadius:10,padding:'14px 18px',marginTop:20,border:'1px solid #bee3f8'}}>
