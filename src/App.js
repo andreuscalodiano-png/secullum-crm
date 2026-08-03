@@ -1059,6 +1059,159 @@ const ETAPAS_DEFAULT=[
   {id:'processo_finalizado', label:'Processo Finalizado',   color:'#2c3e50',ordem:7,padrao:false,notifEmail:false,ativo:true},
 ];
 
+
+// --- CONFIG: PLANILHAS DE LEADS (Google Sheets) ------------------------------
+function ConfigPlanilhas(){
+  const [planilhas,setPlanilhas]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [nova,setNova]=useState({nome:'',url:''});
+  const [editId,setEditId]=useState(null);
+  const [salvando,setSalvando]=useState(false);
+  const [testando,setTestando]=useState(null);
+  const [erro,setErro]=useState('');
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'config_planilhas'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      setPlanilhas(arr.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')));
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  // Converte a URL publicada para o formato CSV que a funcao consegue ler
+  function normalizarUrl(u){
+    let url=(u||'').trim();
+    if(!url)return '';
+    if(/\/pubhtml/.test(url))return url.replace(/\/pubhtml.*$/,'/pub?output=csv');
+    if(/\/pub(\?|$)/.test(url)&&!/output=csv/.test(url))return url+(url.includes('?')?'&':'?')+'output=csv';
+    return url;
+  }
+
+  async function salvar(){
+    setErro('');
+    if(!nova.nome.trim()){setErro('Dê um nome para identificar a planilha.');return;}
+    const url=normalizarUrl(nova.url);
+    if(!url.includes('docs.google.com')){setErro('Cole a URL publicada da planilha do Google Sheets.');return;}
+    setSalvando(true);
+    try{
+      const id=editId||'plan_'+Date.now();
+      await setDoc(doc(db,'config_planilhas',id),{
+        id,nome:nova.nome.trim(),url,ativo:true,
+        atualizadoEm:new Date().toISOString(),
+      },{merge:true});
+      setNova({nome:'',url:''});setEditId(null);
+    }catch(e){setErro('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function remover(p){
+    if(!window.confirm(`Remover a planilha "${p.nome}"?\n\nOs leads já importados continuam no sistema.`))return;
+    await deleteDoc(doc(db,'config_planilhas',p.id));
+  }
+
+  async function alternarAtivo(p){
+    await setDoc(doc(db,'config_planilhas',p.id),{ativo:!p.ativo},{merge:true});
+  }
+
+  // Testa a leitura direto do navegador, so para validar a URL
+  async function testar(p){
+    setTestando(p.id);
+    try{
+      const r=await fetch(p.url);
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const t=await r.text();
+      if(/^\s*</.test(t))throw new Error('A planilha respondeu HTML. Republique escolhendo o formato CSV.');
+      const linhas=t.split(/\r?\n/).filter(l=>l.trim()!=='');
+      alert(`✅ Planilha acessível!\n\n${Math.max(linhas.length-1,0)} linha(s) de dados encontrada(s).`);
+    }catch(e){
+      alert('❌ Não foi possível ler a planilha.\n\n'+e.message+'\n\nVerifique se ela está publicada em Arquivo > Compartilhar > Publicar na web, formato CSV.');
+    }
+    setTestando(null);
+  }
+
+  function fmtData(iso){
+    if(!iso)return null;
+    const d=new Date(iso);
+    if(isNaN(d.getTime()))return null;
+    return d.toLocaleDateString('pt-BR')+' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando planilhas...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#0f9d58',marginBottom:4,textTransform:'uppercase'}}>📊 Planilhas de leads (Google Sheets)</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+        O sistema lê estas planilhas <strong>a cada 5 minutos</strong> e importa os leads novos automaticamente — mesmo com o CRM fechado.
+        Para publicar: na planilha, <strong>Arquivo → Compartilhar → Publicar na web → escolha a aba → formato CSV</strong>.
+      </div>
+
+      {/* Lista */}
+      {planilhas.length===0&&(
+        <div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'18px',background:'#f8f9fa',borderRadius:8,marginBottom:12}}>
+          Nenhuma planilha cadastrada ainda.
+        </div>
+      )}
+      {planilhas.map(p=>(
+        <div key={p.id} style={{background:p.ativo?'#f8f9fa':'#f0f0f0',borderRadius:8,padding:'12px 14px',marginBottom:8,border:'1px solid #e8eaed',opacity:p.ativo?1:.6}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6,flexWrap:'wrap'}}>
+            <div style={{width:26,height:26,borderRadius:6,background:'#0f9d58',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{p.nome}</div>
+              <div style={{fontSize:10,color:'#aaa',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:400}}>{p.url}</div>
+            </div>
+            {/* Toggle ativo */}
+            <div onClick={()=>alternarAtivo(p)} title={p.ativo?'Ativa — clique para pausar':'Pausada — clique para ativar'}
+              style={{width:36,height:20,borderRadius:10,background:p.ativo?'#27ae60':'#dde1e7',cursor:'pointer',position:'relative',transition:'background .2s',flexShrink:0}}>
+              <div style={{position:'absolute',top:2,left:p.ativo?18:2,width:16,height:16,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+            </div>
+            <button onClick={()=>testar(p)} disabled={testando===p.id} style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#3498db',fontWeight:600,flexShrink:0}}>
+              {testando===p.id?'...':'Testar'}
+            </button>
+            <button onClick={()=>{setNova({nome:p.nome,url:p.url});setEditId(p.id);}} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,flexShrink:0}}>✏️</button>
+            <button onClick={()=>remover(p)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+          </div>
+          {/* Status da ultima sincronizacao */}
+          <div style={{display:'flex',gap:14,fontSize:10,flexWrap:'wrap',paddingLeft:36}}>
+            {p.ultimaSync
+              ?<span style={{color:'#7f8c8d'}}>🕐 Última leitura: <strong style={{color:'#2c3e50'}}>{fmtData(p.ultimaSync)}</strong></span>
+              :<span style={{color:'#aaa'}}>Ainda não sincronizada</span>}
+            {p.ultimoTotal!==undefined&&<span style={{color:'#27ae60'}}>✓ {p.ultimoTotal} lead(s) na última leitura</span>}
+            {p.ultimoErro&&<span style={{color:'#e74c3c'}} title={p.ultimoErro}>⚠ Erro: {String(p.ultimoErro).slice(0,60)}</span>}
+          </div>
+        </div>
+      ))}
+
+      {/* Formulário */}
+      <div style={{background:'#fff',borderRadius:8,padding:'14px',border:'1px dashed #dde1e7',marginTop:10}}>
+        <div style={{fontWeight:700,fontSize:11,color:editId?'#3498db':'#7f8c8d',marginBottom:10,textTransform:'uppercase'}}>
+          {editId?'✏️ Editando planilha':'+ Nova planilha'}
+        </div>
+        <div style={{marginBottom:8}}>
+          <label style={lbl}>Nome (para você identificar)</label>
+          <input style={fi} value={nova.nome} onChange={e=>setNova(x=>({...x,nome:e.target.value}))} placeholder="Ex: Campanha Brasil — Instagram"/>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>URL publicada da planilha</label>
+          <input style={fi} value={nova.url} onChange={e=>setNova(x=>({...x,url:e.target.value}))} placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv"/>
+        </div>
+        {erro&&<div style={{fontSize:11,color:'#e74c3c',marginBottom:8}}>{erro}</div>}
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={salvar} disabled={salvando} style={{padding:'8px 18px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#0f9d58',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
+            {salvando?'Salvando...':(editId?'Salvar alterações':'+ Adicionar planilha')}
+          </button>
+          {editId&&<button onClick={()=>{setEditId(null);setNova({nome:'',url:''});setErro('');}} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- CONFIG KANBAN IMPLANTAÇÃO -----------------------------------------------
 function ConfigKanban(){
   const [etapas,setEtapas]=useState([]);
@@ -3743,6 +3896,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* Kanban de Implantação */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={sec}><ConfigKanban/></div>
+      )}
+
+      {/* Planilhas de leads */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigPlanilhas/></div>
       )}
 
       {/* Configuração de Email (SMTP) — notificações de responsável */}
@@ -7930,6 +8088,18 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
   const [modalImport,setModalImport]=useState(false);
   const [aba,setAba]=useState('lista');
   const [sincronizando,setSincronizando]=useState(false);
+  const [ultimoSync,setUltimoSync]=useState(null);
+
+  // Acompanha o log de sincronizacao para mostrar a ultima atualizacao
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'sync_log'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push(d.data()));
+      const ult=arr.filter(x=>x.tipo==='leads_sheets')
+        .sort((a,b)=>new Date(b.data||0)-new Date(a.data||0))[0];
+      setUltimoSync(ult||null);
+    });
+    return()=>unsub();
+  },[]);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   async function atualizarStatus(id,status){
@@ -8096,8 +8266,11 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
           try{
             const r=await fetch('https://us-central1-secullum-crm.cloudfunctions.net/syncLeadsManual',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
             const d=await r.json();
-            if(d.error)alert('Erro na sincronização: '+d.error);
-            else alert(d.novos>0?`✅ ${d.novos} novo(s) lead(s) importado(s)!`:'Nenhum lead novo na planilha.');
+            if(d.error){alert('Erro na sincronização: '+d.error);}
+            else{
+              const det=(d.detalhes||[]).map(x=>x.erro?`⚠ ${x.planilha}: ${x.erro}`:`• ${x.planilha}: ${x.novos} novo(s) de ${x.total} linha(s)`).join('\n');
+              alert((d.novos>0?`✅ ${d.novos} novo(s) lead(s) importado(s)!`:'Nenhum lead novo encontrado.')+(det?'\n\n'+det:''));
+            }
           }catch(e){alert('Erro ao sincronizar: '+e.message);}
           setSincronizando(false);
         }} disabled={sincronizando} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:sincronizando?'default':'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6,opacity:sincronizando?.6:1}}>
@@ -8201,9 +8374,37 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento}){
 
       {/* Info webhook */}
       <div style={{background:'#f0f7ff',borderRadius:10,padding:'14px 18px',marginTop:20,border:'1px solid #bee3f8'}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0',marginBottom:4}}>📡 Integração Meta Ads</div>
-        <div style={{fontSize:11,color:'#4a5568',lineHeight:1.7}}>
-          A cada <strong>5 minutos</strong> o sistema busca novos leads da planilha do Google Sheets conectada aos seus formulários — funciona mesmo com o CRM fechado. Novos leads tocam um alerta sonoro.
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:240}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#2b6cb0',marginBottom:4}}>📡 Sincronização automática</div>
+            <div style={{fontSize:11,color:'#4a5568',lineHeight:1.7}}>
+              A cada <strong>5 minutos</strong> o sistema lê as planilhas cadastradas em <strong>Configurações → Planilhas de leads</strong> e importa os leads novos — mesmo com o CRM fechado. Leads novos tocam um alerta sonoro.
+            </div>
+          </div>
+          {ultimoSync&&(
+            <div style={{background:'#fff',borderRadius:8,padding:'10px 14px',border:'1px solid #bee3f8',minWidth:190}}>
+              <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>Última atualização</div>
+              {(()=>{
+                const d=new Date(ultimoSync.data);
+                const valida=!isNaN(d.getTime());
+                const min=valida?Math.floor((Date.now()-d.getTime())/60000):null;
+                const rel=min===null?'—':min<1?'agora mesmo':min<60?`há ${min} min`:min<1440?`há ${Math.floor(min/60)}h`:`há ${Math.floor(min/1440)}d`;
+                const temErro=(ultimoSync.detalhes||[]).some(x=>x.erro);
+                return(
+                  <>
+                    <div style={{fontSize:13,fontWeight:700,color:temErro?'#e74c3c':'#27ae60'}}>{rel}</div>
+                    <div style={{fontSize:10,color:'#aaa'}}>
+                      {valida?d.toLocaleDateString('pt-BR')+' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):''}
+                    </div>
+                    <div style={{fontSize:10,color:'#7f8c8d',marginTop:3}}>
+                      {ultimoSync.planilhas||0} planilha(s) · {ultimoSync.novos||0} lead(s) novo(s)
+                    </div>
+                    {temErro&&<div style={{fontSize:10,color:'#e74c3c',marginTop:2}}>⚠ Alguma planilha falhou — veja em Configurações</div>}
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
       </div>
     </div>

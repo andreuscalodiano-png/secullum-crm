@@ -393,3 +393,418 @@ exports.asaasWebhook = functions.https.onRequest(async (req, res) => {
     } catch (_) {}
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// META LEADS — Webhook Facebook/Instagram Lead Ads
+// URL: https://us-central1-secullum-crm.cloudfunctions.net/metaLeads
+// Verify Token (configurar no Meta for Developers): GUION_LEADS_2024
+// Token de página: firebase functions:config:set meta.page_token="SEU_TOKEN"
+//   ou variável de ambiente META_PAGE_TOKEN
+// Deploy: firebase deploy --only functions:metaLeads
+// ═══════════════════════════════════════════════════════════════════════════
+
+const META_VERIFY_TOKEN = 'GUION_LEADS_2024';
+const META_API_VERSION = 'v19.0';
+
+// Mapeia os nomes internos dos campos do formulário Meta → campos do CRM.
+// Os nomes internos de campos customizados são gerados pela Meta (minúsculo,
+// underscores). Confira o nome real em Meta Business Suite > Formulários.
+function mapearCamposMeta(fieldData) {
+  const mapa = {
+    'full_name': 'nome',
+    'email': 'email',
+    'phone_number': 'telefone',
+    'quantos_funcionarios_sua_empresa_possui': 'funcionarios',
+    'quantos_funcionários_sua_empresa_possui?': 'funcionarios',
+    'hoje_sua_empresa_ja_utiliza_algum_sistema_de_controle_de_ponto': 'sistema_ponto',
+    'hoje_sua_empresa_já_utiliza_algum_sistema_de_controle_de_ponto?': 'sistema_ponto',
+    'qual_solucao_voce_procura': 'solucao',
+    'qual_solução_você_procura?': 'solucao',
+  };
+  const out = {};
+  (fieldData || []).forEach(({ name, values }) => {
+    const key = mapa[name] || name;
+    out[key] = (values && values[0]) || '';
+  });
+  return out;
+}
+
+exports.metaLeads = functions.https.onRequest(async (req, res) => {
+
+  // ── GET: verificação do webhook pela Meta ─────────────────────────────────
+  if (req.method === 'GET') {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
+      console.log('[metaLeads] webhook verificado com sucesso');
+      return res.status(200).send(challenge);
+    }
+    return res.status(403).send('Token inválido');
+  }
+
+  // ── POST: recebimento de leads ────────────────────────────────────────────
+  if (req.method === 'POST') {
+    try {
+      const body = req.body;
+      if (body.object !== 'page') return res.status(200).send('OK');
+
+      const pageToken =
+        (functions.config().meta && functions.config().meta.page_token) ||
+        process.env.META_PAGE_TOKEN || '';
+
+      for (const entry of (body.entry || [])) {
+        for (const change of (entry.changes || [])) {
+          if (change.field !== 'leadgen') continue;
+
+          const v = change.value || {};
+          const leadId = v.leadgen_id;
+          if (!leadId) continue;
+
+          // Buscar dados completos do lead na Graph API
+          let campos = {};
+          let criadoEm = new Date().toISOString();
+          if (pageToken) {
+            try {
+              const resp = await fetch(
+                `https://graph.facebook.com/${META_API_VERSION}/${leadId}?fields=field_data,created_time&access_token=${pageToken}`
+              );
+              const data = await resp.json();
+              if (data.error) {
+                console.error('[metaLeads] Graph API erro:', JSON.stringify(data.error));
+              } else {
+                campos = mapearCamposMeta(data.field_data);
+                if (data.created_time) criadoEm = new Date(data.created_time).toISOString();
+              }
+            } catch (apiErr) {
+              console.error('[metaLeads] erro Graph API:', apiErr.message);
+            }
+          } else {
+            console.log('[metaLeads] AVISO: meta.page_token não configurado — lead salvo sem dados do formulário');
+          }
+
+          const leadDoc = {
+            ...campos,
+            status: 'novo',
+            origem: 'Meta Ads',
+            campanha: v.campaign_name || v.campaign_id || '',
+            formulario: v.form_name || v.form_id || '',
+            anuncio: v.ad_name || v.ad_id || '',
+            pageId: entry.id || '',
+            leadgenId: leadId,
+            criadoEm,
+            atualizadoEm: new Date().toISOString(),
+          };
+
+          await db.collection('leads').doc(String(leadId)).set(leadDoc, { merge: true });
+          console.log('[metaLeads] lead salvo:', leadId, campos.nome || '(sem nome)');
+        }
+      }
+
+      return res.status(200).send('OK');
+    } catch (err) {
+      console.error('[metaLeads] ERRO:', err.message, err.stack);
+      // Sempre responder 200 para a Meta não desativar o webhook
+      return res.status(200).send('OK');
+    }
+  }
+
+  return res.status(405).send('Método não permitido');
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SYNC LEADS — Google Sheets → Firestore (roda a cada 5 minutos)
+//
+// A Meta escreve os leads na planilha automaticamente (integração nativa
+// Formulários de lead → Google Sheets). Esta função lê a planilha e grava
+// na coleção 'leads'. Funciona com o CRM fechado, pois roda no servidor.
+//
+// CONFIGURAR (escolha UMA das opções):
+//
+//  Opção A — planilha publicada como CSV (mais simples):
+//    Na planilha: Arquivo > Compartilhar > Publicar na web > aba > CSV
+//    firebase functions:config:set sheets.csv_url="URL_PUBLICADA"
+//
+//  Opção B — planilha privada via Service Account:
+//    firebase functions:config:set sheets.id="ID_DA_PLANILHA" \
+//      sheets.email="conta@projeto.iam.gserviceaccount.com" \
+//      sheets.key="-----BEGIN PRIVATE KEY-----\n..."
+//    Compartilhe a planilha com o e-mail da service account (leitor).
+//    Requer: cd functions && npm install googleapis
+//
+// Deploy: firebase deploy --only functions:syncLeadsSheets
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Detecta o delimitador da primeira linha (a Meta exporta com TAB)
+function detectarDelim(texto) {
+  const primeira = (texto.split(/\r?\n/)[0] || '');
+  const cont = { '\t': 0, ';': 0, ',': 0 };
+  let aspas = false;
+  for (const ch of primeira) {
+    if (ch === '"') { aspas = !aspas; continue; }
+    if (!aspas && cont[ch] !== undefined) cont[ch]++;
+  }
+  let melhor = ',', max = 0;
+  for (const [d, n] of Object.entries(cont)) if (n > max) { max = n; melhor = d; }
+  return max > 0 ? melhor : ',';
+}
+
+function parseCSV(texto, delim) {
+  const linhas = []; let campo = ''; let linha = []; let aspas = false;
+  for (let i = 0; i < texto.length; i++) {
+    const ch = texto[i], prox = texto[i + 1];
+    if (aspas) {
+      if (ch === '"' && prox === '"') { campo += '"'; i++; }
+      else if (ch === '"') aspas = false;
+      else campo += ch;
+    } else {
+      if (ch === '"') aspas = true;
+      else if (ch === delim) { linha.push(campo); campo = ''; }
+      else if (ch === '\n') { linha.push(campo); campo = ''; linhas.push(linha); linha = []; }
+      else if (ch === '\r') { /* ignora */ }
+      else campo += ch;
+    }
+  }
+  if (campo !== '' || linha.length > 0) { linha.push(campo); linhas.push(linha); }
+  return linhas.filter(l => l.some(x => (x || '').trim() !== ''));
+}
+
+// Remove prefixos que a Meta adiciona (p:, l:, ag:, as:, c:, f:) e aspas
+function limparValor(v) {
+  let s = (v || '').trim();
+  s = s.replace(/^"(.*)"$/s, '$1');
+  s = s.replace(/^(p|l|ag|as|c|f):/, '');
+  return s.trim();
+}
+function humanizarValor(v) {
+  let s = limparValor(v);
+  if (!s) return '';
+  s = s.replace(/_/g, ' ').trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function normalizarCabecalho(h) {
+  return (h || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z_]/g, '');
+}
+
+// Encontra o indice da coluna pelo nome (match exato, depois parcial)
+function acharCol(head, nomes) {
+  for (const n of nomes) {
+    const i = head.findIndex(h => normalizarCabecalho(h) === normalizarCabecalho(n));
+    if (i >= 0) return i;
+  }
+  for (const n of nomes) {
+    const i = head.findIndex(h => normalizarCabecalho(h).includes(normalizarCabecalho(n)));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+function normalizarUrlPlanilha(u){
+  let url = (u || '').trim();
+  if (!url) return '';
+  if (/\/pubhtml/.test(url)) return url.replace(/\/pubhtml.*$/, '/pub?output=csv');
+  if (/\/pub(\?|$)/.test(url) && !/output=csv/.test(url)) {
+    return url + (url.includes('?') ? '&' : '?') + 'output=csv';
+  }
+  return url;
+}
+
+// Baixa e converte uma planilha publicada em CSV
+async function baixarPlanilha(url) {
+  const alvo = normalizarUrlPlanilha(url);
+  const resp = await fetch(alvo, { redirect: 'follow' });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const texto = await resp.text();
+  if (/^\s*</.test(texto)) {
+    throw new Error('A planilha respondeu HTML em vez de CSV. Republique escolhendo o formato CSV.');
+  }
+  return parseCSV(texto, detectarDelim(texto));
+}
+
+// Lista as planilhas cadastradas em Configurações > Planilhas de leads.
+// Mantém compatibilidade com a config antiga (sheets.csv_url).
+async function listarPlanilhas() {
+  const lista = [];
+  const snap = await db.collection('config_planilhas').get();
+  snap.forEach(d => {
+    const p = d.data();
+    if (p.ativo !== false && p.url) lista.push({ id: d.id, nome: p.nome || d.id, url: p.url });
+  });
+  if (lista.length === 0) {
+    const cfg = (functions.config().sheets || {});
+    const legado = cfg.csv_url || process.env.SHEETS_CSV_URL;
+    if (legado) lista.push({ id: null, nome: 'Planilha padrão', url: legado });
+  }
+  return lista;
+}
+
+// Importa as linhas de uma planilha já baixada
+async function importarLinhas(dados, origemNome) {
+  if (dados.length < 2) return { novos: 0, pulados: 0, total: 0 };
+
+  const head = dados[0].map(h => (h || '').trim());
+  const col = {
+    id:           acharCol(head, ['id']),
+    criadoEm:     acharCol(head, ['created_time', 'created', 'data']),
+    nome:         acharCol(head, ['full_name', 'nome_completo', 'nome', 'name']),
+    email:        acharCol(head, ['email']),
+    telefone:     acharCol(head, ['phone_number', 'telefone', 'phone']),
+    funcionarios: acharCol(head, ['funcionarios', 'employees']),
+    sistemaPonto: acharCol(head, ['controle_de_ponto', 'sistema']),
+    solucao:      acharCol(head, ['solucao']),
+    campanha:     acharCol(head, ['campaign_name']),
+    conjunto:     acharCol(head, ['adset_name']),
+    anuncio:      acharCol(head, ['ad_name']),
+    formulario:   acharCol(head, ['form_name']),
+    plataforma:   acharCol(head, ['platform']),
+  };
+
+  const snap = await db.collection('leads').get();
+  const existentes = new Set(), emails = new Set(), tels = new Set();
+  snap.forEach(d => {
+    const x = d.data();
+    if (x.leadgenId) existentes.add(String(x.leadgenId));
+    if (x.email) emails.add(String(x.email).toLowerCase().trim());
+    if (x.telefone) tels.add(String(x.telefone).replace(/\D/g, ''));
+  });
+
+  const val  = (l, i) => (i >= 0 ? limparValor(l[i]) : '');
+  const valH = (l, i) => (i >= 0 ? humanizarValor(l[i]) : '');
+
+  let novos = 0, pulados = 0;
+  const batch = db.batch();
+
+  for (const linha of dados.slice(1)) {
+    const leadId = val(linha, col.id);
+    const email = val(linha, col.email).toLowerCase();
+    const telRaw = val(linha, col.telefone);
+    const telNum = telRaw.replace(/\D/g, '');
+
+    if ((leadId && existentes.has(leadId)) ||
+        (email && emails.has(email)) ||
+        (telNum && tels.has(telNum))) { pulados++; continue; }
+
+    const nome = val(linha, col.nome);
+    if (!nome && !email && !telRaw) continue;
+
+    let criadoEm = new Date().toISOString();
+    const dataRaw = val(linha, col.criadoEm);
+    if (dataRaw) {
+      const d = new Date(dataRaw);
+      if (!isNaN(d.getTime())) criadoEm = d.toISOString();
+    }
+
+    const plat = val(linha, col.plataforma).toLowerCase();
+    const docId = leadId ? 'lead_meta_' + leadId
+                         : 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+    batch.set(db.collection('leads').doc(docId), {
+      nome: nome.toUpperCase(),
+      email,
+      telefone: telRaw,
+      funcionarios: valH(linha, col.funcionarios),
+      sistema_ponto: valH(linha, col.sistemaPonto),
+      solucao: valH(linha, col.solucao),
+      campanha: val(linha, col.campanha),
+      conjunto: val(linha, col.conjunto),
+      anuncio: val(linha, col.anuncio),
+      formulario: val(linha, col.formulario),
+      plataforma: plat === 'ig' ? 'Instagram' : plat === 'fb' ? 'Facebook' : humanizarValor(plat),
+      origem: 'Meta Ads',
+      status: 'novo',
+      leadgenId: leadId || '',
+      planilhaOrigem: origemNome || '',
+      criadoEm,
+      atualizadoEm: new Date().toISOString(),
+      importadoPor: 'Sync automático',
+      historico: [],
+    }, { merge: true });
+
+    if (leadId) existentes.add(leadId);
+    if (email) emails.add(email);
+    if (telNum) tels.add(telNum);
+    novos++;
+  }
+
+  if (novos > 0) await batch.commit();
+  return { novos, pulados, total: dados.length - 1 };
+}
+
+// Varre todas as planilhas cadastradas
+async function sincronizarLeads() {
+  const planilhas = await listarPlanilhas();
+  if (planilhas.length === 0) {
+    console.log('[syncLeads] nenhuma planilha cadastrada');
+    return { novos: 0, existentes: 0, planilhas: 0, detalhes: [] };
+  }
+
+  let novosTotal = 0, puladosTotal = 0;
+  const detalhes = [];
+
+  for (const p of planilhas) {
+    const agora = new Date().toISOString();
+    try {
+      const dados = await baixarPlanilha(p.url);
+      const r = await importarLinhas(dados, p.nome);
+      novosTotal += r.novos;
+      puladosTotal += r.pulados;
+      detalhes.push({ planilha: p.nome, novos: r.novos, total: r.total });
+      console.log(`[syncLeads] "${p.nome}": ${r.novos} novo(s) de ${r.total} linha(s)`);
+      if (p.id) {
+        await db.collection('config_planilhas').doc(p.id).set({
+          ultimaSync: agora, ultimoTotal: r.total, ultimosNovos: r.novos, ultimoErro: null,
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error(`[syncLeads] erro em "${p.nome}":`, err.message);
+      detalhes.push({ planilha: p.nome, erro: err.message });
+      if (p.id) {
+        await db.collection('config_planilhas').doc(p.id).set({
+          ultimaSync: agora, ultimoErro: err.message,
+        }, { merge: true });
+      }
+    }
+  }
+
+  return { novos: novosTotal, existentes: puladosTotal, planilhas: planilhas.length, detalhes };
+}
+
+// Execução agendada — a cada 5 minutos
+exports.syncLeadsSheets = functions.pubsub
+  .schedule('every 5 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const r = await sincronizarLeads();
+      await db.collection('sync_log').add({
+        tipo: 'leads_sheets',
+        novos: r.novos,
+        existentes: r.existentes,
+        planilhas: r.planilhas,
+        detalhes: r.detalhes || [],
+        data: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('[syncLeads] ERRO:', err.message);
+      await db.collection('sync_log').add({
+        tipo: 'leads_sheets',
+        erro: err.message,
+        data: new Date().toISOString(),
+      });
+    }
+    return null;
+  });
+
+// Execução manual — botão "Sincronizar agora" no CRM
+exports.syncLeadsManual = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const r = await sincronizarLeads();
+    res.status(200).json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[syncLeadsManual] ERRO:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
