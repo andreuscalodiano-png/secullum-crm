@@ -20,6 +20,7 @@ const storage = getStorage(app);
 // --- CONSTANTES --------------------------------------------------------------
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
+const UFS=['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 const FUNCTIONS_URL='https://us-central1-secullum-crm.cloudfunctions.net';
 // Flag global — controla se as integrações com Asaas estão ativas.
 // Atualizada em tempo real via onSnapshot em config/sistema (ver App principal).
@@ -208,6 +209,31 @@ function escolherResponsavelFaturamento(usuarios){
     ||null;
 }
 
+// --- ENVIO DE WHATSAPP (Datafy) ----------------------------------------------
+// Base para as rotinas automáticas: avisar o técnico do agendamento do dia,
+// notificar o vendedor de um lead novo, cobrar retorno de orçamento etc.
+// A escolha do número é por finalidade; o token fica só no servidor.
+async function enviarWhatsApp({para,texto,finalidade,numeroId,template,variaveis,contexto}){
+  if(!para)return {ok:false,erro:'Destinatário não informado'};
+  try{
+    const r=await fetch(`${FUNCTIONS_URL}/datafyEnviar`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({para,texto,finalidade,numeroId,template,variaveis,contexto:contexto||''}),
+    });
+    const d=await r.json();
+    if(d.error)return {ok:false,erro:d.error};
+    return {ok:true,dados:d};
+  }catch(e){
+    return {ok:false,erro:e.message};
+  }
+}
+// Envia para um usuário do sistema pelo celular cadastrado
+async function avisarUsuario(usuario,texto,contexto){
+  if(!usuario?.celular)return {ok:false,erro:`${usuario?.nome||'Usuário'} está sem celular cadastrado`};
+  return enviarWhatsApp({para:usuario.celular,texto,finalidade:'interno',contexto});
+}
+
 // --- CABEÇALHO DE SEÇÃO (padrão para cadastro e edição) ----------------------
 // Cor fixa por assunto para virar memória visual: azul=identificação,
 // roxo=endereço, laranja=valores, verde=contrato, ciano=equipamento.
@@ -323,14 +349,14 @@ function exportarExcel(dados, nomeArquivo){
     if(s.includes(';')||s.includes('"')||s.includes('\n'))return`"${s.replace(/"/g,'""')}"`;
     return s;
   };
-  const cab=['Data','Empresa','CNPJ','Contato','Telefone','Email','Funcionários','Equipamento','Plano','Vendedor','Status','Sistema/mês','Implantação','Equipamento R$','Total','Pagamento','1º Boleto'];
+  const cab=['Data','Empresa','CNPJ','Contato','Telefone','Email','Cidade','UF','Funcionários','Equipamento','Plano','Vendedor','Status','Sistema/mês','Implantação','Equipamento R$','Total','Pagamento','1º Boleto'];
   const linhas=[cab,...dados.map(c=>{
     let dataFmt='';
     try{
       const d=c.data instanceof Date?c.data:(c.data?new Date(c.data):null);
       if(d&&!isNaN(d))dataFmt=`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
     }catch(e){}
-    return[dataFmt,c.nome,c.cnpj,c.contato,c.tel,c.email,c.func,c.equipTipo,c.plano,c.vendedor,c.status,
+    return[dataFmt,c.nome,c.cnpj,c.contato,c.tel,c.email,c.cidade||'',c.uf||c.estado||'',c.func,c.equipTipo,c.plano,c.vendedor,c.status,
       (c.vS||0).toFixed(2),(c.vI||0).toFixed(2),(c.vE||0).toFixed(2),(c.total||0).toFixed(2),c.pagamento,c.dtBoleto];
   })];
   const csv='\uFEFF'+linhas.map(l=>l.map(escape).join(';')).join('\n');
@@ -1516,6 +1542,216 @@ function ConfigManutencao(){
   );
 }
 
+// --- CONFIG: WHATSAPP (Datafy) -----------------------------------------------
+// Cada número tem seu próprio token (sk_live_...). O token nunca sai do
+// Firestore: o front chama a Cloud Function, que faz a requisição autenticada.
+const FINALIDADES_WA=[
+  {id:'comercial',   label:'Comercial',   cor:'#3498db', desc:'Vendas, orçamentos e leads'},
+  {id:'financeiro',  label:'Financeiro',  cor:'#27ae60', desc:'Cobranças e faturamento'},
+  {id:'suporte',     label:'Suporte',     cor:'#9b59b6', desc:'Atendimento e chamados'},
+  {id:'implantacao', label:'Implantação', cor:'#f5a623', desc:'Agendamentos e instalação'},
+  {id:'interno',     label:'Interno',     cor:'#7f8c8d', desc:'Avisos para a equipe'},
+];
+
+function ConfigWhatsApp(){
+  const [numeros,setNumeros]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [form,setForm]=useState({nome:'',token:'',finalidade:'comercial',numero:''});
+  const [editId,setEditId]=useState(null);
+  const [salvando,setSalvando]=useState(false);
+  const [testando,setTestando]=useState(null);
+  const [erro,setErro]=useState('');
+  const [verToken,setVerToken]=useState({});
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'config_whatsapp'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setNumeros(arr.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')));
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvar(){
+    setErro('');
+    if(!form.nome.trim()){setErro('Dê um nome para identificar o número.');return;}
+    if(!form.token.trim()){setErro('Cole o token gerado no painel da Datafy.');return;}
+    setSalvando(true);
+    try{
+      const id=editId||'wa_'+Date.now();
+      const primeiro=numeros.length===0;
+      await setDoc(doc(db,'config_whatsapp',id),{
+        nome:form.nome.trim(),
+        token:form.token.trim(),
+        finalidade:form.finalidade,
+        numero:form.numero.trim(),
+        ativo:true,
+        ...(primeiro?{padrao:true}:{}),
+        atualizadoEm:new Date().toISOString(),
+      },{merge:true});
+      setForm({nome:'',token:'',finalidade:'comercial',numero:''});setEditId(null);
+    }catch(e){setErro('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function remover(n){
+    if(!window.confirm(`Remover o número "${n.nome}"?`))return;
+    await deleteDoc(doc(db,'config_whatsapp',n.id));
+  }
+  async function alternarAtivo(n){
+    await setDoc(doc(db,'config_whatsapp',n.id),{ativo:!n.ativo},{merge:true});
+  }
+  async function definirPadrao(n){
+    // Só um número pode ser o padrão
+    await Promise.all(numeros.map(x=>setDoc(doc(db,'config_whatsapp',x.id),{padrao:x.id===n.id},{merge:true})));
+  }
+
+  // Testa direto com o token digitado (antes de salvar) ou com o já cadastrado
+  async function testar(n){
+    const alvo=n?n.id:'novo';
+    setTestando(alvo);
+    try{
+      const payload=n?{numeroId:n.id,path:'/numbers'}:{token:form.token.trim(),path:'/numbers'};
+      const r=await fetch(`${FUNCTIONS_URL}/datafyProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),
+      });
+      const d=await r.json();
+      if(d.error){alert('❌ Não foi possível conectar.\n\n'+d.error);}
+      else{
+        const lista=d.data||[];
+        if(!lista.length){alert('✅ Token válido, mas nenhum número aparece conectado no painel da Datafy.');}
+        else{
+          const info=lista.map(x=>`• ${x.display_phone_number||x.id} — ${x.verified_name||''} (qualidade: ${x.quality_rating||'—'})`).join('\n');
+          alert(`✅ Conexão OK!\n\nNúmeros nesta conta:\n${info}`);
+          // Preenche o número automaticamente quando estiver cadastrando
+          if(!n&&lista[0]?.display_phone_number)setForm(f=>({...f,numero:lista[0].display_phone_number}));
+        }
+      }
+    }catch(e){alert('❌ Erro na chamada: '+e.message+'\n\nVerifique se a function datafyProxy foi publicada.');}
+    setTestando(null);
+  }
+
+  function mascarar(t){
+    if(!t)return '—';
+    return t.length>14?t.slice(0,10)+'••••••'+t.slice(-4):t;
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando números...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#25D366',marginBottom:4,textTransform:'uppercase'}}>💬 WhatsApp — Datafy</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+        Cadastre um número para cada finalidade. O token é gerado no painel da Datafy depois de conectar o número
+        (<a href="https://app.datafyapi.com.br" target="_blank" rel="noopener noreferrer" style={{color:'#3498db'}}>app.datafyapi.com.br</a>)
+        e fica guardado apenas no servidor.
+      </div>
+
+      {/* Lista */}
+      {numeros.length===0&&(
+        <div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'18px',background:'#f8f9fa',borderRadius:8,marginBottom:12}}>
+          Nenhum número cadastrado ainda.
+        </div>
+      )}
+      {numeros.map(n=>{
+        const fim=FINALIDADES_WA.find(f=>f.id===n.finalidade)||FINALIDADES_WA[0];
+        return(
+          <div key={n.id} style={{background:n.ativo!==false?'#f8f9fa':'#f0f0f0',borderRadius:8,padding:'12px 14px',marginBottom:8,
+            border:`1px solid ${n.padrao?'#25D366':'#e8eaed'}`,opacity:n.ativo!==false?1:.6}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+              <div style={{width:28,height:28,borderRadius:7,background:'#25D36618',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>💬</div>
+              <div style={{flex:1,minWidth:150}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                  <span style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{n.nome}</span>
+                  <span style={{fontSize:9,background:fim.cor+'18',color:fim.cor,border:`1px solid ${fim.cor}55`,padding:'1px 8px',borderRadius:10,fontWeight:700,textTransform:'uppercase'}}>{fim.label}</span>
+                  {n.padrao&&<span style={{fontSize:9,background:'#25D366',color:'#fff',padding:'1px 8px',borderRadius:10,fontWeight:700}}>PADRÃO</span>}
+                </div>
+                <div style={{fontSize:11,color:'#95a5a6'}}>{n.numero||'número não informado'}</div>
+              </div>
+              <div onClick={()=>alternarAtivo(n)} title={n.ativo!==false?'Ativo — clique para pausar':'Pausado — clique para ativar'}
+                style={{width:36,height:20,borderRadius:10,background:n.ativo!==false?'#25D366':'#dde1e7',cursor:'pointer',position:'relative',flexShrink:0}}>
+                <div style={{position:'absolute',top:2,left:n.ativo!==false?18:2,width:16,height:16,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+              </div>
+              <button onClick={()=>testar(n)} disabled={testando===n.id}
+                style={{padding:'5px 10px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#3498db',fontWeight:600,flexShrink:0}}>
+                {testando===n.id?'...':'Testar'}
+              </button>
+              <button onClick={()=>{setForm({nome:n.nome,token:n.token||'',finalidade:n.finalidade||'comercial',numero:n.numero||''});setEditId(n.id);}}
+                style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,flexShrink:0}}>✏️</button>
+              <button onClick={()=>remover(n)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+            </div>
+            <div style={{display:'flex',gap:14,alignItems:'center',flexWrap:'wrap',paddingLeft:38,fontSize:10,color:'#95a5a6'}}>
+              <span>
+                Token: <code style={{background:'#fff',padding:'1px 6px',borderRadius:4}}>{verToken[n.id]?n.token:mascarar(n.token)}</code>
+                <button onClick={()=>setVerToken(v=>({...v,[n.id]:!v[n.id]}))} style={{background:'none',border:'none',cursor:'pointer',fontSize:10,marginLeft:4,color:'#3498db'}}>
+                  {verToken[n.id]?'ocultar':'ver'}
+                </button>
+              </span>
+              {!n.padrao&&n.ativo!==false&&(
+                <button onClick={()=>definirPadrao(n)} style={{background:'none',border:'none',cursor:'pointer',fontSize:10,color:'#25D366',fontWeight:600,padding:0}}>
+                  ⭐ Definir como padrão
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Formulário */}
+      <div style={{background:'#fff',borderRadius:8,padding:'14px',border:'1px dashed #dde1e7',marginTop:10}}>
+        <div style={{fontWeight:700,fontSize:11,color:editId?'#3498db':'#7f8c8d',marginBottom:10,textTransform:'uppercase'}}>
+          {editId?'✏️ Editando número':'+ Novo número'}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <label style={lbl}>Nome (para identificar)</label>
+            <input style={fi} value={form.nome} onChange={e=>setForm(f=>({...f,nome:e.target.value}))} placeholder="Ex: Comercial Guion"/>
+          </div>
+          <div>
+            <label style={lbl}>Finalidade</label>
+            <select style={fi} value={form.finalidade} onChange={e=>setForm(f=>({...f,finalidade:e.target.value}))}>
+              {FINALIDADES_WA.map(f=><option key={f.id} value={f.id}>{f.label} — {f.desc}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Token da Datafy</label>
+          <input style={{...fi,fontFamily:'monospace',fontSize:12}} value={form.token} onChange={e=>setForm(f=>({...f,token:e.target.value}))} placeholder="sk_live_..."/>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Número (opcional — o teste preenche sozinho)</label>
+          <input style={fi} value={form.numero} onChange={e=>setForm(f=>({...f,numero:e.target.value}))} placeholder="+55 43 99999-9999"/>
+        </div>
+        {erro&&<div style={{fontSize:11,color:'#e74c3c',marginBottom:8}}>{erro}</div>}
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <button onClick={salvar} disabled={salvando}
+            style={{padding:'8px 18px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#25D366',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
+            {salvando?'Salvando...':(editId?'Salvar alterações':'+ Adicionar número')}
+          </button>
+          {form.token.trim()&&!editId&&(
+            <button onClick={()=>testar(null)} disabled={testando==='novo'}
+              style={{padding:'8px 16px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#3498db',fontWeight:600}}>
+              {testando==='novo'?'Testando...':'Testar antes de salvar'}
+            </button>
+          )}
+          {editId&&<button onClick={()=>{setEditId(null);setForm({nome:'',token:'',finalidade:'comercial',numero:''});setErro('');}}
+            style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
+        </div>
+      </div>
+
+      {/* Nota sobre o uso futuro */}
+      <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:8,padding:'10px 14px',marginTop:12,fontSize:11,color:'#276749',lineHeight:1.6}}>
+        <strong>Próximo passo:</strong> cadastre o celular de cada usuário em <strong>Usuários e acessos</strong>.
+        Com os números configurados aqui e os celulares da equipe preenchidos, o sistema poderá disparar avisos
+        automáticos — agendamento do dia, orçamento novo, solicitação atribuída.
+      </div>
+    </div>
+  );
+}
+
 // --- CONFIG: PLANILHAS DE LEADS (Google Sheets) ------------------------------
 function ConfigPlanilhas(){
   const [planilhas,setPlanilhas]=useState([]);
@@ -2587,6 +2823,7 @@ ${textoPDF.slice(0,3000)}`
         complemento: dados.complemento||'',
         bairro:  dados.bairro||'',
         cidade:  dados.cidade||'',
+        uf:      (dados.uf||'').toUpperCase().slice(0,2),
       });
       setEstado('ok');
     }catch(e){
@@ -2662,6 +2899,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
     fone:'',
     email:dadosImportados?.email||'',
     cep:'',rua:'',numero:'',complemento:'',bairro:'',cidade:'',
+    uf:dadosImportados?.uf||'',
     inscMunicipal:'',inscEstadual:'',
     func:dadosImportados?.func||'',
     equipTipo:dadosImportados?.equipTipo||equipDefault,
@@ -2686,6 +2924,25 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
     parcelasE:dadosImportados?.parcelasE||1,
   });
   const up=(k,v)=>setF(x=>({...x,[k]:v}));
+
+  // Preenche endereço e UF automaticamente ao digitar o CEP completo
+  async function buscarCep(cepBruto){
+    const cep=(cepBruto||'').replace(/\D/g,'');
+    if(cep.length!==8)return;
+    try{
+      const r=await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const d=await r.json();
+      if(d.erro)return;
+      setF(prev=>({
+        ...prev,
+        rua:prev.rua||(d.logradouro||'').toUpperCase(),
+        bairro:prev.bairro||(d.bairro||'').toUpperCase(),
+        cidade:prev.cidade||(d.localidade||'').toUpperCase(),
+        uf:prev.uf||(d.uf||'').toUpperCase(),
+      }));
+    }catch(e){/* offline ou CEP inválido: segue manual */}
+  }
+
   const tot=(parseValor(f.vI)||0)+(parseValor(f.vE)||0)+(parseValor(f.vS)||0);
   const equipSel=equipamentosCad.find(e=>e.nome===f.equipTipo);
   const requerPag=equipSel?equipSel.requerPagamento:false;
@@ -2707,6 +2964,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       complemento: dados.complemento||prev.complemento,
       bairro:   dados.bairro   ||prev.bairro,
       cidade:   dados.cidade   ||prev.cidade,
+      uf:       dados.uf       ||prev.uf,
     }));
   }
 
@@ -2722,6 +2980,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
     if(!f.numero.trim())e.numero='Obrigatório';
     if(!f.bairro.trim())e.bairro='Obrigatório';
     if(!f.cidade.trim())e.cidade='Obrigatório';
+    if(!f.uf)e.uf='Obrigatório';
     if(!f.plano)e.plano='Obrigatório';
     if(!(f.itens||[]).some(i=>i.tipo==='equipamento')&&!f.equipTipo)e.equipTipo='Adicione ao menos um equipamento';
     if(!f.func||parseInt(f.func)<=0)e.func='Obrigatório';
@@ -2742,6 +3001,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       cep:f.cep.trim(),rua:f.rua.trim().toUpperCase(),numero:f.numero.trim(),
       complemento:f.complemento.trim().toUpperCase(),bairro:f.bairro.trim().toUpperCase(),
       cidade:f.cidade.trim().toUpperCase(),
+      uf:(f.uf||'').toUpperCase(),
       inscMunicipal:f.inscMunicipal.trim(),inscEstadual:f.inscEstadual.trim(),
       func:parseInt(f.func)||0,
       equipTipo:(f.itens||[]).find(i=>i.tipo==='equipamento')?.nome||f.equipTipo,
@@ -2811,7 +3071,10 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
         <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
           <CabecalhoSecao tipo="endereco" titulo="Endereço" subtitulo="Local de instalação e entrega"/>
           <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr',gap:10,marginBottom:10}}>
-            <div><label style={{...lbl,color:erros.cep?'#e74c3c':'#7f8c8d'}}>{erros.cep?'CEP — '+erros.cep:'CEP *'}</label><input style={fiErr('cep')} value={f.cep} onChange={e=>up('cep',e.target.value)} placeholder="00000-000" maxLength={9}/></div>
+            <div><label style={{...lbl,color:erros.cep?'#e74c3c':'#7f8c8d'}}>{erros.cep?'CEP — '+erros.cep:'CEP *'}</label><input style={fiErr('cep')} value={f.cep}
+              onChange={e=>{const v=e.target.value;up('cep',v);if(v.replace(/\D/g,'').length===8)buscarCep(v);}}
+              onBlur={e=>buscarCep(e.target.value)}
+              placeholder="00000-000" maxLength={9}/></div>
             <div><label style={{...lbl,color:erros.rua?'#e74c3c':'#7f8c8d'}}>{erros.rua?'Rua — '+erros.rua:'Rua *'}</label><input style={{...fiErr('rua'),textTransform:'uppercase'}} value={f.rua} onChange={e=>up('rua',e.target.value.toUpperCase())}/></div>
             <div><label style={{...lbl,color:erros.numero?'#e74c3c':'#7f8c8d'}}>{erros.numero?'Nº — '+erros.numero:'Número *'}</label><input style={fiErr('numero')} value={f.numero} onChange={e=>up('numero',e.target.value)}/></div>
           </div>
@@ -2819,6 +3082,12 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
             <div><label style={lbl}>Complemento</label><input style={{...fi,textTransform:'uppercase'}} value={f.complemento} onChange={e=>up('complemento',e.target.value.toUpperCase())}/></div>
             <div><label style={{...lbl,color:erros.bairro?'#e74c3c':'#7f8c8d'}}>{erros.bairro?'Bairro — '+erros.bairro:'Bairro *'}</label><input style={{...fiErr('bairro'),textTransform:'uppercase'}} value={f.bairro} onChange={e=>up('bairro',e.target.value.toUpperCase())}/></div>
             <div><label style={{...lbl,color:erros.cidade?'#e74c3c':'#7f8c8d'}}>{erros.cidade?'Cidade — '+erros.cidade:'Cidade *'}</label><input style={{...fiErr('cidade'),textTransform:'uppercase'}} value={f.cidade} onChange={e=>up('cidade',e.target.value.toUpperCase())}/></div>
+            <div><label style={{...lbl,color:erros.uf?'#e74c3c':'#7f8c8d'}}>{erros.uf?'Estado — '+erros.uf:'Estado (UF) *'}</label>
+              <select style={fiErr('uf')} value={f.uf} onChange={e=>up('uf',e.target.value)}>
+                <option value="">— UF —</option>
+                {UFS.map(u=><option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             <div><label style={lbl}>Inscrição Municipal</label><input style={fi} value={f.inscMunicipal} onChange={e=>up('inscMunicipal',e.target.value)}/></div>
@@ -3036,6 +3305,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
     complemento:c.complemento||'',
     bairro:c.bairro||'',
     cidade:c.cidade||'',
+    uf:(c.uf||c.estado||'').toUpperCase(),
     inscMunicipal:c.inscMunicipal||'',
     inscEstadual:c.inscEstadual||'',
     func:c.func!=null?String(c.func):'',
@@ -3229,6 +3499,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Complemento" field="complemento"/>
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Bairro" field="bairro"/>
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Cidade" field="cidade"/>
+            <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Estado (UF)" field="uf" opts={UFS}/>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Inscrição Municipal" field="inscMunicipal"/>
@@ -3561,6 +3832,8 @@ function UsuariosLista({usuarios,currentUser}){
   const [editandoNome,setEditandoNome]=useState(null);
   const [novoNome,setNovoNome]=useState('');
   const [savedNome,setSavedNome]=useState(null);
+  const [editandoCel,setEditandoCel]=useState(null);
+  const [novoCel,setNovoCel]=useState('');
 
   const ehOProprio=uid=>uid===currentUser?.id||uid===currentUser?.uid;
 
@@ -3581,6 +3854,14 @@ function UsuariosLista({usuarios,currentUser}){
       alert('Erro ao salvar o nome: '+e.message);
     }
     setEditandoNome(null);
+  }
+
+  async function salvarCelular(u){
+    if(!u?.id){alert('Registro sem identificador válido.');setEditandoCel(null);return;}
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{celular:novoCel.trim()},{merge:true});
+    }catch(e){alert('Erro ao salvar o celular: '+e.message);}
+    setEditandoCel(null);
   }
 
   async function salvarPerfil(u){
@@ -3766,6 +4047,32 @@ function UsuariosLista({usuarios,currentUser}){
               )}
             </div>
             <div style={{fontSize:11,color:'#7f8c8d'}}>{u.email}</div>
+            {/* Celular — usado para os avisos automáticos por WhatsApp */}
+            <div style={{fontSize:11,color:'#95a5a6',display:'flex',alignItems:'center',gap:5,marginTop:1}}>
+              {editandoCel===u.id?(
+                <>
+                  <span>📱</span>
+                  <input autoFocus value={novoCel}
+                    onChange={e=>setNovoCel(mascaraTel(e.target.value))}
+                    onKeyDown={e=>{if(e.key==='Enter')salvarCelular(u);if(e.key==='Escape')setEditandoCel(null);}}
+                    placeholder="(00) 00000-0000" maxLength={15}
+                    style={{padding:'3px 7px',borderRadius:5,border:'1.5px solid #25D366',fontSize:11,width:130,outline:'none'}}/>
+                  <button onClick={()=>salvarCelular(u)} style={{padding:'3px 9px',borderRadius:5,border:'none',background:'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10}}>✓</button>
+                  <button onClick={()=>setEditandoCel(null)} style={{padding:'3px 7px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#95a5a6'}}>✕</button>
+                </>
+              ):(
+                <>
+                  <span>📱</span>
+                  <span style={{color:u.celular?'#7f8c8d':'#c0392b'}}>{u.celular||'sem celular cadastrado'}</span>
+                  <button onClick={()=>{
+                      if(!u.id){alert('Registro sem identificador — não é possível editar.');return;}
+                      setEditandoCel(u.id);setNovoCel(u.celular||'');setEditandoNome(null);
+                    }}
+                    title="Editar celular para avisos por WhatsApp"
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#25D366',fontSize:10,padding:'0 2px'}}>✏️</button>
+                </>
+              )}
+            </div>
             {u.status==='pendente'&&<div style={{fontSize:9,color:C.orange,fontWeight:700,marginTop:2}}>⏳ Convite pendente — aguardando primeiro acesso</div>}
             {u.convidadoPor&&<div style={{fontSize:9,color:'#aaa',marginTop:1}}>Convidado por {u.convidadoPor}</div>}
           </div>
@@ -4780,6 +5087,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             </div>
           )}
         </div>
+      )}
+
+      {/* WhatsApp — Datafy */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigWhatsApp/></div>
       )}
 
       {/* Planilhas de leads */}
@@ -6875,6 +7187,7 @@ async function asaasCriarOuBuscarCliente(c){
     complement:c.complemento||undefined,
     province:c.bairro||undefined,
     city:c.cidade||undefined,
+    state:c.uf||undefined,
     municipalInscription:c.inscMunicipal||undefined,
     stateInscription:c.inscEstadual||undefined,
     observations:c.obs||undefined,

@@ -808,3 +808,123 @@ exports.syncLeadsManual = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATAFY — API oficial do WhatsApp
+// Base: https://cloud.datafyapi.com.br   Auth: Bearer sk_live_xxx
+//
+// O token fica no Firestore (config_whatsapp/{id}), nunca no navegador.
+// O front chama esta function informando apenas o ID do número cadastrado.
+// Deploy: firebase deploy --only functions:datafyProxy,functions:datafyEnviar
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DATAFY_URL = 'https://cloud.datafyapi.com.br';
+
+// Busca o número cadastrado. Sem id, usa o marcado como padrão;
+// com finalidade, usa o primeiro ativo daquela finalidade.
+async function obterNumeroDatafy({ numeroId, finalidade }) {
+  const snap = await db.collection('config_whatsapp').get();
+  const nums = [];
+  snap.forEach(d => nums.push({ id: d.id, ...d.data() }));
+  const ativos = nums.filter(n => n.ativo !== false && n.token);
+
+  if (numeroId) {
+    const achado = nums.find(n => n.id === numeroId);
+    if (!achado) throw new Error('Número do WhatsApp não encontrado: ' + numeroId);
+    if (!achado.token) throw new Error(`O número "${achado.nome || numeroId}" está sem token.`);
+    return achado;
+  }
+  if (finalidade) {
+    const porFim = ativos.find(n => (n.finalidade || '').toLowerCase() === String(finalidade).toLowerCase());
+    if (porFim) return porFim;
+  }
+  const padrao = ativos.find(n => n.padrao);
+  if (padrao) return padrao;
+  if (ativos.length) return ativos[0];
+  throw new Error('Nenhum número de WhatsApp configurado. Cadastre em Configurações > Integrações.');
+}
+
+async function chamarDatafy({ token, path, method = 'GET', body = null }) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+  };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const resp = await fetch(`${DATAFY_URL}${path}`, opts);
+  const texto = await resp.text();
+  let data;
+  try { data = texto ? JSON.parse(texto) : {}; } catch (_) { data = { raw: texto }; }
+  return { status: resp.status, ok: resp.ok, data };
+}
+
+// Proxy genérico — usado pelo botão "Testar conexão" e consultas do painel
+exports.datafyProxy = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { numeroId, finalidade, path = '/me', method = 'GET', body = null, token = null } = req.body || {};
+    // token avulso permite testar antes de salvar o cadastro
+    const usar = token || (await obterNumeroDatafy({ numeroId, finalidade })).token;
+    const r = await chamarDatafy({ token: usar, path, method, body });
+    res.status(r.ok ? 200 : r.status).json(r.data);
+  } catch (err) {
+    console.error('[datafy] proxy erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Envio de mensagem com registro do resultado
+exports.datafyEnviar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const {
+      numeroId, finalidade, para, texto,
+      template = null, variaveis = null, idioma = 'pt_BR',
+      contexto = '',
+    } = req.body || {};
+
+    if (!para) throw new Error('Informe o número do destinatário.');
+    if (!texto && !template) throw new Error('Informe o texto ou o template da mensagem.');
+
+    const numero = await obterNumeroDatafy({ numeroId, finalidade });
+
+    // Normaliza o destinatário: só dígitos, com DDI do Brasil
+    let destino = String(para).replace(/\D/g, '');
+    if (!destino.startsWith('55') || destino.length < 12) {
+      destino = '55' + destino.replace(/^0+/, '');
+    }
+
+    const path = template ? '/messages/send/template' : '/messages/send/text';
+    const body = template
+      ? { to: destino, template, language: idioma, ...(variaveis ? { body: variaveis } : {}) }
+      : { to: destino, text: texto };
+
+    const r = await chamarDatafy({ token: numero.token, path, method: 'POST', body });
+
+    // Log de envio para auditoria
+    await db.collection('whatsapp_log').add({
+      numeroId: numero.id,
+      numeroNome: numero.nome || '',
+      finalidade: numero.finalidade || '',
+      destino,
+      tipo: template ? 'template' : 'texto',
+      template: template || '',
+      texto: texto || '',
+      contexto,
+      sucesso: r.ok,
+      resposta: r.ok ? (r.data?.messages?.[0]?.id || 'ok') : JSON.stringify(r.data).slice(0, 500),
+      data: new Date().toISOString(),
+    });
+
+    if (!r.ok) {
+      const msg = r.data?.error?.message || r.data?.message || 'Falha ao enviar';
+      res.status(r.status).json({ error: msg, detalhe: r.data });
+      return;
+    }
+    res.status(200).json({ ok: true, ...r.data });
+  } catch (err) {
+    console.error('[datafy] envio erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
