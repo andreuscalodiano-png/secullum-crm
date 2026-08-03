@@ -234,6 +234,284 @@ async function avisarUsuario(usuario,texto,contexto){
   return enviarWhatsApp({para:usuario.celular,texto,finalidade:'interno',contexto});
 }
 
+// --- SECULLUM: painel de status e ações --------------------------------------
+// Só para perfil admin. As ações disponíveis são as da API Revendas.
+const ACOES_SECULLUM=[
+  {tipo:1, label:'Bloquear banco',        icone:'🔒', cor:'#e74c3c', confirma:'O cliente perde o acesso ao sistema.'},
+  {tipo:8, label:'Desbloquear banco',     icone:'🔓', cor:'#27ae60', confirma:'O acesso do cliente será restabelecido.'},
+  {tipo:10,label:'Ativar banco',          icone:'✅', cor:'#27ae60', confirma:'O banco será ativado.'},
+  {tipo:2, label:'Cancelar contrato',     icone:'⛔', cor:'#c0392b', confirma:'Isso solicita o CANCELAMENTO do contrato. Ação séria.'},
+  {tipo:16,label:'Outra solicitação',     icone:'📝', cor:'#f5a623', confirma:'Abre um chamado na Secullum com a justificativa escrita.'},
+  {tipo:21,label:'Inserir notificação',   icone:'🔔', cor:'#3498db', confirma:'Uma notificação será exibida ao cliente no sistema.'},
+  {tipo:22,label:'Remover notificação',   icone:'🔕', cor:'#7f8c8d', confirma:'A notificação será retirada.'},
+];
+// Modelos prontos para o tipo 16, que é o caminho de plano/limite
+const MODELOS_SEC16=[
+  {id:'plano',  label:'Alterar plano',              texto:'Solicito alteração do plano contratado para: '},
+  {id:'limite', label:'Alterar limite de funcionários', texto:'Solicito alteração do limite de funcionários para: '},
+  {id:'equip',  label:'Alterar limite de equipamentos', texto:'Solicito alteração do limite de equipamentos para: '},
+  {id:'venc',   label:'Alterar vencimento',         texto:'Solicito alteração da data de vencimento do contrato para: '},
+  {id:'livre',  label:'Escrever do zero',           texto:''},
+];
+
+function PainelSecullum({cliente,perfil,onUpdate}){
+  const [aberto,setAberto]=useState(false);
+  const [dados,setDados]=useState(null);
+  const [carregando,setCarregando]=useState(false);
+  const [erro,setErro]=useState('');
+  const [codigo,setCodigo]=useState(cliente.codigoBancoSecullum||'');
+  const [salvandoCod,setSalvandoCod]=useState(false);
+  const [acaoSel,setAcaoSel]=useState(null);
+  const [justificativa,setJustificativa]=useState('');
+  const [modelo16,setModelo16]=useState('plano');
+  const [executando,setExecutando]=useState(false);
+
+  const ehAdmin=perfil==='admin';
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  const sync=cliente.secullum_sync;
+
+  async function consultar(){
+    if(!codigo){setErro('Informe o código do banco na Secullum.');return;}
+    setCarregando(true);setErro('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/secullumConsultar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codigo}),
+      });
+      const d=await r.json();
+      if(d.error){setErro(d.error);setDados(null);}
+      else{
+        setDados(d.dados);
+        // Guarda o retorno no cliente para consulta offline
+        const s={
+          razaoSocial:d.dados.RazaoSocial||d.dados.Nome||'',
+          documento:d.dados.Documento||'',
+          quantidadePessoas:d.dados.QuantidadePessoas??null,
+          limitePessoas:d.dados.LimitePessoas??null,
+          limiteEquipamentos:d.dados.LimiteEquipamentos??null,
+          plano:d.dados.Plano||'',periodoMeses:d.dados.Periodo_meses??null,
+          ativadoEm:d.dados.Ativado_em||'',validade:d.dados.Validade||null,
+          dataExclusao:d.dados.DataExclusao||null,
+          vencimentoContrato:d.dados.vencimentoContrato||'',
+          gestaoArquivos:d.dados.RA_GestaoArquivos||'',ferias:d.dados.RA_Ferias||'',
+          software:d.dados.Software||'',atualizadoEm:new Date().toISOString(),
+        };
+        try{await setDoc(doc(db,'clientes',cliente.id),{secullum_sync:s},{merge:true});}catch(e){}
+      }
+    }catch(e){setErro('Erro na consulta: '+e.message);}
+    setCarregando(false);
+  }
+
+  async function salvarCodigo(){
+    setSalvandoCod(true);
+    try{
+      await setDoc(doc(db,'clientes',cliente.id),{codigoBancoSecullum:String(codigo).trim()},{merge:true});
+      await registrarHistorico(cliente.id,cliente.nome,'secullum_codigo',`Código do banco Secullum definido: ${codigo}`);
+    }catch(e){setErro('Erro ao salvar: '+e.message);}
+    setSalvandoCod(false);
+  }
+
+  async function executar(){
+    const acao=ACOES_SECULLUM.find(a=>a.tipo===acaoSel);
+    if(!acao)return;
+    if(!justificativa.trim()){setErro('A justificativa é obrigatória.');return;}
+    if(!window.confirm(`${acao.icone} ${acao.label}\n\n${acao.confirma}\n\nCliente: ${cliente.nome}\nBanco: ${codigo}\n\nConfirmar?`))return;
+    setExecutando(true);setErro('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/secullumAcao`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          codigo,tipoSolicitacao:acaoSel,justificativa:justificativa.trim(),
+          clienteId:cliente.id,clienteNome:cliente.nome,
+          usuario:auth.currentUser?.email||'—',
+        }),
+      });
+      const d=await r.json();
+      if(d.error){setErro(d.error);}
+      else{
+        alert(`✅ ${d.acao} enviada com sucesso à Secullum.`);
+        setAcaoSel(null);setJustificativa('');
+        consultar();
+      }
+    }catch(e){setErro('Erro: '+e.message);}
+    setExecutando(false);
+  }
+
+  function fmt(x){
+    if(x===null||x===undefined||x==='')return '—';
+    if(typeof x==='string'&&/^\d{2}\/\d{2}\/\d{4}/.test(x))return x.split(' ')[0];
+    return String(x);
+  }
+
+  const d=dados||null;
+  const ocupacao=(()=>{
+    const q=Number(d?.QuantidadePessoas??sync?.quantidadePessoas);
+    const l=Number(d?.LimitePessoas??sync?.limitePessoas);
+    if(!q||!l)return null;
+    return {q,l,pct:Math.round((q/l)*100)};
+  })();
+
+  if(!ehAdmin)return null;
+
+  return(
+    <div style={{marginBottom:22}}>
+      {/* Botão de destaque */}
+      <div style={{background:'linear-gradient(135deg,#1a2a3a,#2c3e50)',borderRadius:12,padding:'14px 18px',
+        display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',boxShadow:'0 2px 10px rgba(0,0,0,.12)'}}>
+        <div style={{width:38,height:38,borderRadius:10,background:'rgba(245,166,35,.18)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>☀️</div>
+        <div style={{flex:1,minWidth:170}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#fff'}}>Status na Secullum</div>
+          <div style={{fontSize:11,color:'rgba(255,255,255,.6)'}}>
+            {cliente.codigoBancoSecullum
+              ?<>Banco <strong style={{color:'#f5a623'}}>{cliente.codigoBancoSecullum}</strong>
+                {sync?.atualizadoEm?` · última leitura em ${new Date(sync.atualizadoEm).toLocaleDateString('pt-BR')}`:''}</>
+              :'Código do banco ainda não vinculado'}
+          </div>
+        </div>
+        {ocupacao&&(
+          <div style={{textAlign:'right',flexShrink:0}}>
+            <div style={{fontSize:10,color:'rgba(255,255,255,.5)',textTransform:'uppercase',letterSpacing:.5}}>Funcionários</div>
+            <div style={{fontSize:15,fontWeight:700,color:ocupacao.pct>=90?'#e74c3c':ocupacao.pct>=75?'#f5a623':'#52c41a'}}>
+              {ocupacao.q} / {ocupacao.l}
+            </div>
+          </div>
+        )}
+        <button onClick={()=>{setAberto(a=>!a);if(!aberto&&cliente.codigoBancoSecullum&&!dados)consultar();}}
+          style={{padding:'10px 20px',borderRadius:8,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,flexShrink:0}}>
+          {aberto?'Fechar':'🔍 Verificar status'}
+        </button>
+      </div>
+
+      {aberto&&(
+        <div style={{background:'#fff',border:'1px solid #e8eaed',borderTop:'none',borderRadius:'0 0 12px 12px',padding:'18px 20px'}}>
+          {/* Código do banco */}
+          <div style={{display:'flex',gap:8,alignItems:'flex-end',marginBottom:14,flexWrap:'wrap'}}>
+            <div style={{flex:1,minWidth:160}}>
+              <label style={lbl}>Código do banco na Secullum</label>
+              <input style={fi} value={codigo} onChange={e=>setCodigo(e.target.value.replace(/\D/g,''))} placeholder="Ex: 157813"/>
+            </div>
+            <button onClick={salvarCodigo} disabled={salvandoCod||!codigo}
+              style={{padding:'8px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+              {salvandoCod?'...':'Salvar código'}
+            </button>
+            <button onClick={consultar} disabled={carregando||!codigo}
+              style={{padding:'8px 16px',borderRadius:7,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {carregando?'Consultando...':'🔄 Consultar agora'}
+            </button>
+          </div>
+
+          {erro&&<div style={{background:'#fee2e2',color:'#991b1b',borderRadius:7,padding:'9px 12px',fontSize:12,marginBottom:12}}>⚠ {erro}</div>}
+
+          {/* Dados */}
+          {(d||sync)&&(
+            <div style={{marginBottom:16}}>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:8,marginBottom:10}}>
+                {[
+                  ['Razão social',   d?.RazaoSocial??sync?.razaoSocial],
+                  ['Documento',      d?.Documento??sync?.documento],
+                  ['Software',       d?.Software??sync?.software],
+                  ['Plano',          d?.Plano??sync?.plano],
+                  ['Funcionários',   `${d?.QuantidadePessoas??sync?.quantidadePessoas??'—'} de ${d?.LimitePessoas??sync?.limitePessoas??'—'}`],
+                  ['Limite equip.',  d?.LimiteEquipamentos??sync?.limiteEquipamentos],
+                  ['Período (meses)',d?.Periodo_meses??sync?.periodoMeses],
+                  ['Ativado em',     d?.Ativado_em??sync?.ativadoEm],
+                  ['Validade',       d?.Validade??sync?.validade],
+                  ['Venc. contrato', d?.vencimentoContrato??sync?.vencimentoContrato],
+                  ['Gestão arquivos',d?.RA_GestaoArquivos??sync?.gestaoArquivos],
+                  ['Controle férias',d?.RA_Ferias??sync?.ferias],
+                  ['Excluído em',    d?.DataExclusao??sync?.dataExclusao],
+                ].map(([k,v])=>(
+                  <div key={k} style={{background:'#f8f9fa',borderRadius:7,padding:'8px 11px'}}>
+                    <div style={{fontSize:9,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>{k}</div>
+                    <div style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{fmt(v)}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Ocupação */}
+              {ocupacao&&(
+                <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 14px'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:5}}>
+                    <span style={{color:'#7f8c8d',fontWeight:600}}>Ocupação do contrato</span>
+                    <span style={{fontWeight:700,color:ocupacao.pct>=90?'#e74c3c':ocupacao.pct>=75?'#f5a623':'#27ae60'}}>{ocupacao.pct}%</span>
+                  </div>
+                  <div style={{height:8,borderRadius:4,background:'#e8eaed',overflow:'hidden'}}>
+                    <div style={{height:'100%',width:Math.min(ocupacao.pct,100)+'%',borderRadius:4,
+                      background:ocupacao.pct>=90?'#e74c3c':ocupacao.pct>=75?'#f5a623':'#27ae60',transition:'width .5s'}}/>
+                  </div>
+                  {ocupacao.pct>=90&&<div style={{fontSize:11,color:'#e74c3c',marginTop:6,fontWeight:600}}>⚠ Perto do limite — vale oferecer upgrade de plano.</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Ações */}
+          {cliente.codigoBancoSecullum&&(
+            <div>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Ações administrativas</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12}}>
+                {ACOES_SECULLUM.map(a=>(
+                  <button key={a.tipo} onClick={()=>{setAcaoSel(acaoSel===a.tipo?null:a.tipo);setJustificativa('');setErro('');}}
+                    style={{padding:'7px 13px',borderRadius:7,cursor:'pointer',fontSize:11,fontWeight:600,
+                      border:`1px solid ${acaoSel===a.tipo?a.cor:'#dde1e7'}`,
+                      background:acaoSel===a.tipo?a.cor:'#fff',color:acaoSel===a.tipo?'#fff':'#4a4a4a'}}>
+                    {a.icone} {a.label}
+                  </button>
+                ))}
+              </div>
+
+              {acaoSel&&(
+                <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',
+                  borderLeft:`3px solid ${ACOES_SECULLUM.find(a=>a.tipo===acaoSel)?.cor}`}}>
+                  <div style={{fontSize:11,color:'#7f8c8d',marginBottom:8}}>
+                    {ACOES_SECULLUM.find(a=>a.tipo===acaoSel)?.confirma}
+                  </div>
+
+                  {acaoSel===16&&(
+                    <div style={{marginBottom:8}}>
+                      <label style={lbl}>Modelo</label>
+                      <select style={fi} value={modelo16}
+                        onChange={e=>{setModelo16(e.target.value);setJustificativa(MODELOS_SEC16.find(m=>m.id===e.target.value)?.texto||'');}}>
+                        {MODELOS_SEC16.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                      <div style={{fontSize:10,color:'#b45309',marginTop:4}}>
+                        A API não altera plano ou limite diretamente — isso abre um chamado para a Secullum processar.
+                      </div>
+                    </div>
+                  )}
+
+                  <label style={lbl}>Justificativa (obrigatória, até 350 caracteres)</label>
+                  <textarea style={{...fi,minHeight:70,resize:'vertical'}} value={justificativa} maxLength={350}
+                    onChange={e=>setJustificativa(e.target.value)}
+                    placeholder="Descreva o motivo desta solicitação"/>
+                  <div style={{fontSize:10,color:'#95a5a6',textAlign:'right',marginBottom:8}}>{justificativa.length}/350</div>
+
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={executar} disabled={executando||!justificativa.trim()}
+                      style={{padding:'8px 18px',borderRadius:7,border:'none',
+                        background:executando?'#dde1e7':(ACOES_SECULLUM.find(a=>a.tipo===acaoSel)?.cor||'#3498db'),
+                        color:'#fff',fontWeight:700,cursor:executando?'default':'pointer',fontSize:12}}>
+                      {executando?'Enviando...':'Confirmar e enviar'}
+                    </button>
+                    <button onClick={()=>{setAcaoSel(null);setJustificativa('');}}
+                      style={{padding:'8px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div style={{fontSize:10,color:'#95a5a6',marginTop:10}}>
+                Toda ação fica registrada no histórico deste cliente, com o usuário e a justificativa.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- CABEÇALHO DE SEÇÃO (padrão para cadastro e edição) ----------------------
 // Cor fixa por assunto para virar memória visual: azul=identificação,
 // roxo=endereço, laranja=valores, verde=contrato, ciano=equipamento.
@@ -2315,6 +2593,202 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
   );
 }
 
+// --- CONFIG: SECULLUM (token + vínculo por CNPJ) ------------------------------
+function ConfigSecullum({todos}){
+  const [token,setToken]=useState('');
+  const [verToken,setVerToken]=useState(false);
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [sincronizando,setSincronizando]=useState(false);
+  const [colando,setColando]=useState(false);
+  const [texto,setTexto]=useState('');
+  const [previa,setPrevia]=useState(null);
+  const [aplicando,setAplicando]=useState(false);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','secullum'),d=>{
+      setToken(d.exists()?(d.data().token||''):'');
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvarToken(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','secullum'),{token:token.trim(),atualizadoEm:new Date().toISOString()},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function sincronizarTodos(){
+    if(!window.confirm('Consultar a Secullum para todos os clientes com código cadastrado?\n\nPode levar alguns minutos.'))return;
+    setSincronizando(true);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/secullumSincronizar`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else{
+        let msg=`✅ ${d.sucesso} de ${d.total} cliente(s) atualizados.`;
+        if(d.falhas)msg+=`\n\n${d.falhas} falha(s):\n`+(d.erros||[]).join('\n');
+        if(d.mensagem)msg=d.mensagem;
+        alert(msg);
+      }
+    }catch(e){alert('Erro: '+e.message);}
+    setSincronizando(false);
+  }
+
+  // Lê a lista da Secullum colada (CNPJ + código) e cruza com a base
+  function analisarTexto(){
+    const somenteDigitos=v=>String(v||'').replace(/\D/g,'');
+    const linhas=texto.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    const encontrados=[],semPar=[];
+    const clientesPorCnpj={};
+    (todos||[]).forEach(c=>{
+      const d=somenteDigitos(c.cnpj);
+      if(d.length>=11)clientesPorCnpj[d]=c;
+    });
+
+    linhas.forEach(linha=>{
+      // Aceita separação por tab, ponto e vírgula, vírgula ou espaços
+      const partes=linha.split(/[\t;,]+|\s{2,}/).map(p=>p.trim()).filter(Boolean);
+      if(partes.length<2)return;
+      // O CNPJ é o campo com 14 dígitos; o código é o número curto
+      let cnpj='',cod='';
+      partes.forEach(p=>{
+        const d=somenteDigitos(p);
+        if(d.length===14||d.length===11){if(!cnpj)cnpj=d;}
+        else if(d.length>=3&&d.length<=8&&!cod)cod=d;
+      });
+      if(!cnpj||!cod)return;
+      const cli=clientesPorCnpj[cnpj];
+      if(cli)encontrados.push({cliente:cli,codigo:cod,cnpj});
+      else semPar.push({cnpj,codigo:cod,linha});
+    });
+    setPrevia({encontrados,semPar,totalLinhas:linhas.length});
+  }
+
+  async function aplicarVinculos(){
+    if(!previa?.encontrados?.length)return;
+    if(!window.confirm(`Vincular o código da Secullum a ${previa.encontrados.length} cliente(s)?`))return;
+    setAplicando(true);
+    let ok=0;
+    for(const e of previa.encontrados){
+      try{
+        await setDoc(doc(db,'clientes',e.cliente.id),{codigoBancoSecullum:e.codigo},{merge:true});
+        ok++;
+      }catch(err){}
+    }
+    alert(`✅ ${ok} cliente(s) vinculados.\n\nUse "Sincronizar todos" para trazer os dados da Secullum.`);
+    setPrevia(null);setTexto('');setColando(false);
+    setAplicando(false);
+  }
+
+  const comCodigo=(todos||[]).filter(c=>c.codigoBancoSecullum).length;
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#f5a623',marginBottom:4,textTransform:'uppercase'}}>☀️ Secullum — API Revendas</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+        Permite consultar o status dos bancos e enviar ações administrativas (bloquear, desbloquear, ativar, cancelar).
+        O token é solicitado ao comercial da Secullum e vinculado a um usuário Administrador da Área Restrita.
+      </div>
+
+      {/* Token */}
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Token de autenticação</label>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <input style={{...fi,flex:1,minWidth:200,fontFamily:'monospace',fontSize:12}}
+            type={verToken?'text':'password'} value={token} onChange={e=>setToken(e.target.value)}
+            placeholder="Cole aqui o token recebido da Secullum"/>
+          <button onClick={()=>setVerToken(v=>!v)}
+            style={{padding:'8px 12px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>
+            {verToken?'ocultar':'ver'}
+          </button>
+          <button onClick={salvarToken} disabled={salvando}
+            style={{padding:'8px 18px',borderRadius:6,border:'none',background:salvo?'#27ae60':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {salvo?'✓ Salvo!':salvando?'...':'Salvar token'}
+          </button>
+        </div>
+      </div>
+
+      {/* Situação */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 14px',marginBottom:12,display:'flex',gap:16,flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{fontSize:11,color:'#7f8c8d'}}>
+          <strong style={{color:'#2c3e50',fontSize:14}}>{comCodigo}</strong> de {(todos||[]).length} cliente(s) com código vinculado
+        </div>
+        <button onClick={sincronizarTodos} disabled={sincronizando||!token}
+          style={{padding:'7px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,fontWeight:600,color:'#3498db'}}>
+          {sincronizando?'Sincronizando...':'🔄 Sincronizar todos'}
+        </button>
+        <button onClick={()=>setColando(c=>!c)}
+          style={{padding:'7px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,fontWeight:600,color:'#4a4a4a'}}>
+          📋 Vincular pela lista da Secullum
+        </button>
+      </div>
+
+      {/* Vínculo em lote */}
+      {colando&&(
+        <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'14px'}}>
+          <div style={{fontSize:11,color:'#b45309',marginBottom:8,lineHeight:1.6}}>
+            Cole a lista de clientes da Área Restrita da Secullum. Cada linha precisa ter o <strong>CNPJ</strong> e o
+            <strong> código do banco</strong> — a ordem não importa e serve tanto copiado do Excel quanto separado por vírgula.
+          </div>
+          <textarea style={{...fi,minHeight:130,fontFamily:'monospace',fontSize:11,resize:'vertical'}}
+            value={texto} onChange={e=>{setTexto(e.target.value);setPrevia(null);}}
+            placeholder={'157813\t04.952.265/0005-74\tSILICATE INDUSTRIA\n163904\t09.275.105/0001-28\tINSTITUTO DOM QUIXOTE'}/>
+          <div style={{display:'flex',gap:8,marginTop:8,flexWrap:'wrap'}}>
+            <button onClick={analisarTexto} disabled={!texto.trim()}
+              style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              🔍 Analisar
+            </button>
+            {previa?.encontrados?.length>0&&(
+              <button onClick={aplicarVinculos} disabled={aplicando}
+                style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                {aplicando?'Vinculando...':`✅ Vincular ${previa.encontrados.length} cliente(s)`}
+              </button>
+            )}
+          </div>
+
+          {previa&&(
+            <div style={{marginTop:12}}>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:10,fontSize:11}}>
+                <span style={{color:'#27ae60',fontWeight:700}}>✓ {previa.encontrados.length} encontrado(s) na base</span>
+                <span style={{color:'#e67e22',fontWeight:700}}>⚠ {previa.semPar.length} sem cliente correspondente</span>
+                <span style={{color:'#95a5a6'}}>{previa.totalLinhas} linha(s) lidas</span>
+              </div>
+              <div style={{maxHeight:200,overflowY:'auto'}}>
+                {previa.encontrados.slice(0,40).map((e,i)=>(
+                  <div key={i} style={{display:'flex',gap:10,padding:'5px 10px',background:'#f0fff4',borderRadius:5,marginBottom:3,fontSize:11,alignItems:'center'}}>
+                    <span style={{color:'#27ae60'}}>✓</span>
+                    <span style={{flex:1,color:'#2c3e50',fontWeight:600}}>{e.cliente.nome}</span>
+                    <code style={{fontSize:10,color:'#7f8c8d'}}>{e.cnpj}</code>
+                    <span style={{fontWeight:700,color:'#f5a623'}}>banco {e.codigo}</span>
+                  </div>
+                ))}
+                {previa.semPar.slice(0,15).map((e,i)=>(
+                  <div key={'x'+i} style={{display:'flex',gap:10,padding:'5px 10px',background:'#fff8ee',borderRadius:5,marginBottom:3,fontSize:11,alignItems:'center'}}>
+                    <span style={{color:'#e67e22'}}>⚠</span>
+                    <span style={{flex:1,color:'#95a5a6'}}>CNPJ {e.cnpj} não está no CRM</span>
+                    <span style={{color:'#95a5a6'}}>banco {e.codigo}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- CONFIG: PLANILHAS DE LEADS (Google Sheets) ------------------------------
 function ConfigPlanilhas(){
   const [planilhas,setPlanilhas]=useState([]);
@@ -4031,6 +4505,9 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
       </div>
 
       {/* Dados da empresa */}
+            {/* Status na Secullum — só admin */}
+      <PainelSecullum cliente={c} perfil={perfil} onUpdate={onUpdate}/>
+
       <div style={estiloSecao('dados',sec)}>
         <CabecalhoSecao tipo="dados" titulo="Dados do cliente" subtitulo="Identificação e contato"/>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
@@ -5145,7 +5622,7 @@ const ABAS_CONFIG=[
   {id:'sistema',     icone:'ℹ️',  label:'Sistema'},
 ];
 
-function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates,asaasHabilitado,onToggleAsaas}){
+function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrder,onMenuOrderChange,orcServicos,orcFormas,orcTemplates,asaasHabilitado,onToggleAsaas,todos}){
   const [novoVend,setNovoVend]=useState('');
   const [savedVend,setSavedVend]=useState(false);
   const [novoEquip,setNovoEquip]=useState({nome:'',requerPagamento:true,precoCusto:'',precoVenda:'',valorPromocional:'',promoInicio:'',promoFim:''});
@@ -5650,6 +6127,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             </div>
           )}
         </div>
+      )}
+
+      {/* Secullum — API Revendas */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigSecullum todos={todos}/></div>
       )}
 
       {/* WhatsApp — Datafy */}
@@ -11002,7 +11484,7 @@ export default function App(){
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca} etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}/>}
 
           {/* CONFIGURAÇÕES */}
-          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas}/>}
+          {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas} todos={todos}/>}
 
           {/* DASHBOARD */}
           {!clienteSel&&page==='dashboard'&&<DashboardView

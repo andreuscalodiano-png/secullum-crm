@@ -1541,3 +1541,180 @@ exports.gatilhoPreverIA = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECULLUM — API Revendas (Área Restrita)
+// Base: https://apirevendas.secullum.com.br/webhook.aspx
+// Auth: Bearer <token vinculado ao usuário Administrador da revenda>
+//
+// LIMITES DA API (documentação oficial):
+//  · GET consulta UM banco por vez, pelo código. Não há busca por CNPJ
+//    nem listagem de todos os bancos da revenda.
+//  · POST aceita apenas: 1 Bloquear · 2 Solicitar cancelamento ·
+//    8 Desbloquear · 10 Ativar · 16 Outras solicitações ·
+//    21 Inserir notificação · 22 Remover notificação.
+//  · Alterar plano ou limite de funcionários não existe como endpoint:
+//    vai como tipo 16 com justificativa, que abre chamado na Secullum.
+//
+// O token fica em Firestore (config/secullum), nunca no navegador.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SECULLUM_URL = 'https://apirevendas.secullum.com.br/webhook.aspx';
+
+async function tokenSecullum() {
+  const snap = await db.collection('config').doc('secullum').get();
+  const t = snap.exists ? (snap.data().token || '') : '';
+  if (!t) throw new Error('Token da Secullum não configurado. Cadastre em Configurações > Integrações.');
+  return t;
+}
+
+async function consultarBancoSecullum(codigo) {
+  const token = await tokenSecullum();
+  const resp = await fetch(`${SECULLUM_URL}/?id=${encodeURIComponent(codigo)}`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  const txt = await resp.text();
+  let data; try { data = txt ? JSON.parse(txt) : {}; } catch (_) { data = { raw: txt }; }
+  if (!resp.ok) {
+    const msg = data?.erro || data?.error || `HTTP ${resp.status}`;
+    throw new Error(msg);
+  }
+  // A API devolve um array com um item
+  return Array.isArray(data) ? (data[0] || null) : data;
+}
+
+// Consulta o status de um banco
+exports.secullumConsultar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { codigo } = req.body || {};
+    if (!codigo) throw new Error('Informe o código do banco.');
+    const dados = await consultarBancoSecullum(codigo);
+    if (!dados) throw new Error('Banco não encontrado ou não vinculado a esta revenda.');
+    res.status(200).json({ ok: true, dados });
+  } catch (err) {
+    console.error('[secullum] consulta:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Executa uma ação administrativa
+exports.secullumAcao = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { codigo, tipoSolicitacao, justificativa, clienteId, clienteNome, usuario } = req.body || {};
+    if (!codigo) throw new Error('Informe o código do banco.');
+    if (!tipoSolicitacao) throw new Error('Informe o tipo da solicitação.');
+    if (!justificativa || !String(justificativa).trim()) throw new Error('A justificativa é obrigatória.');
+    if (String(justificativa).length > 350) throw new Error('A justificativa passa de 350 caracteres.');
+
+    const token = await tokenSecullum();
+    const body = {
+      bancoServicoWebCodigo: Number(codigo),
+      tipoSolicitacao: Number(tipoSolicitacao),
+      justificativa: String(justificativa).trim(),
+    };
+    const resp = await fetch(SECULLUM_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const txt = await resp.text();
+    let data; try { data = txt ? JSON.parse(txt) : {}; } catch (_) { data = { raw: txt }; }
+
+    const NOMES = {
+      1: 'Bloquear banco', 2: 'Solicitar cancelamento de contrato',
+      8: 'Desbloquear banco', 10: 'Ativar banco',
+      16: 'Outras solicitações', 21: 'Inserir notificação', 22: 'Remover notificação',
+    };
+    const nomeAcao = NOMES[Number(tipoSolicitacao)] || `Tipo ${tipoSolicitacao}`;
+
+    // Registra sempre, dando ou não certo
+    await db.collection('secullum_log').add({
+      codigo: String(codigo), clienteId: clienteId || '', clienteNome: clienteNome || '',
+      tipoSolicitacao: Number(tipoSolicitacao), acao: nomeAcao,
+      justificativa: String(justificativa).trim(),
+      usuario: usuario || '—', sucesso: resp.ok,
+      resposta: JSON.stringify(data).slice(0, 500),
+      data: new Date().toISOString(),
+    });
+    if (clienteId) {
+      await db.collection('historico_cliente').add({
+        clienteId, clienteNome: clienteNome || '',
+        tipo: 'secullum_acao',
+        descricao: `${resp.ok ? '' : '[FALHOU] '}Secullum — ${nomeAcao} (banco ${codigo}). Motivo: ${justificativa}`,
+        usuario: usuario || '—', data: new Date().toISOString(),
+      });
+    }
+
+    if (!resp.ok) {
+      res.status(resp.status).json({ error: data?.erro || data?.error || `HTTP ${resp.status}`, detalhe: data });
+      return;
+    }
+    res.status(200).json({ ok: true, acao: nomeAcao, resposta: data });
+  } catch (err) {
+    console.error('[secullum] ação:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sincroniza em lote os clientes que já têm código cadastrado
+exports.secullumSincronizar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const snap = await db.collection('clientes').get();
+    const alvos = [];
+    snap.forEach(d => {
+      const c = d.data();
+      if (c.codigoBancoSecullum) alvos.push({ id: d.id, nome: c.nome || '', codigo: c.codigoBancoSecullum });
+    });
+    if (!alvos.length) {
+      res.status(200).json({ ok: true, total: 0, sucesso: 0, falhas: 0, mensagem: 'Nenhum cliente com código da Secullum cadastrado.' });
+      return;
+    }
+    let sucesso = 0, falhas = 0;
+    const erros = [];
+    for (const a of alvos) {
+      try {
+        const d = await consultarBancoSecullum(a.codigo);
+        if (!d) throw new Error('não encontrado');
+        await db.collection('clientes').doc(a.id).set({
+          secullum_sync: {
+            razaoSocial: d.RazaoSocial || d.Nome || '',
+            documento: d.Documento || '',
+            quantidadePessoas: d.QuantidadePessoas ?? null,
+            limitePessoas: d.LimitePessoas ?? null,
+            limiteEquipamentos: d.LimiteEquipamentos ?? null,
+            plano: d.Plano || '',
+            periodoMeses: d.Periodo_meses ?? null,
+            ativadoEm: d.Ativado_em || '',
+            validade: d.Validade || null,
+            dataExclusao: d.DataExclusao || null,
+            vencimentoContrato: d.vencimentoContrato || '',
+            gestaoArquivos: d.RA_GestaoArquivos || '',
+            ferias: d.RA_Ferias || '',
+            software: d.Software || '',
+            atualizadoEm: new Date().toISOString(),
+          },
+        }, { merge: true });
+        sucesso++;
+      } catch (e) {
+        falhas++;
+        erros.push(`${a.nome} (${a.codigo}): ${e.message}`);
+      }
+      // Respiro entre chamadas para não sobrecarregar a API
+      await new Promise(r => setTimeout(r, 250));
+    }
+    await db.collection('sync_log').add({
+      tipo: 'secullum', total: alvos.length, sucesso, falhas,
+      erros: erros.slice(0, 20), data: new Date().toISOString(),
+    });
+    res.status(200).json({ ok: true, total: alvos.length, sucesso, falhas, erros: erros.slice(0, 20) });
+  } catch (err) {
+    console.error('[secullum] sync:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
