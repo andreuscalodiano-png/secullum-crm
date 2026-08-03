@@ -1752,6 +1752,445 @@ function ConfigWhatsApp(){
   );
 }
 
+// --- CONFIG: GATILHOS DE MENSAGEM --------------------------------------------
+// Automações. Rodam nas Cloud Functions (triggers do Firestore), então
+// disparam mesmo com o CRM fechado e mesmo quando o registro vem de fora
+// (sync de leads, webhook do Asaas).
+const EVENTOS_GATILHO=[
+  {id:'cliente_criado',    label:'Novo cliente cadastrado', icone:'👤', cor:'#3498db',
+   vars:['cliente','empresa','cnpj','contato','telefone','email','cidade','uf','plano','vendedor','status','funcionarios','equipamento','valor_sistema','valor_implantacao','valor_equipamento','total','data','hora']},
+  {id:'cliente_status',    label:'Status do cliente mudou', icone:'🔄', cor:'#9b59b6',
+   vars:['cliente','status','status_anterior','status_novo','vendedor','total','plano','cidade','uf','data','hora']},
+  {id:'solicitacao_criada',label:'Nova solicitação aberta', icone:'📨', cor:'#f5a623',
+   vars:['titulo','cliente','categoria','prioridade','descricao','responsavel','aberta_por','data','hora']},
+  {id:'lead_criado',       label:'Novo lead recebido',      icone:'🎯', cor:'#e84393',
+   vars:['lead','telefone','email','origem','campanha','solucao','funcionarios','plataforma','data','hora']},
+  {id:'implantacao_etapa', label:'Etapa do Kanban mudou',   icone:'🗂️', cor:'#1abc9c',
+   vars:['cliente','etapa','etapa_anterior','responsavel','prazo','data','hora']},
+  {id:'orcamento_fechado', label:'Orçamento fechado',       icone:'✅', cor:'#27ae60',
+   vars:['cliente','contato','telefone','email','total','vendedor','data','hora']},
+  {id:'agendado',          label:'Por horário (relatório)', icone:'⏰', cor:'#e67e22',
+   vars:['data','hora']},
+];
+const RELATORIOS_GATILHO=[
+  {id:'implantacoes_atrasadas',label:'Implantações atrasadas'},
+  {id:'aguardando_faturamento',label:'Clientes aguardando faturamento'},
+  {id:'sem_prazo',             label:'Clientes sem prazo de implantação'},
+  {id:'leads_sem_contato',     label:'Leads sem contato'},
+  {id:'resumo_dia',            label:'Resumo do dia'},
+];
+const OPERADORES_GATILHO=[
+  {id:'igual',     label:'é igual a'},
+  {id:'diferente', label:'é diferente de'},
+  {id:'contem',    label:'contém'},
+  {id:'maior',     label:'é maior que'},
+  {id:'menor',     label:'é menor que'},
+  {id:'preenchido',label:'está preenchido'},
+  {id:'vazio',     label:'está vazio'},
+];
+
+function ConfigGatilhos({usuarios}){
+  const [gatilhos,setGatilhos]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [editando,setEditando]=useState(null); // objeto do gatilho ou 'novo'
+  const [testando,setTestando]=useState(null);
+  const [logs,setLogs]=useState([]);
+  const [verLog,setVerLog]=useState(false);
+
+  useEffect(()=>{
+    const u1=onSnapshot(collection(db,'gatilhos'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setGatilhos(arr.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')));
+      setCarregando(false);
+    });
+    const u2=onSnapshot(collection(db,'gatilhos_log'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push(d.data()));
+      setLogs(arr.sort((a,b)=>new Date(b.data||0)-new Date(a.data||0)).slice(0,30));
+    });
+    return()=>{u1();u2();};
+  },[]);
+
+  async function alternarAtivo(g){
+    await setDoc(doc(db,'gatilhos',g.id),{ativo:g.ativo===false},{merge:true});
+  }
+  async function remover(g){
+    if(!window.confirm(`Remover o gatilho "${g.nome}"?`))return;
+    await deleteDoc(doc(db,'gatilhos',g.id));
+  }
+  async function duplicar(g){
+    const {id:_ig,...dados}=g;
+    await setDoc(doc(db,'gatilhos','gat_'+Date.now()),{...dados,nome:g.nome+' (cópia)',ativo:false,totalDisparos:0,ultimoDisparo:null});
+  }
+  async function testar(g){
+    setTestando(g.id);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/gatilhoTestar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gatilhoId:g.id}),
+      });
+      const d=await r.json();
+      if(d.error){alert('❌ '+d.error);}
+      else{
+        const res=(d.resultados||[]).map(x=>`${x.ok?'✅':'❌'} ${x.para} (${x.numero})${x.erro?' — '+x.erro:''}`).join('\n');
+        alert(`Mensagem enviada:\n\n${d.previa}\n\n────────────\n${res}`);
+      }
+    }catch(e){alert('❌ Erro: '+e.message+'\n\nVerifique se a function gatilhoTestar foi publicada.');}
+    setTestando(null);
+  }
+
+  function fmtQuando(g){
+    const ev=EVENTOS_GATILHO.find(e=>e.id===g.evento);
+    if(g.evento!=='agendado')return ev?ev.label:g.evento;
+    const freq={diario:'Todo dia',dias_uteis:'Dias úteis',semanal:'Toda semana',mensal:'Todo mês'}[g.frequencia||'diario'];
+    const dias=['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+    let quando=`${freq} às ${g.horario||'--:--'}`;
+    if(g.frequencia==='semanal')quando=`Toda ${dias[Number(g.diaSemana)||1]} às ${g.horario||'--:--'}`;
+    if(g.frequencia==='mensal')quando=`Todo dia ${g.diaMes||1} às ${g.horario||'--:--'}`;
+    return quando;
+  }
+  function fmtDestino(g){
+    const d=g.destino||{};
+    if(d.tipo==='numero')return d.valor||'número avulso';
+    if(d.tipo==='responsavel')return 'Responsável do registro';
+    if(d.tipo==='cliente')return 'O próprio cliente';
+    if(d.tipo==='todos')return 'Toda a equipe';
+    const ids=Array.isArray(d.valor)?d.valor:[d.valor];
+    const nomes=ids.map(id=>(usuarios||[]).find(u=>u.id===id)?.nome||'?').filter(Boolean);
+    return nomes.join(', ')||'—';
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando gatilhos...</div>;
+
+  if(editando)return <EditorGatilho gatilho={editando==='novo'?null:editando} usuarios={usuarios} onFechar={()=>setEditando(null)}/>;
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4,flexWrap:'wrap',gap:8}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#8e44ad',textTransform:'uppercase'}}>⚡ Gatilhos de mensagem</div>
+        <button onClick={()=>setEditando('novo')}
+          style={{padding:'7px 16px',borderRadius:7,border:'none',background:'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          + Novo gatilho
+        </button>
+      </div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+        Dispara mensagens de WhatsApp automaticamente quando algo acontece no sistema, ou em um horário fixo.
+        Roda no servidor — funciona com o CRM fechado.
+      </div>
+
+      {gatilhos.length===0&&(
+        <div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'20px',background:'#f8f9fa',borderRadius:8,marginBottom:12}}>
+          Nenhum gatilho criado. Clique em <strong>+ Novo gatilho</strong> para começar.
+        </div>
+      )}
+
+      {gatilhos.map(g=>{
+        const ev=EVENTOS_GATILHO.find(e=>e.id===g.evento)||EVENTOS_GATILHO[0];
+        const on=g.ativo!==false;
+        return(
+          <div key={g.id} style={{background:on?'#f8f9fa':'#f0f0f0',borderRadius:8,padding:'12px 14px',marginBottom:8,
+            border:`1px solid ${on?'#e8eaed':'#e0e0e0'}`,opacity:on?1:.6,borderLeft:`4px solid ${ev.cor}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+              <div style={{width:30,height:30,borderRadius:8,background:ev.cor+'18',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>{ev.icone}</div>
+              <div style={{flex:1,minWidth:170}}>
+                <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{g.nome}</div>
+                <div style={{fontSize:11,color:'#95a5a6'}}>
+                  {fmtQuando(g)} → <strong style={{color:'#7f8c8d'}}>{fmtDestino(g)}</strong>
+                </div>
+              </div>
+              <div onClick={()=>alternarAtivo(g)} title={on?'Ativo — clique para pausar':'Pausado — clique para ativar'}
+                style={{width:36,height:20,borderRadius:10,background:on?'#8e44ad':'#dde1e7',cursor:'pointer',position:'relative',flexShrink:0}}>
+                <div style={{position:'absolute',top:2,left:on?18:2,width:16,height:16,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+              </div>
+              <button onClick={()=>testar(g)} disabled={testando===g.id}
+                style={{padding:'5px 11px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#3498db',fontWeight:600,flexShrink:0}}>
+                {testando===g.id?'...':'▶ Testar'}
+              </button>
+              <button onClick={()=>setEditando(g)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,flexShrink:0}}>✏️</button>
+              <button onClick={()=>duplicar(g)} title="Duplicar" style={{background:'none',border:'none',cursor:'pointer',color:'#f5a623',fontSize:13,flexShrink:0}}>⧉</button>
+              <button onClick={()=>remover(g)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+            </div>
+            {(g.ultimoDisparo||g.totalDisparos)&&(
+              <div style={{fontSize:10,color:'#aaa',paddingLeft:40,marginTop:4}}>
+                {g.totalDisparos?`${g.totalDisparos} disparo(s)`:''}
+                {g.ultimoDisparo?` · último em ${new Date(g.ultimoDisparo).toLocaleString('pt-BR')}`:''}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Histórico */}
+      {logs.length>0&&(
+        <div style={{marginTop:14}}>
+          <button onClick={()=>setVerLog(v=>!v)}
+            style={{background:'none',border:'none',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600,padding:0}}>
+            {verLog?'▲ Ocultar':'▼ Ver'} histórico de disparos ({logs.length})
+          </button>
+          {verLog&&(
+            <div style={{marginTop:8,maxHeight:240,overflowY:'auto',background:'#f8f9fa',borderRadius:8,padding:'10px'}}>
+              {logs.map((l,i)=>(
+                <div key={i} style={{display:'flex',gap:8,padding:'5px 0',borderBottom:i<logs.length-1?'1px solid #eef0f2':'none',fontSize:11,alignItems:'flex-start'}}>
+                  <span style={{flexShrink:0}}>{l.sucesso?'✅':'❌'}</span>
+                  <span style={{color:'#95a5a6',minWidth:104,flexShrink:0,fontSize:10}}>
+                    {l.data?new Date(l.data).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'}
+                  </span>
+                  <span style={{flex:1,color:'#4a4a4a'}}>
+                    <strong>{l.gatilhoNome}</strong>
+                    {l.destinatario?` → ${l.destinatario}`:''}
+                    {l.erro?<span style={{color:'#e74c3c'}}> — {l.erro}</span>:''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editor de um gatilho — componente separado para os campos não perderem foco
+function EditorGatilho({gatilho,usuarios,onFechar}){
+  const [g,setG]=useState(gatilho||{
+    nome:'',evento:'cliente_criado',condicoes:[],
+    destino:{tipo:'usuario',valor:[]},
+    finalidade:'interno',mensagem:'',ativo:true,
+    frequencia:'diario',horario:'08:00',diaSemana:1,diaMes:1,relatorio:'',
+  });
+  const [salvando,setSalvando]=useState(false);
+  const [erro,setErro]=useState('');
+  const refMsg=useRef(null);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>setG(x=>({...x,[k]:v}));
+
+  const ev=EVENTOS_GATILHO.find(e=>e.id===g.evento)||EVENTOS_GATILHO[0];
+  const ehAgendado=g.evento==='agendado';
+  const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
+  const semCelular=elegiveis.filter(u=>!u.celular);
+
+  function inserirVar(v){
+    const campo=refMsg.current;
+    const texto=g.mensagem||'';
+    if(!campo){up('mensagem',texto+`{{${v}}}`);return;}
+    const ini=campo.selectionStart??texto.length;
+    const fim=campo.selectionEnd??texto.length;
+    const novo=texto.slice(0,ini)+`{{${v}}}`+texto.slice(fim);
+    up('mensagem',novo);
+    setTimeout(()=>{campo.focus();campo.selectionStart=campo.selectionEnd=ini+v.length+4;},0);
+  }
+  function addCondicao(){up('condicoes',[...(g.condicoes||[]),{campo:ev.vars[0],operador:'igual',valor:''}]);}
+  function upCondicao(i,k,v){up('condicoes',(g.condicoes||[]).map((c,j)=>j===i?{...c,[k]:v}:c));}
+  function remCondicao(i){up('condicoes',(g.condicoes||[]).filter((_,j)=>j!==i));}
+
+  async function salvar(){
+    setErro('');
+    if(!g.nome.trim()){setErro('Dê um nome ao gatilho.');return;}
+    if(!ehAgendado&&!g.mensagem.trim()){setErro('Escreva a mensagem que será enviada.');return;}
+    if(ehAgendado&&!g.relatorio&&!g.mensagem.trim()){setErro('Escolha um relatório ou escreva uma mensagem.');return;}
+    const d=g.destino||{};
+    const semDestino=(d.tipo==='usuario'&&!(Array.isArray(d.valor)?d.valor.length:d.valor))||(d.tipo==='numero'&&!d.valor);
+    if(semDestino){setErro('Escolha para quem a mensagem será enviada.');return;}
+    setSalvando(true);
+    try{
+      const id=g.id||'gat_'+Date.now();
+      const {id:_ig,...dados}=g;
+      await setDoc(doc(db,'gatilhos',id),{...dados,atualizadoEm:new Date().toISOString()},{merge:true});
+      onFechar();
+    }catch(e){setErro('Erro ao salvar: '+e.message);setSalvando(false);}
+  }
+
+  return(
+    <div>
+      <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,padding:0}}>← Voltar aos gatilhos</button>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Nome do gatilho</label>
+        <input style={fi} value={g.nome} onChange={e=>up('nome',e.target.value)} placeholder="Ex: Avisar Matheus de cliente novo"/>
+      </div>
+
+      {/* 1 — Quando */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:`3px solid ${ev.cor}`}}>
+        <div style={{fontSize:10,color:ev.cor,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · Quando disparar</div>
+        <select style={{...fi,marginBottom:ehAgendado?10:0}} value={g.evento} onChange={e=>{up('evento',e.target.value);up('condicoes',[]);}}>
+          {EVENTOS_GATILHO.map(e=><option key={e.id} value={e.id}>{e.icone} {e.label}</option>)}
+        </select>
+
+        {ehAgendado&&(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+            <div>
+              <label style={lbl}>Frequência</label>
+              <select style={fi} value={g.frequencia} onChange={e=>up('frequencia',e.target.value)}>
+                <option value="diario">Todo dia</option>
+                <option value="dias_uteis">Dias úteis</option>
+                <option value="semanal">Semanal</option>
+                <option value="mensal">Mensal</option>
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>Horário</label>
+              <select style={fi} value={g.horario} onChange={e=>up('horario',e.target.value)}>
+                {Array.from({length:48},(_,i)=>{
+                  const h=String(Math.floor(i/2)).padStart(2,'0');
+                  const m=i%2===0?'00':'30';
+                  return `${h}:${m}`;
+                }).map(h=><option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+            <div>
+              {g.frequencia==='semanal'&&(<>
+                <label style={lbl}>Dia da semana</label>
+                <select style={fi} value={g.diaSemana} onChange={e=>up('diaSemana',e.target.value)}>
+                  {['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'].map((d,i)=><option key={i} value={i}>{d}</option>)}
+                </select>
+              </>)}
+              {g.frequencia==='mensal'&&(<>
+                <label style={lbl}>Dia do mês</label>
+                <select style={fi} value={g.diaMes} onChange={e=>up('diaMes',e.target.value)}>
+                  {Array.from({length:28},(_,i)=>i+1).map(d=><option key={d} value={d}>{d}</option>)}
+                </select>
+              </>)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 2 — Condições */}
+      {!ehAgendado&&(
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:'3px solid #95a5a6'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
+            <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>2 · Condições (opcional)</div>
+            <button onClick={addCondicao} style={{padding:'4px 10px',borderRadius:5,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>+ Condição</button>
+          </div>
+          {(g.condicoes||[]).length===0
+            ?<div style={{fontSize:11,color:'#95a5a6'}}>Sem condições — dispara sempre que o evento acontecer.</div>
+            :(g.condicoes||[]).map((c,i)=>(
+              <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
+                <select style={{...fi,flex:1,minWidth:120}} value={c.campo} onChange={e=>upCondicao(i,'campo',e.target.value)}>
+                  {ev.vars.map(v=><option key={v} value={v}>{v}</option>)}
+                </select>
+                <select style={{...fi,flex:1,minWidth:120}} value={c.operador} onChange={e=>upCondicao(i,'operador',e.target.value)}>
+                  {OPERADORES_GATILHO.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+                {!['preenchido','vazio'].includes(c.operador)&&(
+                  <input style={{...fi,flex:1,minWidth:100}} value={c.valor} onChange={e=>upCondicao(i,'valor',e.target.value)} placeholder="valor"/>
+                )}
+                <button onClick={()=>remCondicao(i)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {/* 3 — Para quem */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:'3px solid #25D366'}}>
+        <div style={{fontSize:10,color:'#25D366',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>3 · Para quem enviar</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+          <div>
+            <label style={lbl}>Destinatário</label>
+            <select style={fi} value={g.destino?.tipo||'usuario'} onChange={e=>up('destino',{tipo:e.target.value,valor:e.target.value==='usuario'?[]:''})}>
+              <option value="usuario">Pessoa(s) da equipe</option>
+              <option value="responsavel">Responsável do registro</option>
+              <option value="todos">Toda a equipe</option>
+              <option value="numero">Número avulso</option>
+              <option value="cliente">O próprio cliente</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Enviar pelo número</label>
+            <select style={fi} value={g.finalidade||'interno'} onChange={e=>up('finalidade',e.target.value)}>
+              {FINALIDADES_WA.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {g.destino?.tipo==='usuario'&&(
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {elegiveis.map(u=>{
+              const sel=(g.destino?.valor||[]).includes(u.id);
+              return(
+                <button key={u.id}
+                  onClick={()=>{
+                    const atual=g.destino?.valor||[];
+                    up('destino',{tipo:'usuario',valor:sel?atual.filter(x=>x!==u.id):[...atual,u.id]});
+                  }}
+                  title={u.celular?u.celular:'Sem celular cadastrado'}
+                  style={{padding:'5px 12px',borderRadius:20,cursor:'pointer',fontSize:11,fontWeight:600,
+                    border:`1px solid ${sel?'#25D366':'#dde1e7'}`,
+                    background:sel?'#25D366':'#fff',color:sel?'#fff':(u.celular?'#4a4a4a':'#c0392b')}}>
+                  {u.nome||u.email}{!u.celular?' ⚠':''}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {g.destino?.tipo==='numero'&&(
+          <input style={fi} value={g.destino?.valor||''} onChange={e=>up('destino',{tipo:'numero',valor:mascaraTel(e.target.value)})} placeholder="(00) 00000-0000" maxLength={15}/>
+        )}
+        {g.destino?.tipo==='responsavel'&&(
+          <div style={{fontSize:11,color:'#7f8c8d'}}>
+            Envia para o vendedor do cliente, o responsável da solicitação ou o responsável da implantação — conforme o evento.
+          </div>
+        )}
+        {g.destino?.tipo==='cliente'&&(
+          <div style={{fontSize:11,color:'#b45309',background:'#fff8ee',border:'1px solid #fde68a',borderRadius:6,padding:'8px 10px'}}>
+            ⚠ Mensagens para clientes fora da janela de 24h exigem template aprovado pela Meta. Use com cuidado.
+          </div>
+        )}
+        {semCelular.length>0&&g.destino?.tipo!=='numero'&&(
+          <div style={{fontSize:10,color:'#c0392b',marginTop:6}}>
+            ⚠ Sem celular cadastrado: {semCelular.map(u=>u.nome||u.email).join(', ')}
+          </div>
+        )}
+      </div>
+
+      {/* 4 — Mensagem */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:12,borderLeft:'3px solid #8e44ad'}}>
+        <div style={{fontSize:10,color:'#8e44ad',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>4 · Mensagem</div>
+
+        {ehAgendado&&(
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Relatório a enviar</label>
+            <select style={fi} value={g.relatorio||''} onChange={e=>up('relatorio',e.target.value)}>
+              <option value="">— Só a mensagem escrita abaixo —</option>
+              {RELATORIOS_GATILHO.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:4}}>
+              O sistema monta a lista automaticamente. Se não houver nada pendente, nada é enviado.
+            </div>
+          </div>
+        )}
+
+        <label style={lbl}>{ehAgendado?'Texto de abertura (opcional)':'Texto da mensagem'}</label>
+        <textarea ref={refMsg} style={{...fi,minHeight:110,resize:'vertical',fontFamily:'inherit',lineHeight:1.6}}
+          value={g.mensagem} onChange={e=>up('mensagem',e.target.value)}
+          placeholder={ehAgendado?'Bom dia! Segue o resumo:':'🎉 Novo cliente!\n{{cliente}} — {{cidade}}/{{uf}}\nPlano: {{plano}} · Total: {{total}}\nVendedor: {{vendedor}}'}/>
+
+        <div style={{marginTop:8}}>
+          <div style={{fontSize:10,color:'#95a5a6',marginBottom:5}}>Clique para inserir na mensagem:</div>
+          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+            {ev.vars.map(v=>(
+              <button key={v} onClick={()=>inserirVar(v)}
+                style={{padding:'3px 9px',borderRadius:12,border:'1px solid #e9d5ff',background:'#faf5ff',cursor:'pointer',fontSize:10,color:'#8e44ad',fontFamily:'monospace'}}>
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {erro&&<div style={{fontSize:12,color:'#e74c3c',marginBottom:10}}>{erro}</div>}
+
+      <div style={{display:'flex',gap:8}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'10px 22px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:13}}>
+          {salvando?'Salvando...':'💾 Salvar gatilho'}
+        </button>
+        <button onClick={onFechar} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
 // --- CONFIG: PLANILHAS DE LEADS (Google Sheets) ------------------------------
 function ConfigPlanilhas(){
   const [planilhas,setPlanilhas]=useState([]);
@@ -5092,6 +5531,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* WhatsApp — Datafy */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={sec}><ConfigWhatsApp/></div>
+      )}
+
+      {/* Gatilhos de mensagem */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigGatilhos usuarios={usuarios}/></div>
       )}
 
       {/* Planilhas de leads */}

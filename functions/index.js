@@ -928,3 +928,476 @@ exports.datafyEnviar = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOTOR DE GATILHOS — automações por evento e por horário
+//
+// Os gatilhos ficam na coleção 'gatilhos'. Cada um define:
+//   evento      cliente_criado | cliente_status | solicitacao_criada |
+//               lead_criado | implantacao_etapa | orcamento_fechado | agendado
+//   condicoes   [{campo, operador, valor}]
+//   destino     {tipo:'usuario'|'responsavel'|'numero'|'cliente', valor}
+//   mensagem    texto com {{variaveis}}
+//   relatorio   (só para agendados) qual lista enviar
+//
+// Como usa Firestore triggers, dispara mesmo com o CRM fechado — inclusive
+// quando o registro vem do sync de leads ou do webhook do Asaas.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function fmtMoedaBR(v) {
+  const n = Number(v) || 0;
+  return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDataBR(v) {
+  if (!v) return '';
+  const d = new Date(String(v).length <= 10 ? v + 'T12:00:00' : v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('pt-BR');
+}
+
+// Monta as variáveis disponíveis conforme o evento
+function montarVariaveis(evento, dados, extra = {}) {
+  const c = dados || {};
+  const base = {
+    data: new Date().toLocaleDateString('pt-BR'),
+    hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    ...extra,
+  };
+  if (evento.startsWith('cliente') || evento === 'orcamento_fechado') {
+    return {
+      ...base,
+      cliente: c.nome || '', empresa: c.empresa || c.nome || '',
+      cnpj: c.cnpj || '', contato: c.contato || '',
+      telefone: c.tel || '', email: c.email || '',
+      cidade: c.cidade || '', uf: c.uf || '',
+      plano: c.plano || '', vendedor: c.vendedor || '',
+      status: c.status || '', funcionarios: String(c.func || ''),
+      equipamento: c.equipTipo || '',
+      valor_sistema: fmtMoedaBR(c.vS), valor_implantacao: fmtMoedaBR(c.vI),
+      valor_equipamento: fmtMoedaBR(c.vE), total: fmtMoedaBR(c.total),
+    };
+  }
+  if (evento === 'solicitacao_criada') {
+    return {
+      ...base,
+      titulo: c.titulo || '', cliente: c.clienteNome || '',
+      categoria: c.categoria || '', prioridade: c.prioridade || '',
+      descricao: (c.descricao || '').slice(0, 300),
+      responsavel: c.responsavelNome || '', aberta_por: c.criadoPor || '',
+    };
+  }
+  if (evento === 'lead_criado') {
+    return {
+      ...base,
+      lead: c.nome || '', telefone: c.telefone || '', email: c.email || '',
+      origem: c.origem || '', campanha: c.campanha || '',
+      solucao: c.solucao || '', funcionarios: c.funcionarios || '',
+      plataforma: c.plataforma || '',
+    };
+  }
+  if (evento === 'implantacao_etapa') {
+    return {
+      ...base,
+      cliente: extra.clienteNome || '', etapa: extra.etapaNova || '',
+      etapa_anterior: extra.etapaAntiga || '',
+      responsavel: c.responsavel || '', prazo: fmtDataBR(c.prazo),
+    };
+  }
+  return base;
+}
+
+function aplicarVariaveis(texto, vars) {
+  return String(texto || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) =>
+    vars[k] !== undefined && vars[k] !== null ? String(vars[k]) : ''
+  );
+}
+
+// Avalia as condições do gatilho contra os dados do registro
+function condicoesOk(condicoes, dados, extra = {}) {
+  if (!Array.isArray(condicoes) || condicoes.length === 0) return true;
+  const fonte = { ...dados, ...extra };
+  return condicoes.every(c => {
+    const atual = String(fonte[c.campo] ?? '').toLowerCase().trim();
+    const esperado = String(c.valor ?? '').toLowerCase().trim();
+    const numA = parseFloat(String(fonte[c.campo]).replace(',', '.'));
+    const numE = parseFloat(String(c.valor).replace(',', '.'));
+    switch (c.operador) {
+      case 'igual':     return atual === esperado;
+      case 'diferente': return atual !== esperado;
+      case 'contem':    return atual.includes(esperado);
+      case 'maior':     return !isNaN(numA) && !isNaN(numE) && numA > numE;
+      case 'menor':     return !isNaN(numA) && !isNaN(numE) && numA < numE;
+      case 'preenchido':return atual !== '';
+      case 'vazio':     return atual === '';
+      default:          return true;
+    }
+  });
+}
+
+// Resolve para quem enviar. Retorna [{nome, numero}]
+async function resolverDestinos(destino, dados, extra = {}) {
+  const out = [];
+  if (!destino) return out;
+  const tipo = destino.tipo || 'usuario';
+
+  if (tipo === 'numero') {
+    if (destino.valor) out.push({ nome: 'Número avulso', numero: destino.valor });
+    return out;
+  }
+  if (tipo === 'cliente') {
+    // Preparado para uso futuro — só dispara se o gatilho pedir explicitamente
+    const tel = dados?.tel || dados?.telefone || '';
+    if (tel) out.push({ nome: dados?.nome || 'Cliente', numero: tel });
+    return out;
+  }
+
+  const snap = await db.collection('usuarios').get();
+  const usuarios = [];
+  snap.forEach(d => usuarios.push({ id: d.id, ...d.data() }));
+  const ativos = usuarios.filter(u => u.status !== 'revogado' && u.celular);
+
+  if (tipo === 'usuario') {
+    const ids = Array.isArray(destino.valor) ? destino.valor : [destino.valor];
+    ids.forEach(id => {
+      const u = ativos.find(x => x.id === id);
+      if (u) out.push({ nome: u.nome || u.email, numero: u.celular });
+    });
+    return out;
+  }
+  if (tipo === 'responsavel') {
+    // Vendedor do cliente, responsável da solicitação ou da implantação
+    const nomeResp = extra.responsavelNome || dados?.responsavelNome || dados?.vendedor || dados?.responsavel || '';
+    const u = ativos.find(x =>
+      (x.nome || '').toLowerCase().trim() === String(nomeResp).toLowerCase().trim()
+    ) || ativos.find(x => x.id === (dados?.responsavelId || ''));
+    if (u) out.push({ nome: u.nome || u.email, numero: u.celular });
+    return out;
+  }
+  if (tipo === 'todos') {
+    ativos.forEach(u => out.push({ nome: u.nome || u.email, numero: u.celular }));
+    return out;
+  }
+  return out;
+}
+
+// Executa todos os gatilhos ativos de um evento
+async function processarGatilhos(evento, dados, extra = {}) {
+  try {
+    const snap = await db.collection('gatilhos').get();
+    const gatilhos = [];
+    snap.forEach(d => gatilhos.push({ id: d.id, ...d.data() }));
+    const aplicaveis = gatilhos.filter(g => g.ativo !== false && g.evento === evento);
+    if (!aplicaveis.length) return;
+
+    for (const g of aplicaveis) {
+      try {
+        if (!condicoesOk(g.condicoes, dados, extra)) {
+          console.log(`[gatilho] "${g.nome}" ignorado — condições não atendidas`);
+          continue;
+        }
+        const vars = montarVariaveis(evento, dados, extra);
+        const texto = aplicarVariaveis(g.mensagem, vars);
+        const destinos = await resolverDestinos(g.destino, dados, extra);
+
+        if (!destinos.length) {
+          console.log(`[gatilho] "${g.nome}" sem destinatário válido`);
+          await db.collection('gatilhos_log').add({
+            gatilhoId: g.id, gatilhoNome: g.nome, evento,
+            sucesso: false, erro: 'Nenhum destinatário com celular cadastrado',
+            data: new Date().toISOString(),
+          });
+          continue;
+        }
+
+        for (const d of destinos) {
+          const numero = await obterNumeroDatafy({
+            numeroId: g.numeroId || null,
+            finalidade: g.finalidade || 'interno',
+          });
+          let destinoNum = String(d.numero).replace(/\D/g, '');
+          if (!destinoNum.startsWith('55') || destinoNum.length < 12) {
+            destinoNum = '55' + destinoNum.replace(/^0+/, '');
+          }
+          const r = await chamarDatafy({
+            token: numero.token,
+            path: '/messages/send/text',
+            method: 'POST',
+            body: { to: destinoNum, text: texto },
+          });
+          await db.collection('gatilhos_log').add({
+            gatilhoId: g.id, gatilhoNome: g.nome, evento,
+            destinatario: d.nome, destino: destinoNum,
+            mensagem: texto.slice(0, 500),
+            sucesso: r.ok,
+            erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
+            data: new Date().toISOString(),
+          });
+          console.log(`[gatilho] "${g.nome}" -> ${d.nome}: ${r.ok ? 'enviado' : 'falhou'}`);
+        }
+        await db.collection('gatilhos').doc(g.id).set({
+          ultimoDisparo: new Date().toISOString(),
+          totalDisparos: (g.totalDisparos || 0) + 1,
+        }, { merge: true });
+      } catch (errG) {
+        console.error(`[gatilho] erro em "${g.nome}":`, errG.message);
+        await db.collection('gatilhos_log').add({
+          gatilhoId: g.id, gatilhoNome: g.nome, evento,
+          sucesso: false, erro: errG.message, data: new Date().toISOString(),
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[gatilho] erro geral:', err.message);
+  }
+}
+
+// ─── TRIGGERS DO FIRESTORE ───────────────────────────────────────────────────
+
+exports.gatilhoClienteCriado = functions.firestore
+  .document('clientes/{id}')
+  .onCreate(async snap => {
+    await processarGatilhos('cliente_criado', { id: snap.id, ...snap.data() });
+    return null;
+  });
+
+exports.gatilhoClienteAtualizado = functions.firestore
+  .document('clientes/{id}')
+  .onUpdate(async change => {
+    const antes = change.before.data() || {};
+    const depois = change.after.data() || {};
+    if (antes.status !== depois.status) {
+      await processarGatilhos('cliente_status',
+        { id: change.after.id, ...depois },
+        { status_anterior: antes.status || '', status_novo: depois.status || '' });
+    }
+    return null;
+  });
+
+exports.gatilhoSolicitacaoCriada = functions.firestore
+  .document('solicitacoes/{id}')
+  .onCreate(async snap => {
+    await processarGatilhos('solicitacao_criada', { id: snap.id, ...snap.data() });
+    return null;
+  });
+
+exports.gatilhoLeadCriado = functions.firestore
+  .document('leads/{id}')
+  .onCreate(async snap => {
+    await processarGatilhos('lead_criado', { id: snap.id, ...snap.data() });
+    return null;
+  });
+
+exports.gatilhoImplantacaoEtapa = functions.firestore
+  .document('implantacoes/{id}')
+  .onUpdate(async (change, context) => {
+    const antes = change.before.data() || {};
+    const depois = change.after.data() || {};
+    if (antes.etapa === depois.etapa) return null;
+    // Busca o nome do cliente para usar na mensagem
+    let clienteNome = '';
+    try {
+      const cli = await db.collection('clientes').doc(context.params.id).get();
+      if (cli.exists) clienteNome = cli.data().nome || '';
+    } catch (_) {}
+    await processarGatilhos('implantacao_etapa', depois, {
+      clienteNome,
+      etapaAntiga: antes.etapa || '',
+      etapaNova: depois.etapa || '',
+    });
+    return null;
+  });
+
+exports.gatilhoOrcamentoFechado = functions.firestore
+  .document('orcamentos/{id}')
+  .onUpdate(async change => {
+    const antes = change.before.data() || {};
+    const depois = change.after.data() || {};
+    if (antes.status === depois.status || depois.status !== 'fechado') return null;
+    const c = depois.cliente || {};
+    await processarGatilhos('orcamento_fechado', {
+      nome: c.empresa || c.nome || '', contato: c.nome || '',
+      tel: c.tel || '', email: c.email || '',
+      total: depois.subtotal || 0, vendedor: depois.detalhes?.vendedor || '',
+    });
+    return null;
+  });
+
+// ─── GATILHOS AGENDADOS (relatórios) ─────────────────────────────────────────
+
+async function montarRelatorio(tipo) {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const [cliSnap, implSnap, leadSnap] = await Promise.all([
+    db.collection('clientes').get(),
+    db.collection('implantacoes').get(),
+    db.collection('leads').get(),
+  ]);
+  const clientes = []; cliSnap.forEach(d => clientes.push({ id: d.id, ...d.data() }));
+  const impl = {}; implSnap.forEach(d => { impl[d.id] = d.data(); });
+  const leads = []; leadSnap.forEach(d => leads.push({ id: d.id, ...d.data() }));
+
+  if (tipo === 'implantacoes_atrasadas') {
+    const lista = clientes.filter(c => {
+      const i = impl[c.id] || {};
+      return i.etapa !== 'processo_finalizado' && i.prazo && new Date(i.prazo + 'T12:00:00') < hoje;
+    });
+    if (!lista.length) return null;
+    return `⚠️ *Implantações atrasadas* (${lista.length})\n\n` +
+      lista.slice(0, 20).map(c => {
+        const i = impl[c.id] || {};
+        const dias = Math.floor((hoje - new Date(i.prazo + 'T12:00:00')) / 86400000);
+        return `• ${c.nome} — ${dias} dia(s) de atraso`;
+      }).join('\n');
+  }
+  if (tipo === 'aguardando_faturamento') {
+    const STATUS = ['Links enviados', 'Aguardando', 'Faturado parcial'];
+    const lista = clientes.filter(c => STATUS.includes(c.status));
+    if (!lista.length) return null;
+    const total = lista.reduce((s, c) => s + (Number(c.total) || 0), 0);
+    return `💰 *Clientes aguardando faturamento* (${lista.length}) — ${fmtMoedaBR(total)}\n\n` +
+      lista.slice(0, 20).map(c => `• ${c.nome} — ${fmtMoedaBR(c.total)} (${c.status})`).join('\n');
+  }
+  if (tipo === 'sem_prazo') {
+    const lista = clientes.filter(c => {
+      const i = impl[c.id] || {};
+      return i.etapa !== 'processo_finalizado' && !i.prazo;
+    });
+    if (!lista.length) return null;
+    return `📅 *Clientes sem prazo de implantação* (${lista.length})\n\n` +
+      lista.slice(0, 20).map(c => `• ${c.nome}`).join('\n');
+  }
+  if (tipo === 'leads_sem_contato') {
+    const lista = leads.filter(l => l.status === 'novo' && !l.primeiroContatoEm);
+    if (!lista.length) return null;
+    return `🎯 *Leads sem contato* (${lista.length})\n\n` +
+      lista.slice(0, 20).map(l => {
+        const dias = l.criadoEm ? Math.floor((Date.now() - new Date(l.criadoEm).getTime()) / 86400000) : '?';
+        return `• ${l.nome || 'Sem nome'} — há ${dias} dia(s)`;
+      }).join('\n');
+  }
+  if (tipo === 'resumo_dia') {
+    const hojeStr = new Date().toISOString().slice(0, 10);
+    const novos = clientes.filter(c => (c.criadoEm || '').startsWith(hojeStr));
+    const leadsHoje = leads.filter(l => (l.criadoEm || '').startsWith(hojeStr));
+    return `☀️ *Resumo do dia*\n\n` +
+      `• Clientes cadastrados hoje: ${novos.length}\n` +
+      `• Leads recebidos hoje: ${leadsHoje.length}\n` +
+      `• Total de clientes: ${clientes.length}`;
+  }
+  return null;
+}
+
+exports.gatilhosAgendados = functions.pubsub
+  .schedule('every 30 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      const horaAtual = `${String(agora.getHours()).padStart(2, '0')}:${agora.getMinutes() < 30 ? '00' : '30'}`;
+      const diaSemana = agora.getDay(); // 0=domingo
+      const diaMes = agora.getDate();
+
+      const snap = await db.collection('gatilhos').get();
+      const gatilhos = [];
+      snap.forEach(d => gatilhos.push({ id: d.id, ...d.data() }));
+      const agendados = gatilhos.filter(g => g.ativo !== false && g.evento === 'agendado');
+
+      for (const g of agendados) {
+        if ((g.horario || '') !== horaAtual) continue;
+        const freq = g.frequencia || 'diario';
+        if (freq === 'semanal' && Number(g.diaSemana) !== diaSemana) continue;
+        if (freq === 'mensal' && Number(g.diaMes) !== diaMes) continue;
+        if (freq === 'dias_uteis' && (diaSemana === 0 || diaSemana === 6)) continue;
+
+        let texto = g.mensagem || '';
+        if (g.relatorio) {
+          const rel = await montarRelatorio(g.relatorio);
+          if (!rel) {
+            console.log(`[gatilho agendado] "${g.nome}" — relatório vazio, nada a enviar`);
+            continue;
+          }
+          texto = texto ? `${texto}\n\n${rel}` : rel;
+        }
+        texto = aplicarVariaveis(texto, montarVariaveis('agendado', {}));
+
+        const destinos = await resolverDestinos(g.destino, {});
+        for (const d of destinos) {
+          const numero = await obterNumeroDatafy({
+            numeroId: g.numeroId || null,
+            finalidade: g.finalidade || 'interno',
+          });
+          let destinoNum = String(d.numero).replace(/\D/g, '');
+          if (!destinoNum.startsWith('55') || destinoNum.length < 12) {
+            destinoNum = '55' + destinoNum.replace(/^0+/, '');
+          }
+          const r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: destinoNum, text: texto },
+          });
+          await db.collection('gatilhos_log').add({
+            gatilhoId: g.id, gatilhoNome: g.nome, evento: 'agendado',
+            destinatario: d.nome, destino: destinoNum,
+            mensagem: texto.slice(0, 500), sucesso: r.ok,
+            erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
+            data: new Date().toISOString(),
+          });
+        }
+        await db.collection('gatilhos').doc(g.id).set({
+          ultimoDisparo: new Date().toISOString(),
+          totalDisparos: (g.totalDisparos || 0) + 1,
+        }, { merge: true });
+      }
+    } catch (err) {
+      console.error('[gatilhos agendados] erro:', err.message);
+    }
+    return null;
+  });
+
+// Disparo manual — botão "Testar agora" no painel
+exports.gatilhoTestar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { gatilhoId } = req.body || {};
+    if (!gatilhoId) throw new Error('Informe o gatilho.');
+    const g = (await db.collection('gatilhos').doc(gatilhoId).get()).data();
+    if (!g) throw new Error('Gatilho não encontrado.');
+
+    // Dados fictícios para os eventos, ou relatório real para os agendados
+    const exemplo = {
+      nome: 'CLIENTE DE TESTE LTDA', empresa: 'CLIENTE DE TESTE LTDA',
+      cnpj: '00.000.000/0001-00', contato: 'FULANO', tel: '(43) 99999-9999',
+      email: 'teste@exemplo.com', cidade: 'IBAITI', uf: 'PR',
+      plano: 'Pro', vendedor: 'TESTE', status: 'Faturado', func: 10,
+      equipTipo: 'EVO FACIAL 40', vS: 149, vI: 300, vE: 1150, total: 1599,
+      titulo: 'SOLICITAÇÃO DE TESTE', clienteNome: 'CLIENTE DE TESTE LTDA',
+      categoria: 'Financeiro', prioridade: 'Alta', descricao: 'Mensagem de teste do gatilho.',
+      telefone: '(43) 99999-9999', origem: 'Teste', campanha: 'Campanha teste',
+      solucao: 'Relógio de ponto fixo', funcionarios: 'De 6 a 10 funcionários',
+    };
+
+    let texto = g.mensagem || '';
+    if (g.evento === 'agendado' && g.relatorio) {
+      const rel = await montarRelatorio(g.relatorio);
+      texto = rel ? (texto ? `${texto}\n\n${rel}` : rel) : (texto || 'Nenhum item no relatório neste momento.');
+    }
+    texto = aplicarVariaveis(texto, montarVariaveis(g.evento || 'cliente_criado', exemplo, {
+      etapaNova: 'Em Configuração', etapaAntiga: 'Venda Fechada', clienteNome: exemplo.nome,
+    }));
+    texto = `🧪 *TESTE DO GATILHO "${g.nome}"*\n\n${texto}`;
+
+    const destinos = await resolverDestinos(g.destino, exemplo);
+    if (!destinos.length) throw new Error('Nenhum destinatário com celular cadastrado.');
+
+    const resultados = [];
+    for (const d of destinos) {
+      const numero = await obterNumeroDatafy({ numeroId: g.numeroId || null, finalidade: g.finalidade || 'interno' });
+      let destinoNum = String(d.numero).replace(/\D/g, '');
+      if (!destinoNum.startsWith('55') || destinoNum.length < 12) destinoNum = '55' + destinoNum.replace(/^0+/, '');
+      const r = await chamarDatafy({ token: numero.token, path: '/messages/send/text', method: 'POST', body: { to: destinoNum, text: texto } });
+      resultados.push({ para: d.nome, numero: destinoNum, ok: r.ok, erro: r.ok ? null : (r.data?.error?.message || JSON.stringify(r.data).slice(0, 200)) });
+    }
+    res.status(200).json({ ok: true, previa: texto, resultados });
+  } catch (err) {
+    console.error('[gatilhoTestar] erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
