@@ -198,6 +198,46 @@ function linkWaLead(lead){
   return `https://wa.me/${num}?text=${msg}`;
 }
 
+// Quem recebe a solicitação de faturamento manual.
+// Prioridade: responsável marcado em Configurações > primeiro financeiro ativo.
+function escolherResponsavelFaturamento(usuarios){
+  const lista=(usuarios||[]).filter(u=>u&&u.status!=='revogado');
+  return lista.find(u=>u.responsavelFaturamento&&u.email)
+    ||lista.find(u=>u.perfil?.toLowerCase()==='financeiro'&&u.email)
+    ||lista.find(u=>u.perfil?.toLowerCase()==='financeiro')
+    ||null;
+}
+
+// --- CABEÇALHO DE SEÇÃO (padrão para cadastro e edição) ----------------------
+// Cor fixa por assunto para virar memória visual: azul=identificação,
+// roxo=endereço, laranja=valores, verde=contrato, ciano=equipamento.
+const CORES_SECAO={
+  dados:      {cor:'#3498db',icone:'👤'},
+  endereco:   {cor:'#9b59b6',icone:'📍'},
+  produtos:   {cor:'#e67e22',icone:'📦'},
+  pagamento:  {cor:'#16a085',icone:'💳'},
+  contrato:   {cor:'#27ae60',icone:'📄'},
+  equipamento:{cor:'#0abde3',icone:'🚚'},
+};
+function CabecalhoSecao({tipo,titulo,subtitulo,acao}){
+  const {cor,icone}=CORES_SECAO[tipo]||{cor:'#7f8c8d',icone:'•'};
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:11,marginBottom:14,paddingBottom:12,borderBottom:'1px solid #f0f2f5'}}>
+      <div style={{width:34,height:34,borderRadius:9,background:cor+'18',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0}}>{icone}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:700,fontSize:12,color:cor,textTransform:'uppercase',letterSpacing:.8}}>{titulo}</div>
+        {subtitulo&&<div style={{fontSize:11,color:'#95a5a6',marginTop:1}}>{subtitulo}</div>}
+      </div>
+      {acao}
+    </div>
+  );
+}
+// Estilo do card de seção, com a barra colorida na lateral
+function estiloSecao(tipo,base){
+  const {cor}=CORES_SECAO[tipo]||{cor:'#7f8c8d'};
+  return {...base,borderLeft:`4px solid ${cor}`,marginBottom:22};
+}
+
 // --- PRECIFICAÇÃO DE EQUIPAMENTOS --------------------------------------------
 // Equipamentos antigos não têm preços cadastrados. Todas as funções abaixo
 // tratam campos ausentes como 0 / sem promoção, para não quebrar dados legados.
@@ -407,90 +447,89 @@ function CardMeta({titulo,realizado,meta,onSetMeta,cor,icone}){
   const [editando,setEditando]=useState(false);
   const [val,setVal]=useState(String(meta||''));
 
-  // Cor dinâmica da barra por progresso
+  // Cor da barra acompanha o progresso
   const corBarra=atingiu?'#27ae60':pct>=70?cor:'#f5a623';
 
-  // Frases motivacionais por faixa
-  const frase=meta<=0?'Defina sua meta para acompanhar o progresso!'
-    :atingiu?'🏆 META ATINGIDA! Parabéns, equipe!'
-    :pct>=90?'🔥 Quase lá! Último esforço!'
-    :pct>=70?'💪 Ótimo ritmo! Continue assim!'
-    :pct>=50?'📈 Na metade do caminho!'
-    :pct>=25?'⚡ Bora acelerar!'
-    :'🚀 O céu é o limite! Vamos lá!';
+  const frase=meta<=0?'Defina sua meta para acompanhar o progresso'
+    :atingiu?'🏆 Meta atingida! Parabéns, equipe!'
+    :pct>=90?'🔥 Quase lá! Último esforço'
+    :pct>=70?'💪 Ótimo ritmo! Continue assim'
+    :pct>=50?'📈 Na metade do caminho'
+    :pct>=25?'⚡ Bora acelerar'
+    :'🚀 O céu é o limite! Vamos lá';
 
   return(
     <div style={{
-      flex:1,minWidth:280,borderRadius:12,overflow:'hidden',
-      boxShadow:'0 4px 20px rgba(0,0,0,.10)',
-      background:atingiu?`linear-gradient(135deg,#1a7a4a 0%,#27ae60 100%)`:`linear-gradient(135deg,#1a2a3a 0%,#2c3e50 100%)`,
-      position:'relative',
+      flex:1,minWidth:270,borderRadius:12,overflow:'hidden',position:'relative',
+      background:atingiu?'#f2fbf5':'#fff',
+      border:`1px solid ${atingiu?'#a7e3bd':'#e8eaed'}`,
+      boxShadow:'0 1px 4px rgba(0,0,0,.06)',
     }}>
-      {/* Círculo decorativo de fundo */}
-      <div style={{position:'absolute',top:-30,right:-30,width:140,height:140,borderRadius:'50%',background:'rgba(255,255,255,.04)',pointerEvents:'none'}}/>
-      <div style={{position:'absolute',bottom:-40,left:-20,width:100,height:100,borderRadius:'50%',background:'rgba(255,255,255,.03)',pointerEvents:'none'}}/>
+      {/* Faixa superior na cor do card */}
+      <div style={{height:3,background:atingiu?'#27ae60':cor}}/>
 
-      <div style={{padding:'20px 22px',position:'relative'}}>
-        {/* Header */}
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:16}}>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}>
-              <span style={{fontSize:18}}>{icone}</span>
-              <span style={{fontWeight:700,fontSize:11,color:'rgba(255,255,255,.6)',textTransform:'uppercase',letterSpacing:1.2}}>{titulo}</span>
+      <div style={{padding:'16px 20px'}}>
+        {/* Cabeçalho */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14,gap:10}}>
+          <div style={{display:'flex',alignItems:'center',gap:9,minWidth:0}}>
+            <div style={{width:32,height:32,borderRadius:9,background:(atingiu?'#27ae60':cor)+'18',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0}}>{icone}</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:10,color:'#95a5a6',textTransform:'uppercase',letterSpacing:1,marginBottom:1}}>{titulo}</div>
+              <div style={{fontSize:22,fontWeight:700,color:atingiu?'#1e8449':'#2c3e50',letterSpacing:-.4,lineHeight:1.1}}>{moeda(realizado)}</div>
             </div>
-            <div style={{fontSize:26,fontWeight:700,color:'#fff',letterSpacing:-.5}}>{moeda(realizado)}</div>
           </div>
-          <div style={{textAlign:'right'}}>
+          <div style={{textAlign:'right',flexShrink:0}}>
             {!editando?(
               <div>
-                <div style={{fontSize:10,color:'rgba(255,255,255,.5)',marginBottom:2}}>Meta</div>
-                <div style={{display:'flex',alignItems:'center',gap:6}}>
-                  <span style={{fontSize:14,fontWeight:700,color:'rgba(255,255,255,.7)'}}>{meta>0?moeda(meta):'—'}</span>
-                  <button onClick={()=>{setVal(String(meta||''));setEditando(true);}} style={{background:'rgba(255,255,255,.12)',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',color:'rgba(255,255,255,.7)',fontSize:11}}>✏️</button>
+                <div style={{fontSize:9,color:'#b2bec3',marginBottom:2,textTransform:'uppercase',letterSpacing:.5}}>Meta</div>
+                <div style={{display:'flex',alignItems:'center',gap:5,justifyContent:'flex-end'}}>
+                  <span style={{fontSize:13,fontWeight:600,color:'#7f8c8d'}}>{meta>0?moeda(meta):'—'}</span>
+                  <button onClick={()=>{setVal(String(meta||''));setEditando(true);}}
+                    title="Editar meta"
+                    style={{background:'#f5f6fa',border:'1px solid #e8eaed',borderRadius:6,padding:'3px 6px',cursor:'pointer',fontSize:10,lineHeight:1}}>✏️</button>
                 </div>
               </div>
             ):(
               <div style={{display:'flex',gap:4,alignItems:'center'}}>
-                <input value={val} onChange={e=>setVal(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}}} placeholder="Ex: 5000" style={{padding:'5px 8px',borderRadius:6,border:'1.5px solid rgba(255,255,255,.3)',fontSize:12,width:90,background:'rgba(255,255,255,.1)',color:'#fff',outline:'none'}}/>
-                <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}} style={{background:'#27ae60',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
-                <button onClick={()=>setEditando(false)} style={{background:'rgba(255,255,255,.1)',border:'none',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'rgba(255,255,255,.6)',fontSize:11}}>✕</button>
+                <input value={val} autoFocus onChange={e=>setVal(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter'){onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}if(e.key==='Escape')setEditando(false);}}
+                  placeholder="Ex: 5000"
+                  style={{padding:'5px 8px',borderRadius:6,border:'1.5px solid '+cor,fontSize:12,width:92,outline:'none',color:'#2c3e50'}}/>
+                <button onClick={()=>{onSetMeta(parseFloat(String(val).replace(',','.'))||0);setEditando(false);}}
+                  style={{background:'#27ae60',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>OK</button>
+                <button onClick={()=>setEditando(false)}
+                  style={{background:'#f5f6fa',border:'1px solid #e8eaed',borderRadius:6,padding:'5px 8px',cursor:'pointer',color:'#95a5a6',fontSize:11}}>✕</button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Barra de progresso */}
+        {/* Progresso */}
         {meta>0&&(
-          <div style={{marginBottom:12}}>
-            <div style={{height:10,borderRadius:5,background:'rgba(255,255,255,.12)',overflow:'hidden',marginBottom:6}}>
+          <div style={{marginBottom:11}}>
+            <div style={{height:8,borderRadius:4,background:'#f0f2f5',overflow:'hidden',marginBottom:6}}>
               <div style={{
-                height:'100%',borderRadius:5,
-                background:atingiu
-                  ?'linear-gradient(90deg,#52c41a,#95de64)'
-                  :`linear-gradient(90deg,${corBarra},${corBarra}cc)`,
-                width:pct+'%',
-                transition:'width .6s cubic-bezier(.4,0,.2,1)',
-                boxShadow:`0 0 10px ${corBarra}88`,
+                height:'100%',borderRadius:4,
+                background:atingiu?'linear-gradient(90deg,#27ae60,#52c41a)':`linear-gradient(90deg,${corBarra},${corBarra}bb)`,
+                width:pct+'%',transition:'width .6s cubic-bezier(.4,0,.2,1)',
               }}/>
             </div>
             <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
-              <span style={{color:'rgba(255,255,255,.6)',fontWeight:600}}>{pct}% atingido</span>
-              {!atingiu&&<span style={{color:'#f5a623',fontWeight:600}}>Faltam {moeda(falta)}</span>}
-              {atingiu&&<span style={{color:'#52c41a',fontWeight:700}}>✓ Superou a meta!</span>}
+              <span style={{color:'#7f8c8d',fontWeight:600}}>{pct}% atingido</span>
+              {!atingiu&&<span style={{color:'#e67e22',fontWeight:600}}>Faltam {moeda(falta)}</span>}
+              {atingiu&&<span style={{color:'#27ae60',fontWeight:700}}>✓ Superou a meta!</span>}
             </div>
           </div>
         )}
 
-        {/* Frase motivacional */}
+        {/* Frase */}
         <div style={{
-          background:'rgba(255,255,255,.07)',borderRadius:7,padding:'7px 12px',
-          fontSize:11,color:atingiu?'#95de64':'rgba(255,255,255,.75)',
-          fontWeight:600,textAlign:'center',letterSpacing:.3,
+          background:atingiu?'#dff5e6':'#f8f9fa',borderRadius:7,padding:'7px 12px',
+          fontSize:11,color:atingiu?'#1e8449':'#7f8c8d',fontWeight:600,textAlign:'center',
         }}>
           {frase}
         </div>
-
-
       </div>
     </div>
   );
@@ -2395,8 +2434,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       )}
 
       {/* Dados da empresa */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Dados do cliente</div>
+      <div style={estiloSecao('dados',sec)}>
+        <CabecalhoSecao tipo="dados" titulo="Dados do cliente" subtitulo="Identificação e contato"/>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={{...lbl,color:erros.nome?'#e74c3c':'#7f8c8d'}}>{erros.nome?'Nome — '+erros.nome:'Nome *'}</label><input style={{...fiErr('nome'),textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())}/></div>
           <div><label style={lbl}>Data da venda</label><input style={fi} type="date" value={f.data} onChange={e=>up('data',e.target.value)}/></div>
@@ -2416,7 +2455,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
         </div>
         {/* Endereço */}
         <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
-          <div style={{fontSize:11,fontWeight:700,color:'#7f8c8d',marginBottom:8,textTransform:'uppercase'}}>Endereço</div>
+          <CabecalhoSecao tipo="endereco" titulo="Endereço" subtitulo="Local de instalação e entrega"/>
           <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr',gap:10,marginBottom:10}}>
             <div><label style={{...lbl,color:erros.cep?'#e74c3c':'#7f8c8d'}}>{erros.cep?'CEP — '+erros.cep:'CEP *'}</label><input style={fiErr('cep')} value={f.cep} onChange={e=>up('cep',e.target.value)} placeholder="00000-000" maxLength={9}/></div>
             <div><label style={{...lbl,color:erros.rua?'#e74c3c':'#7f8c8d'}}>{erros.rua?'Rua — '+erros.rua:'Rua *'}</label><input style={{...fiErr('rua'),textTransform:'uppercase'}} value={f.rua} onChange={e=>up('rua',e.target.value.toUpperCase())}/></div>
@@ -2435,8 +2474,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       </div>
 
       {/* Produtos e valores */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#e67e22',marginBottom:12,textTransform:'uppercase'}}>Produtos e valores</div>
+      <div style={estiloSecao('produtos',sec)}>
+        <CabecalhoSecao tipo="produtos" titulo="Produtos e valores" subtitulo="O que o cliente está levando"/>
         {/* Itens: equipamentos e serviços */}
         <div style={{marginBottom:12}}>
           {erros.equipTipo&&<div style={{fontSize:11,color:'#e74c3c',fontWeight:700,marginBottom:6}}>⚠ {erros.equipTipo}</div>}
@@ -2469,8 +2508,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       </div>
 
       {/* Pagamento por cobrança */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase'}}>💳 Formas de pagamento</div>
+      <div style={estiloSecao('pagamento',sec)}>
+        <CabecalhoSecao tipo="pagamento" titulo="Formas de pagamento" subtitulo="Como cada item será cobrado"/>
 
         {/* Implantação */}
         {parseValor(f.vI)>0&&(
@@ -2525,8 +2564,8 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       </div>
 
       {/* Contrato */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:'#27ae60',marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
+      <div style={estiloSecao('contrato',sec)}>
+        <CabecalhoSecao tipo="contrato" titulo="Contrato" subtitulo="Plano, vendedor e condições"/>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div>
             <label style={{...lbl,color:erros.vendedor?'#e74c3c':'#7f8c8d'}}>{erros.vendedor?'Vendedor — '+erros.vendedor:'Vendedor *'}</label>
@@ -2554,7 +2593,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       {/* Despacho do equipamento */}
       {requerPag&&(
         <div style={{...sec,borderLeft:`4px solid ${C.orange}`}}>
-          <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Equipamento</div>
+          <CabecalhoSecao tipo="equipamento" titulo="Equipamento" subtitulo="Envio e rastreio"/>
           <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:f.despachado==='Sim'?12:0}}>
             <label style={lbl}>Despachado?</label>
             <div style={{display:'flex',gap:6}}>
@@ -2805,8 +2844,8 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
       </div>
 
       {/* Dados da empresa */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:C.blue,marginBottom:12,textTransform:'uppercase'}}>Dados do cliente</div>
+      <div style={estiloSecao('dados',sec)}>
+        <CabecalhoSecao tipo="dados" titulo="Dados do cliente" subtitulo="Identificação e contato"/>
         <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Nome *" field="nome"/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="CNPJ/CPF" field="cnpj"/>
@@ -2826,7 +2865,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
         </div>
         {/* Endereço */}
         <div style={{borderTop:'1px solid #e8eaed',paddingTop:10,marginTop:4}}>
-          <div style={{fontSize:11,fontWeight:700,color:'#7f8c8d',marginBottom:8,textTransform:'uppercase'}}>Endereço</div>
+          <CabecalhoSecao tipo="endereco" titulo="Endereço" subtitulo="Local de instalação e entrega"/>
           <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr',gap:10,marginBottom:10}}>
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="CEP" field="cep"/>
             <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Rua" field="rua"/>
@@ -2845,15 +2884,13 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
       </div>
 
       {/* Produtos e Valores */}
-      <div style={{...sec,borderLeft:`4px solid ${C.orange}`,opacity:1}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <div style={{fontWeight:700,fontSize:12,color:C.orange,textTransform:'uppercase'}}>📦 Produtos e valores</div>
-          {f.status==='Faturado'&&(
-            <span style={{fontSize:11,color:'#fff',background:'#27ae60',padding:'3px 10px',borderRadius:10,fontWeight:700}}>
+      <div style={estiloSecao('produtos',sec)}>
+        <CabecalhoSecao tipo="produtos" titulo="Produtos e valores" subtitulo="O que o cliente está levando"
+          acao={f.status==='Faturado'?(
+            <span style={{fontSize:11,color:'#fff',background:'#27ae60',padding:'3px 10px',borderRadius:10,fontWeight:700,whiteSpace:'nowrap'}}>
               ✅ Faturado — valores bloqueados
             </span>
-          )}
-        </div>
+          ):null}/>
         {f.status==='Faturado'&&!editMode&&(
           <div style={{fontSize:11,color:'#7f8c8d',background:'#f8f9fa',borderRadius:6,padding:'8px 12px',marginBottom:10,display:'flex',alignItems:'center',gap:6}}>
             <span>🔒</span> Cliente já faturado. Para editar os valores, altere o status primeiro.
@@ -2923,9 +2960,18 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
         </div>
       </div>
 
+      {/* Formas de pagamento — mesma posição da tela de cadastro */}
+      <div style={estiloSecao('pagamento',sec)}>
+        <CabecalhoSecao tipo="pagamento" titulo="Formas de pagamento" subtitulo="Como cada item será cobrado"/>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
+          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º boleto" field="dtBoleto" type="date"/>
+        </div>
+      </div>
+
       {/* Contrato */}
-      <div style={sec}>
-        <div style={{fontWeight:700,fontSize:12,color:C.green,marginBottom:12,textTransform:'uppercase'}}>Contrato</div>
+      <div style={estiloSecao('contrato',sec)}>
+        <CabecalhoSecao tipo="contrato" titulo="Contrato" subtitulo="Plano, vendedor e condições"/>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:10}}>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Plano" field="plano" opts={PLANOS}/>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Vendedor" field="vendedor" opts={vendedoresCad.length>0?['—',...vendedoresCad.map(v=>v.nome)]:null}/>
@@ -2941,10 +2987,6 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
             }
           </div>
           <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Emitir NF-e" field="nfe" opts={['Sim','Não']}/>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º boleto" field="dtBoleto" type="date"/>
         </div>
         <div style={{gridColumn:'span 2'}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
@@ -2965,7 +3007,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
         if(!requerPag&&!f.despachado)return null;
         return(
           <div style={{...sec,borderLeft:`4px solid ${C.orange}`}}>
-            <div style={{fontWeight:700,fontSize:12,color:C.orange,marginBottom:12,textTransform:'uppercase'}}>📦 Equipamento — Despacho</div>
+            <CabecalhoSecao tipo="equipamento" titulo="Equipamento" subtitulo="Envio e rastreio"/>
             <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:(f.despachado==='Sim')?12:0}}>
               <label style={{fontSize:11,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase'}}>Despachado?</label>
               {editMode?(
@@ -3101,11 +3143,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
               try{
                 // Achar primeiro usuário financeiro
                 // Busca financeiro: case insensitive, não revogado, com email
-                const financeiro=(usuarios||[]).find(u=>
-                  u.perfil?.toLowerCase()==='financeiro'&&
-                  u.status!=='revogado'&&
-                  u.email
-                )||(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro');
+                const financeiro=escolherResponsavelFaturamento(usuarios);
                 const partes=[];
                 if(parseFloat(f.vI)>0) partes.push(`Implantação: ${moeda(parseFloat(f.vI))} (${f.pagamentoI||'Boleto'} ${f.parcelasI||1}x)`);
                 if(parseFloat(f.vE)>0) partes.push(`Equipamento: ${moeda(parseFloat(f.vE))} (${f.pagamentoE||'Boleto'} ${f.parcelasE||1}x)`);
@@ -3174,11 +3212,21 @@ function UsuariosLista({usuarios,currentUser}){
 
   async function salvarNome(u){
     if(!novoNome.trim())return;
+    // Sem um id valido, o setDoc criaria um documento novo em branco
+    if(!u?.id||typeof u.id!=='string'||!u.id.trim()){
+      alert('Este registro está sem identificador válido e não pode ser editado.\nUse "Limpar duplicatas" para corrigir a base.');
+      setEditandoNome(null);
+      return;
+    }
     const nome=novoNome.trim().toUpperCase();
-    await setDoc(doc(db,'usuarios',u.id),{nome},{merge:true});
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{nome},{merge:true});
+      setSavedNome(u.id);
+      setTimeout(()=>setSavedNome(null),2000);
+    }catch(e){
+      alert('Erro ao salvar o nome: '+e.message);
+    }
     setEditandoNome(null);
-    setSavedNome(u.id);
-    setTimeout(()=>setSavedNome(null),2000);
   }
 
   async function salvarPerfil(u){
@@ -3284,6 +3332,43 @@ function UsuariosLista({usuarios,currentUser}){
 
       {ativos.length===0&&<div style={{color:'#7f8c8d',fontSize:13,textAlign:'center',padding:'12px 0'}}>Nenhum usuário cadastrado.</div>}
 
+      {/* Responsável pelas solicitações de faturamento manual */}
+      {(()=>{
+        const elegiveis=ativos.filter(u=>u.id&&u.email);
+        const atual=elegiveis.find(u=>u.responsavelFaturamento);
+        async function definir(uid){
+          // Garante um único responsável: limpa a marca dos demais
+          const ops=elegiveis.map(u=>setDoc(doc(db,'usuarios',u.id),{responsavelFaturamento:u.id===uid},{merge:true}));
+          await Promise.all(ops);
+        }
+        return(
+          <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:220}}>
+                <div style={{fontWeight:700,fontSize:11,color:'#b45309',textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>
+                  ⭐ Responsável pelas solicitações de faturamento
+                </div>
+                <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.5}}>
+                  Toda solicitação criada pelo botão <strong>Gerar Faturamento Manual</strong> cai direto para esta pessoa, na aba Solicitações.
+                </div>
+              </div>
+              <select value={atual?.id||''} onChange={e=>definir(e.target.value)}
+                style={{padding:'8px 10px',borderRadius:6,border:'1px solid #fde68a',fontSize:12,background:'#fff',color:'#2c3e50',minWidth:230,cursor:'pointer'}}>
+                <option value="">— Ninguém definido —</option>
+                {elegiveis.map(u=>(
+                  <option key={u.id} value={u.id}>{(u.nome||u.email)}{u.perfil?` (${PERFIS[u.perfil]?.label||u.perfil})`:''}</option>
+                ))}
+              </select>
+            </div>
+            {!atual&&(
+              <div style={{marginTop:8,fontSize:11,color:'#c0392b'}}>
+                ⚠ Sem responsável definido, o sistema usa o primeiro usuário com perfil financeiro que encontrar.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {ativos.map(u=>(
         <div key={u.id} style={{display:'flex',alignItems:'center',gap:12,padding:'12px',borderRadius:8,background:'#f8f9fa',marginBottom:8,border:'1px solid #e8eaed'}}>
           {/* Avatar */}
@@ -3293,7 +3378,7 @@ function UsuariosLista({usuarios,currentUser}){
           {/* Info */}
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-              {editandoNome===u.id?(
+              {(editandoNome&&editandoNome===u.id)?(
                 <div style={{display:'flex',gap:6,alignItems:'center'}}>
                   <input
                     autoFocus
@@ -3309,7 +3394,16 @@ function UsuariosLista({usuarios,currentUser}){
                 <div style={{display:'flex',alignItems:'center',gap:6}}>
                   <span>{savedNome===u.id?'✓ Salvo!':u.nome}</span>
                   {ehOProprio(u.id)&&<span style={{fontSize:9,background:'#ebf8ff',color:'#2b6cb0',padding:'1px 5px',borderRadius:4,fontWeight:700}}>Você</span>}
-                  <button onClick={()=>{setEditandoNome(u.id);setNovoNome(u.nome||'');setEditandoPerfil(null);}}
+                  {u.responsavelFaturamento&&(
+                    <span title="Recebe as solicitações de faturamento manual"
+                      style={{fontSize:9,background:'#fff8ee',color:'#b45309',border:'1px solid #fde68a',padding:'1px 7px',borderRadius:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                      ⭐ Recebe faturamentos
+                    </span>
+                  )}
+                  <button onClick={()=>{
+                      if(!u.id){alert('Registro sem identificador — não é possível editar.');return;}
+                      setEditandoNome(u.id);setNovoNome(u.nome||'');setEditandoPerfil(null);
+                    }}
                     title="Editar nome"
                     style={{background:'none',border:'none',cursor:'pointer',color:'#f5a623',fontSize:12,padding:'0 2px',display:'flex',alignItems:'center'}}>
                     ✏️
@@ -4976,8 +5070,6 @@ return(
         </div>
       </div>
     )}
-    <DuplasMetas todos={todos} metaSistema={metaSistema} metaEquip={metaEquip} onSetMetaSistema={salvarMetaSistema} onSetMetaEquip={salvarMetaEquip}/>
-
     {/* Abas estilo Secullum */}
     <div style={{background:'#fff',borderRadius:'8px 8px 0 0',borderBottom:'2px solid #e8eaed',marginBottom:0,display:'flex',gap:0}}>
       {[
@@ -6697,8 +6789,7 @@ function PainelAsaasCliente({cliente,perfil,onUpdate}){
 // ─── MODAL FATURAMENTO MANUAL ────────────────────────────────────────────────
 function ModalFaturamentoManual({cliente,usuarios,onConfirmar,onCancelar}){
   const [loading,setLoading]=useState(false);
-  const financeiro=(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro'&&u.status!=='revogado'&&u.email)
-    ||(usuarios||[]).find(u=>u.perfil?.toLowerCase()==='financeiro');
+  const financeiro=escolherResponsavelFaturamento(usuarios);
   const total=(parseFloat(cliente.vI)||0)+(parseFloat(cliente.vE)||0)+(parseFloat(cliente.vS)||0);
 
   async function confirmar(){
@@ -9265,9 +9356,10 @@ export default function App(){
         if(uTemUid&&!exTemUid){porEmail[email]=u;}
         else if(!uTemUid&&!exTemUid&&(u.nome&&!existing.nome)){porEmail[email]=u;}
       });
-      // Usuários sem email também entram (não duplicados)
-      arr.filter(u=>!(u.email||'').trim()).forEach(u=>{porEmail[u.id]=u;});
-      setUsuarios(Object.values(porEmail));
+      // Usuários sem email também entram, desde que tenham id válido
+      arr.filter(u=>!(u.email||'').trim()&&u.id).forEach(u=>{porEmail['sem_email::'+u.id]=u;});
+      // Registros sem id nunca devem chegar à tela: quebram edição e exclusão
+      setUsuarios(Object.values(porEmail).filter(u=>u&&u.id));
     }));
     unsubs.push(onSnapshot(collection(db,'vendedores'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setVendedoresCad(arr);
@@ -9570,6 +9662,12 @@ export default function App(){
         </div>
 
         <div style={{flex:1,overflowY:'auto',padding:'20px',background:'#f5f6fa'}}>
+          {/* METAS — topo do dashboard, antes dos filtros */}
+          {page==='dashboard'&&!clienteSel&&(
+            <DuplasMetas todos={todos} metaSistema={metaSistema} metaEquip={metaEquip}
+              onSetMetaSistema={salvarMetaSistema} onSetMetaEquip={salvarMetaEquip}/>
+          )}
+
           {/* FILTROS */}
           {page!=='novo'&&!clienteSel&&page!=='implantacao'&&page!=='config'&&(
             <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
