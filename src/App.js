@@ -379,7 +379,249 @@ function GraficoMRR({todos}){
 }
 
 // --- PAINEL DE ALERTAS -------------------------------------------------------
-function PainelAlertas({todos,implantacoes,onVerImplantacao}){
+// --- PAINEL DE PENDÊNCIAS ----------------------------------------------------
+// Abre a partir dos alertas do dashboard. Mostra, por cliente, onde o processo
+// parou, há quanto tempo, o que já foi feito e o histórico registrado.
+function ModalPendencias({tipo,itens,implantacoes,etapasConfig,onFechar,onAbrirCliente}){
+  const [expandido,setExpandido]=useState(null);
+  const [historicos,setHistoricos]=useState({});
+  const [carregandoHist,setCarregandoHist]=useState(null);
+
+  const TITULOS={
+    atrasados:{t:'Implantações atrasadas',sub:'Prazo vencido e processo não finalizado',cor:'#e74c3c',icone:'⚠️'},
+    semPrazo:{t:'Clientes sem prazo de implantação',sub:'Nenhuma data definida para conclusão',cor:'#f5a623',icone:'📅'},
+    aguardando:{t:'Clientes aguardando faturamento',sub:'Venda fechada, cobrança ainda não concluída',cor:'#3498db',icone:'💰'},
+  };
+  const cfg=TITULOS[tipo]||TITULOS.atrasados;
+  const ETAPAS_USE=(etapasConfig&&etapasConfig.length?etapasConfig:ETAPAS_DEFAULT);
+
+  function diasDe(dataStr){
+    if(!dataStr)return null;
+    const d=new Date(String(dataStr).length<=10?dataStr+'T12:00:00':dataStr);
+    if(isNaN(d.getTime()))return null;
+    return Math.floor((Date.now()-d.getTime())/86400000);
+  }
+  function fmtData(x){
+    if(!x)return '—';
+    const d=new Date(String(x).length<=10?x+'T12:00:00':x);
+    return isNaN(d.getTime())?'—':d.toLocaleDateString('pt-BR');
+  }
+
+  // Diagnóstico: onde parou e qual o gargalo
+  function diagnostico(c){
+    const impl=implantacoes[c.id]||{};
+    const etapa=ETAPAS_USE.find(e=>e.id===impl.etapa);
+    const diasPrazo=diasDe(impl.prazo);
+    const linhas=[];
+    if(tipo==='atrasados'){
+      linhas.push({rot:'Gargalo',val:`Prazo venceu há ${diasPrazo} dia(s)`,cor:'#e74c3c'});
+      linhas.push({rot:'Parado em',val:etapa?etapa.label:'(etapa não definida)'});
+      linhas.push({rot:'Prazo',val:fmtData(impl.prazo)});
+    }else if(tipo==='semPrazo'){
+      linhas.push({rot:'Gargalo',val:'Sem data de conclusão definida',cor:'#f5a623'});
+      linhas.push({rot:'Parado em',val:etapa?etapa.label:'(etapa não definida)'});
+    }else{
+      linhas.push({rot:'Gargalo',val:`Status "${labelStatus(c.status)}" há ${diasDe(c.criadoEm)??'?'} dia(s)`,cor:'#3498db'});
+      linhas.push({rot:'Valor parado',val:moeda(c.total||0),cor:'#27ae60'});
+      linhas.push({rot:'Forma de pagamento',val:c.pagamento||'—'});
+      linhas.push({rot:'1º boleto',val:fmtData(c.dtBoleto)});
+    }
+    if(impl.responsavel)linhas.push({rot:'Responsável',val:impl.responsavel});
+    if(c.vendedor&&c.vendedor!=='—')linhas.push({rot:'Vendedor',val:c.vendedor});
+    return linhas;
+  }
+
+  // O que já foi feito: etapas anteriores à atual + comentários
+  function jaFeito(c){
+    const impl=implantacoes[c.id]||{};
+    const idx=ETAPAS_USE.findIndex(e=>e.id===impl.etapa);
+    const concluidas=idx>0?ETAPAS_USE.slice(0,idx).map(e=>e.label):[];
+    return {concluidas,comentarios:impl.comentarios||[],setup:impl.descricaoSetup||''};
+  }
+
+  async function carregarHistorico(c){
+    if(historicos[c.id])return;
+    setCarregandoHist(c.id);
+    try{
+      const snap=await getDocs(collection(db,'historico_cliente'));
+      const arr=[];
+      snap.forEach(d=>{const x=d.data();if(x.clienteId===c.id)arr.push(x);});
+      arr.sort((a,b)=>new Date(b.data||0)-new Date(a.data||0));
+      setHistoricos(h=>({...h,[c.id]:arr}));
+    }catch(e){setHistoricos(h=>({...h,[c.id]:[]}));}
+    setCarregandoHist(null);
+  }
+
+  function abrir(c){
+    const novo=expandido===c.id?null:c.id;
+    setExpandido(novo);
+    if(novo)carregarHistorico(c);
+  }
+
+  // Exporta o relatório em texto
+  function exportar(){
+    const linhas=[];
+    linhas.push('='.repeat(60));
+    linhas.push(cfg.t.toUpperCase());
+    linhas.push(`Guion Informática — gerado em ${new Date().toLocaleString('pt-BR')}`);
+    linhas.push(`${itens.length} pendência(s)`);
+    linhas.push('='.repeat(60));
+    itens.forEach((c,i)=>{
+      linhas.push('');
+      linhas.push(`${i+1}. ${c.nome}`);
+      if(c.cnpj)linhas.push(`   CNPJ: ${c.cnpj}`);
+      if(c.contato)linhas.push(`   Contato: ${c.contato}${c.tel?' — '+c.tel:''}`);
+      diagnostico(c).forEach(l=>linhas.push(`   ${l.rot}: ${l.val}`));
+      const f=jaFeito(c);
+      if(f.concluidas.length)linhas.push(`   Já concluído: ${f.concluidas.join(' > ')}`);
+      if(f.comentarios.length){
+        linhas.push('   Comentários:');
+        f.comentarios.slice(-5).forEach(cm=>linhas.push(`     - [${cm.data||''}] ${cm.texto||''}`));
+      }
+    });
+    linhas.push('');
+    linhas.push('='.repeat(60));
+    const blob=new Blob([linhas.join('\n')],{type:'text/plain;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`pendencias-${tipo}-${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.55)',zIndex:9999,display:'flex',alignItems:'flex-start',justifyContent:'center',padding:'30px 16px',overflowY:'auto'}}>
+      <div style={{background:'#fff',borderRadius:12,maxWidth:880,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)',overflow:'hidden'}}>
+        {/* Cabeçalho */}
+        <div style={{padding:'18px 24px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{width:38,height:38,borderRadius:10,background:cfg.cor+'18',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>{cfg.icone}</div>
+          <div style={{flex:1,minWidth:180}}>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>{cfg.t}</div>
+            <div style={{fontSize:11,color:'#95a5a6'}}>{cfg.sub} · {itens.length} pendência(s)</div>
+          </div>
+          <button onClick={exportar} style={{padding:'7px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+            📄 Baixar relatório
+          </button>
+          <button onClick={()=>window.print()} style={{padding:'7px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+            🖨️ Imprimir
+          </button>
+          <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#aaa',fontSize:22,lineHeight:1,flexShrink:0}}>×</button>
+        </div>
+
+        {/* Lista */}
+        <div style={{maxHeight:'62vh',overflowY:'auto',padding:'14px 24px'}}>
+          {itens.length===0&&<div style={{fontSize:13,color:'#7f8c8d',textAlign:'center',padding:'30px'}}>Nenhuma pendência.</div>}
+          {itens.map(c=>{
+            const aberto=expandido===c.id;
+            const diag=diagnostico(c);
+            const feito=jaFeito(c);
+            const hist=historicos[c.id];
+            return(
+              <div key={c.id} style={{border:`1px solid ${aberto?cfg.cor+'66':'#e8eaed'}`,borderRadius:9,marginBottom:8,overflow:'hidden',background:aberto?'#fcfdfe':'#fff'}}>
+                {/* Linha principal */}
+                <div onClick={()=>abrir(c)} style={{padding:'12px 14px',cursor:'pointer',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',borderLeft:`4px solid ${cfg.cor}`}}>
+                  <div style={{flex:1,minWidth:160}}>
+                    <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{c.nome}</div>
+                    <div style={{fontSize:11,color:'#95a5a6'}}>
+                      {c.contato||'—'}{c.tel?' · '+c.tel:''}
+                    </div>
+                  </div>
+                  <div style={{textAlign:'right',flexShrink:0}}>
+                    <div style={{fontSize:11,fontWeight:700,color:cfg.cor}}>{diag[0]?.val}</div>
+                    {c.total>0&&<div style={{fontSize:11,color:'#27ae60',fontWeight:600}}>{moeda(c.total)}</div>}
+                  </div>
+                  <span style={{fontSize:14,color:'#bdc3c7',flexShrink:0}}>{aberto?'▲':'▼'}</span>
+                </div>
+
+                {/* Detalhes */}
+                {aberto&&(
+                  <div style={{padding:'0 16px 16px',borderTop:'1px solid #f0f2f5'}}>
+                    {/* Diagnóstico */}
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:8,margin:'14px 0'}}>
+                      {diag.map((l,i)=>(
+                        <div key={i} style={{background:'#f8f9fa',borderRadius:7,padding:'8px 12px'}}>
+                          <div style={{fontSize:9,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>{l.rot}</div>
+                          <div style={{fontSize:12,fontWeight:600,color:l.cor||'#2c3e50'}}>{l.val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Já concluído */}
+                    {feito.concluidas.length>0&&(
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>✓ Já concluído</div>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          {feito.concluidas.map((e,i)=>(
+                            <span key={i} style={{fontSize:11,background:'#f0fff4',color:'#276749',border:'1px solid #9ae6b4',padding:'3px 10px',borderRadius:12,fontWeight:600}}>{e}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Setup */}
+                    {feito.setup&&(
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>Descrição do setup</div>
+                        <div style={{fontSize:11,color:'#4a4a4a',background:'#f8f9fa',borderRadius:7,padding:'10px 12px',whiteSpace:'pre-wrap',maxHeight:130,overflowY:'auto',lineHeight:1.6}}>{feito.setup}</div>
+                      </div>
+                    )}
+
+                    {/* Comentários */}
+                    {feito.comentarios.length>0&&(
+                      <div style={{marginBottom:12}}>
+                        <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>Comentários do Kanban</div>
+                        {feito.comentarios.slice(-4).reverse().map((cm,i)=>(
+                          <div key={i} style={{background:'#f8f9fa',borderLeft:'3px solid #3498db',borderRadius:5,padding:'7px 11px',marginBottom:4}}>
+                            <div style={{fontSize:11,color:'#2c3e50'}}>{cm.texto}</div>
+                            <div style={{fontSize:9,color:'#aaa',marginTop:2}}>{cm.data} {cm.usuario?'· '+cm.usuario:''}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Histórico do cliente */}
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>Histórico do cliente</div>
+                      {carregandoHist===c.id&&<div style={{fontSize:11,color:'#95a5a6'}}>Carregando...</div>}
+                      {hist&&hist.length===0&&<div style={{fontSize:11,color:'#95a5a6'}}>Nenhum registro no histórico.</div>}
+                      {hist&&hist.slice(0,6).map((h,i)=>(
+                        <div key={i} style={{display:'flex',gap:9,padding:'5px 0',borderBottom:i<Math.min(hist.length,6)-1?'1px solid #f5f6fa':'none'}}>
+                          <span style={{fontSize:10,color:'#aaa',minWidth:110,flexShrink:0}}>
+                            {h.data?new Date(h.data).toLocaleDateString('pt-BR')+' '+new Date(h.data).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—'}
+                          </span>
+                          <span style={{fontSize:11,color:'#4a4a4a',flex:1}}>{h.descricao||h.tipo}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Ações */}
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                      <button onClick={()=>{onAbrirCliente&&onAbrirCliente(c);onFechar();}}
+                        style={{padding:'7px 16px',borderRadius:7,border:'none',background:cfg.cor,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                        Abrir cliente →
+                      </button>
+                      {c.tel&&(
+                        <a href={`https://wa.me/${telParaWa(c.tel)}?text=${encodeURIComponent('Olá! Passando para acompanhar o andamento do seu processo. 😊 — Guion Informática')}`}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{padding:'7px 16px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:12,textDecoration:'none'}}>
+                          WhatsApp
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PainelAlertas({todos,implantacoes,onVerImplantacao,etapasConfig,onAbrirCliente}){
+  const [modal,setModal]=useState(null); // 'atrasados' | 'semPrazo' | 'aguardando'
   const hoje=new Date();hoje.setHours(0,0,0,0);
   const atrasados=todos.filter(c=>{
     const impl=implantacoes[c.id]||{};
@@ -402,7 +644,10 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
             <i className="ti ti-alert-triangle" style={{color:C.red,fontSize:16}}/>
             <span style={{fontSize:13,fontWeight:700,color:C.red}}>{atrasados.length} implantação(ões) atrasada(s)</span>
           </div>
-          <button onClick={onVerImplantacao} style={{background:C.red,color:'#fff',border:'none',borderRadius:5,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver →</button>
+          <div style={{display:'flex',gap:6}}>
+            <button onClick={()=>setModal('atrasados')} style={{background:C.red,color:'#fff',border:'none',borderRadius:5,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver detalhes →</button>
+            <button onClick={onVerImplantacao} style={{background:'#fff',color:C.red,border:`1px solid ${C.red}`,borderRadius:5,padding:'4px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>Kanban</button>
+          </div>
         </div>
       )}
       {semPrazo.length>0&&(
@@ -411,7 +656,10 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
             <i className="ti ti-clock-exclamation" style={{color:C.orange,fontSize:16}}/>
             <span style={{fontSize:13,fontWeight:700,color:C.orange}}>{semPrazo.length} cliente(s) sem prazo de implantação</span>
           </div>
-          <button onClick={onVerImplantacao} style={{background:C.orange,color:'#fff',border:'none',borderRadius:5,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver →</button>
+          <div style={{display:'flex',gap:6}}>
+            <button onClick={()=>setModal('semPrazo')} style={{background:C.orange,color:'#fff',border:'none',borderRadius:5,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:700}}>Ver detalhes →</button>
+            <button onClick={onVerImplantacao} style={{background:'#fff',color:C.orange,border:`1px solid ${C.orange}`,borderRadius:5,padding:'4px 10px',cursor:'pointer',fontSize:11,fontWeight:700}}>Kanban</button>
+          </div>
         </div>
       )}
       {agdFat.length>0&&(
@@ -433,7 +681,19 @@ function PainelAlertas({todos,implantacoes,onVerImplantacao}){
               </div>
             </div>
           </div>
+          <button onClick={()=>setModal('aguardando')} style={{background:C.blue,color:'#fff',border:'none',borderRadius:5,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:700,flexShrink:0}}>Ver detalhes →</button>
         </div>
+      )}
+
+      {modal&&(
+        <ModalPendencias
+          tipo={modal}
+          itens={modal==='atrasados'?atrasados:modal==='semPrazo'?semPrazo:agdFat}
+          implantacoes={implantacoes}
+          etapasConfig={etapasConfig}
+          onFechar={()=>setModal(null)}
+          onAbrirCliente={onAbrirCliente}
+        />
       )}
     </div>
   );
@@ -5124,7 +5384,7 @@ function tocarSino(vezes=3){
 
 
 // --- DASHBOARD VIEW -----------------------------------------------------------
-function DashboardView({todos,cl,fat,agd,totFat,totAgd,totGeral,totSist,totEquip,totImpl,porMes,porVend,porPlano,maxVend,solicitacoes,implantacoes,clientes,metaSistema,metaEquip,salvarMetaSistema,salvarMetaEquip,setPage,setClienteSel,setFiltroStatus,filtroVendedor,setFiltroVendedor}){
+function DashboardView({todos,cl,fat,agd,totFat,totAgd,totGeral,totSist,totEquip,totImpl,porMes,porVend,porPlano,maxVend,solicitacoes,implantacoes,clientes,metaSistema,metaEquip,salvarMetaSistema,salvarMetaEquip,setPage,setClienteSel,setFiltroStatus,filtroVendedor,setFiltroVendedor,etapasConfig}){
 const [dashAba,setDashAba]=useState('resumo');
 const hoje2=new Date();hoje2.setHours(0,0,0,0);
 const nPagos=todos.filter(c=>c.equipPago==='Não pago');
@@ -5151,7 +5411,7 @@ const SCard=({label,value,sub,pct,cor,onClick})=>(
 return(
   <div>
     {/* Alertas e metas sempre visíveis */}
-    <PainelAlertas todos={todos} implantacoes={implantacoes} onVerImplantacao={()=>{setPage('implantacao');setClienteSel(null);}}/>
+    <PainelAlertas todos={todos} implantacoes={implantacoes} etapasConfig={etapasConfig} onAbrirCliente={c=>setClienteSel(c)} onVerImplantacao={()=>{setPage('implantacao');setClienteSel(null);}}/>
     {nPagos.length>0&&(
       <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:8}}>
         <div style={{fontWeight:700,fontSize:12,color:'#b45309',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
@@ -9872,6 +10132,7 @@ export default function App(){
             solicitacoes={solicitacoes} implantacoes={implantacoes} clientes={clientes}
             metaSistema={metaSistema} metaEquip={metaEquip}
             salvarMetaSistema={salvarMetaSistema} salvarMetaEquip={salvarMetaEquip}
+            etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}
             setPage={setPage} setClienteSel={setClienteSel}
             setFiltroStatus={setFiltroStatus}
             filtroVendedor={filtroVendedor} setFiltroVendedor={setFiltroVendedor}
