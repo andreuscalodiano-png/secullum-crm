@@ -4042,7 +4042,11 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       inscMunicipal:f.inscMunicipal.trim(),inscEstadual:f.inscEstadual.trim(),
       func:parseInt(f.func)||0,
       equipTipo:(f.itens||[]).find(i=>i.tipo==='equipamento')?.nome||f.equipTipo,
-      itens:(f.itens||[]).map(i=>({uid:i.uid,tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,liberado:!!i.liberado})),
+      itens:(f.itens||[]).map(i=>({uid:i.uid,tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,liberado:!!i.liberado,semCusto:!!i.semCusto})),
+      pagamentoI:f.pagamentoI||'Boleto',
+      parcelasI:parseInt(f.parcelasI,10)||1,
+      pagamentoE:f.pagamentoE||'Boleto',
+      parcelasE:parseInt(f.parcelasE,10)||1,
       vI,vE,vS,total:vI+vE+vS,
       pagamento:f.pagamento,dtBoleto:f.dtBoleto,
       status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,
@@ -4359,6 +4363,10 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
     parcelasI:c.parcelasI||1,
     parcelasE:c.parcelasE||1,
     dtBoleto:c.dtBoleto||'',
+    pagamentoI:c.pagamentoI||'Boleto',
+    parcelasI:c.parcelasI||1,
+    pagamentoE:c.pagamentoE||'Boleto',
+    parcelasE:c.parcelasE||1,
     plano:c.plano==='—'?'Basic':c.plano||'Basic',
     vendedor:c.vendedor==='—'?'':c.vendedor||'',
     status:c.status||'Faturado',
@@ -4426,7 +4434,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
       equipPago:f.equipPago,
       equipRastreio:(f.equipRastreio||'').trim(),
       equipDataEnvio:f.equipDataEnvio||'',
-      itens:(f.itens||[]).map(i=>({uid:i.uid,tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,liberado:!!i.liberado})),
+      itens:(f.itens||[]).map(i=>({uid:i.uid,tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,liberado:!!i.liberado,semCusto:!!i.semCusto})),
       equipTipo:(f.itens||[]).find(i=>i.tipo==='equipamento')?.nome||f.equipTipo,
       ultimaEdicaoPor:auth.currentUser?.email||'—',
       ultimaEdicaoEm:new Date().toISOString(),
@@ -4625,13 +4633,63 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
         </div>
       </div>
 
-      {/* Formas de pagamento — mesma posição da tela de cadastro */}
+      {/* Formas de pagamento — mesmos blocos da tela de cadastro */}
       <div style={estiloSecao('pagamento',sec)}>
         <CabecalhoSecao tipo="pagamento" titulo="Formas de pagamento" subtitulo="Como cada item será cobrado"/>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
-          <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º boleto" field="dtBoleto" type="date"/>
-        </div>
+
+        {parseValor(f.vI)<=0&&parseValor(f.vE)<=0&&parseValor(f.vS)<=0&&(
+          <div style={{fontSize:11,color:C.textMuted,background:'#f8f9fa',borderRadius:7,padding:'10px 12px'}}>
+            Nenhum valor lançado — não há cobrança a configurar.
+          </div>
+        )}
+
+        {/* Implantação */}
+        {parseValor(f.vI)>0&&(
+          <div style={{background:'#fff8ee',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #fde68a'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#b45309',marginBottom:8}}>🔧 Implantação — {moeda(parseValor(f.vI))}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma" field="pagamentoI" opts={FORMAS_ASAAS}/>
+              <div>
+                <label style={lbl}>Parcelas</label>
+                {editMode
+                  ?<select style={fi} value={f.parcelasI||1} onChange={e=>up('parcelasI',+e.target.value)} disabled={f.pagamentoI==='Pix'}>
+                     {[1,2,3].map(n=><option key={n} value={n}>{n}x</option>)}
+                   </select>
+                  :<div style={fiView}>{(f.parcelasI||1)}x</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Equipamento */}
+        {parseValor(f.vE)>0&&(
+          <div style={{background:'#f0fff4',borderRadius:8,padding:'12px',marginBottom:10,border:'1px solid #9ae6b4'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#276749',marginBottom:8}}>💻 Equipamento — {moeda(parseValor(f.vE))}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma" field="pagamentoE" opts={FORMAS_ASAAS}/>
+              <div>
+                <label style={lbl}>Parcelas</label>
+                {editMode
+                  ?<select style={fi} value={f.parcelasE||1} onChange={e=>up('parcelasE',+e.target.value)} disabled={f.pagamentoE==='Pix'}>
+                     {[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>{n}x</option>)}
+                   </select>
+                  :<div style={fiView}>{(f.parcelasE||1)}x</div>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sistema — a data do 1º vencimento pertence a este bloco */}
+        {parseValor(f.vS)>0&&(
+          <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',border:'1px solid #bee3f8'}}>
+            <div style={{fontWeight:700,fontSize:11,color:'#2b6cb0',marginBottom:8}}>🔄 Sistema — {moeda(parseValor(f.vS))}/mês</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Forma de pagamento" field="pagamento" opts={FORMAS}/>
+              <CampoDetalhe f={f} up={up} editMode={editMode} fi={fi} fiView={fiView} lbl={lbl} label="Data 1º vencimento" field="dtBoleto" type="date"/>
+            </div>
+            <div style={{marginTop:8,fontSize:11,color:'#2b6cb0',background:'#fff',borderRadius:5,padding:'6px 10px',border:'1px solid #bee3f8'}}>📄 Boleto recorrente mensal — Financeiro processa</div>
+          </div>
+        )}
       </div>
 
       {/* Contrato */}
@@ -10210,8 +10268,12 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
   const total=(itens||[]).reduce((t,i)=>t+num(i.valor)*(parseInt(i.qtd,10)||1),0);
 
   function add(tipo,ref){
+    // Equipamento marcado como "Sem custo" não gera cobrança nem piso
+    const semCusto=tipo==='equipamento'&&ref.requerPagamento===false;
     const base=tipo==='equipamento'
-      ? {refId:ref.id,nome:ref.nome,valor:equipValorVigente(ref),piso:equipPisoVenda(ref),promo:equipEmPromocao(ref)}
+      ? (semCusto
+          ? {refId:ref.id,nome:ref.nome,valor:0,piso:0,promo:false,semCusto:true}
+          : {refId:ref.id,nome:ref.nome,valor:equipValorVigente(ref),piso:equipPisoVenda(ref),promo:equipEmPromocao(ref)})
       : {refId:ref.id,nome:ref.nome,valor:numVal(ref.valor),piso:0,promo:false};
     onChange([...(itens||[]),{
       uid:'it_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
@@ -10224,7 +10286,7 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
 
   // Revalida o piso contra o cadastro atual (o preço pode ter mudado depois)
   function pisoDe(item){
-    if(item.tipo!=='equipamento')return 0;
+    if(item.tipo!=='equipamento'||item.semCusto)return 0;
     const eq=(equipamentosCad||[]).find(e=>e.id===item.refId||e.nome===item.nome);
     return eq?equipPisoVenda(eq):numVal(item.piso);
   }
@@ -10259,7 +10321,9 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
               <div style={{flex:1,minWidth:120}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                   <span style={{fontSize:12,fontWeight:600,color:'#2c3e50'}}>{item.nome}</span>
-                  {eq&&<SeloOferta equip={eq}/>}
+                  {item.semCusto
+                    ?<span style={{fontSize:9,background:'#d5f5e3',color:'#1e8449',padding:'1px 8px',borderRadius:10,fontWeight:700}}>SEM CUSTO</span>
+                    :eq&&<SeloOferta equip={eq}/>}
                 </div>
                 {piso>0&&<div style={{fontSize:9,color:'#aaa'}}>Piso: {moeda(piso)} ({equipRotuloPiso(eq)})</div>}
               </div>
@@ -10335,11 +10399,15 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
               <button key={e.id} onClick={()=>add('equipamento',e)}
                 style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:6,border:'1px solid #bee3f8',background:'#fff',cursor:'pointer',marginBottom:4,textAlign:'left'}}>
                 <span style={{flex:1,fontSize:12,fontWeight:600,color:'#2c3e50'}}>{e.nome}</span>
-                <SeloOferta equip={e}/>
-                {equipEmPromocao(e)&&numVal(e.precoVenda)>numVal(e.valorPromocional)&&(
-                  <span style={{fontSize:10,color:'#aaa',textDecoration:'line-through'}}>{moeda(numVal(e.precoVenda))}</span>
-                )}
-                <span style={{fontSize:12,fontWeight:700,color:equipEmPromocao(e)?'#e74c3c':'#27ae60'}}>{moeda(equipValorVigente(e))}</span>
+                {e.requerPagamento===false
+                  ?<span style={{fontSize:9,background:'#d5f5e3',color:'#1e8449',padding:'1px 8px',borderRadius:10,fontWeight:700}}>SEM CUSTO</span>
+                  :<>
+                    <SeloOferta equip={e}/>
+                    {equipEmPromocao(e)&&numVal(e.precoVenda)>numVal(e.valorPromocional)&&(
+                      <span style={{fontSize:10,color:'#aaa',textDecoration:'line-through'}}>{moeda(numVal(e.precoVenda))}</span>
+                    )}
+                    <span style={{fontSize:12,fontWeight:700,color:equipEmPromocao(e)?'#e74c3c':'#27ae60'}}>{moeda(equipValorVigente(e))}</span>
+                  </>}
               </button>
             ))}
         </div>
