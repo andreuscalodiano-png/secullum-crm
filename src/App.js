@@ -4147,10 +4147,10 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
             itens={f.itens}
             onChange={novos=>{
               up('itens',novos);
-              const eq=novos.filter(i=>i.tipo==='equipamento').reduce((t,i)=>t+numVal(i.valor)*(parseInt(i.qtd,10)||1),0);
-              const sv=novos.filter(i=>i.tipo==='servico').reduce((t,i)=>t+numVal(i.valor)*(parseInt(i.qtd,10)||1),0);
-              if(eq>0)up('vE',String(eq));
-              if(sv>0)up('vI',String(sv));
+              // Serviços alimentam o Sistema/mês; equipamentos, o Equipamento
+              const t=totaisDosItens(novos);
+              up('vS',t.servicos>0?String(t.servicos):'');
+              up('vE',t.equipamentos>0?String(t.equipamentos):'');
             }}
             orcServicos={orcServicos}
             equipamentosCad={equipamentosCad}
@@ -4158,13 +4158,41 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
             titulo="Equipamentos e serviços *"
           />
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Implantação (R$)</label><input style={fi} type="number" step="0.01" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/></div>
-          <div><label style={lbl}>Equipamento (R$)</label><input style={fi} type="number" step="0.01" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/></div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={{...lbl,color:erros.vS?'#e74c3c':'#7f8c8d'}}>{erros.vS?'Sistema/mês — '+erros.vS:'Sistema/mês (R$) *'}</label><input style={fiErr('vS')} type="number" step="0.01" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/></div>
-        </div>
+        {(()=>{
+          const tItens=totaisDosItens(f.itens);
+          const temServ=(f.itens||[]).some(i=>i.tipo==='servico');
+          const temEquip=(f.itens||[]).some(i=>i.tipo==='equipamento');
+          const calc={background:'#f8f9fa',cursor:'not-allowed',color:'#2c3e50',fontWeight:700};
+          const aviso={fontSize:10,color:'#95a5a6',marginTop:3};
+          return(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+              {/* Sistema/mês = soma dos serviços */}
+              <div>
+                <label style={{...lbl,color:erros.vS?'#e74c3c':'#7f8c8d'}}>{erros.vS?'Sistema/mês — '+erros.vS:'Sistema/mês (R$) *'}</label>
+                {temServ
+                  ?<><input style={{...fi,...calc}} value={moeda(tItens.servicos)} readOnly/>
+                     <div style={aviso}>Soma dos serviços selecionados</div></>
+                  :<><input style={fiErr('vS')} type="number" step="0.01" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
+                     <div style={aviso}>Adicione um serviço acima para calcular</div></>}
+              </div>
+              {/* Implantação = sempre manual */}
+              <div>
+                <label style={lbl}>Implantação (R$)</label>
+                <input style={fi} type="number" step="0.01" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
+                <div style={aviso}>Valor avulso — preenchimento manual</div>
+              </div>
+              {/* Equipamento = soma dos equipamentos */}
+              <div>
+                <label style={lbl}>Equipamento (R$)</label>
+                {temEquip
+                  ?<><input style={{...fi,...calc}} value={moeda(tItens.equipamentos)} readOnly/>
+                     <div style={aviso}>Soma dos equipamentos selecionados</div></>
+                  :<><input style={fi} type="number" step="0.01" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
+                     <div style={aviso}>Adicione um equipamento acima para calcular</div></>}
+              </div>
+            </div>
+          );
+        })()}
         <div style={{background:'#ebf5fb',borderRadius:6,padding:'10px 14px',display:'flex',justifyContent:'space-between'}}>
           <span style={{fontSize:13,color:C.textMuted,fontWeight:600}}>TOTAL</span>
           <span style={{fontSize:18,fontWeight:700,color:'#3498db'}}>{moeda(tot)}</span>
@@ -4576,10 +4604,10 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
                 itens={f.itens}
                 onChange={novos=>{
                   up('itens',novos);
-                  const eq=novos.filter(i=>i.tipo==='equipamento').reduce((t,i)=>t+numVal(i.valor)*(parseInt(i.qtd,10)||1),0);
-                  const sv=novos.filter(i=>i.tipo==='servico').reduce((t,i)=>t+numVal(i.valor)*(parseInt(i.qtd,10)||1),0);
-                  if(eq>0)up('vE',String(eq));
-                  if(sv>0)up('vI',String(sv));
+                  // Serviços alimentam o Sistema/mês; equipamentos, o Equipamento
+                  const t=totaisDosItens(novos);
+                  up('vS',t.servicos>0?String(t.servicos):'');
+                  up('vE',t.equipamentos>0?String(t.equipamentos):'');
                 }}
                 orcServicos={orcServicos}
                 equipamentosCad={equipamentosCad}
@@ -4593,39 +4621,58 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
                   :(f.itens||[]).map(i=>(
                     <div key={i.uid} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderRadius:7,background:'#f8f9fa',marginBottom:5,border:'1px solid #e8eaed'}}>
                       <span style={{fontSize:13}}>{i.tipo==='equipamento'?'🖥️':'🔧'}</span>
-                      <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>{parseInt(i.qtd,10)>1?`${i.qtd}x `:''}{i.nome}</span>
+                      <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text}}>
+                        {parseInt(i.qtd,10)>1?`${i.qtd}x `:''}{i.nome}
+                        {i.semCusto&&<span style={{fontSize:9,background:'#d5f5e3',color:'#1e8449',padding:'1px 7px',borderRadius:10,fontWeight:700,marginLeft:6}}>SEM CUSTO</span>}
+                      </span>
                       <span style={{fontSize:12,fontWeight:700,color:C.green}}>{moeda(numVal(i.valor)*(parseInt(i.qtd,10)||1))}</span>
                     </div>
                   ))}
               </div>}
         </div>
 
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
-          {/* Sistema/mês */}
-          <div>
-            <label style={lbl}>Sistema/mês (R$)</label>
-            {editMode&&f.status!=='Faturado'
-              ?<input style={fi} type="number" step="0.01" min="0" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
-              :<div style={{...fiView,fontWeight:700,color:'#8b5cf6'}}>{moeda(parseValor(f.vS)||0)}</div>
-            }
-          </div>
-          {/* Implantação */}
-          <div>
-            <label style={lbl}>Implantação (R$)</label>
-            {editMode&&f.status!=='Faturado'
-              ?<input style={fi} type="number" step="0.01" min="0" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
-              :<div style={{...fiView,fontWeight:700,color:'#f97316'}}>{moeda(parseValor(f.vI)||0)}</div>
-            }
-          </div>
-          {/* Equipamento */}
-          <div>
-            <label style={lbl}>Equipamento (R$)</label>
-            {editMode&&f.status!=='Faturado'
-              ?<input style={fi} type="number" step="0.01" min="0" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
-              :<div style={{...fiView,fontWeight:700,color:'#06b6d4'}}>{moeda(parseValor(f.vE)||0)}</div>
-            }
-          </div>
-        </div>
+        {(()=>{
+          const tItens=totaisDosItens(f.itens);
+          const temServ=(f.itens||[]).some(i=>i.tipo==='servico');
+          const temEquip=(f.itens||[]).some(i=>i.tipo==='equipamento');
+          const podeEditar=editMode&&f.status!=='Faturado';
+          const calc={background:'#f8f9fa',cursor:'not-allowed',fontWeight:700};
+          const aviso={fontSize:10,color:'#95a5a6',marginTop:3};
+          return(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+              {/* Sistema/mês = soma dos serviços */}
+              <div>
+                <label style={lbl}>Sistema/mês (R$)</label>
+                {podeEditar
+                  ? (temServ
+                      ?<><input style={{...fi,...calc,color:'#8b5cf6'}} value={moeda(tItens.servicos)} readOnly/>
+                         <div style={aviso}>Soma dos serviços acima</div></>
+                      :<><input style={fi} type="number" step="0.01" min="0" value={f.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
+                         <div style={aviso}>Adicione um serviço para calcular</div></>)
+                  :<div style={{...fiView,fontWeight:700,color:'#8b5cf6'}}>{moeda(parseValor(f.vS)||0)}</div>}
+              </div>
+              {/* Implantação = sempre manual */}
+              <div>
+                <label style={lbl}>Implantação (R$)</label>
+                {podeEditar
+                  ?<><input style={fi} type="number" step="0.01" min="0" value={f.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
+                     <div style={aviso}>Valor avulso — manual</div></>
+                  :<div style={{...fiView,fontWeight:700,color:'#f97316'}}>{moeda(parseValor(f.vI)||0)}</div>}
+              </div>
+              {/* Equipamento = soma dos equipamentos */}
+              <div>
+                <label style={lbl}>Equipamento (R$)</label>
+                {podeEditar
+                  ? (temEquip
+                      ?<><input style={{...fi,...calc,color:'#06b6d4'}} value={moeda(tItens.equipamentos)} readOnly/>
+                         <div style={aviso}>Soma dos equipamentos acima</div></>
+                      :<><input style={fi} type="number" step="0.01" min="0" value={f.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
+                         <div style={aviso}>Adicione um equipamento para calcular</div></>)
+                  :<div style={{...fiView,fontWeight:700,color:'#06b6d4'}}>{moeda(parseValor(f.vE)||0)}</div>}
+              </div>
+            </div>
+          );
+        })()}
         {/* Total */}
         <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:8,padding:'8px 12px',background:'#f8f9fa',borderRadius:6}}>
           <span style={{fontSize:11,color:C.textMuted,fontWeight:600}}>TOTAL DO CONTRATO:</span>
@@ -10256,6 +10303,23 @@ const STATUS_LEAD=[
 const COR_LEAD={novo:'#3498db',contatado:'#f5a623',qualificado:'#9b59b6',convertido:'#27ae60',perdido:'#e74c3c'};
 
 
+// --- TOTAIS A PARTIR DOS ITENS ------------------------------------------------
+// ╔═ REGRA DE NEGÓCIO ════════════════════════════════════════════════════════
+// Sistema/mês  = soma dos SERVIÇOS selecionados (× quantidade)
+// Equipamento  = soma dos EQUIPAMENTOS selecionados (× quantidade)
+// Implantação  = SEMPRE manual (consultoria, serviços avulsos, etc.)
+// Preencher Sistema ou Equipamento à mão duplica a cobrança no faturamento.
+// ═══════════════════════════════════════════════════════════════════════════
+function totaisDosItens(itens){
+  const soma=tipo=>(itens||[])
+    .filter(i=>i.tipo===tipo)
+    .reduce((t,i)=>t+numVal(i.valor)*(parseInt(i.qtd,10)||1),0);
+  return {
+    servicos:    soma('servico'),     // vai para vS (Sistema/mês)
+    equipamentos:soma('equipamento'), // vai para vE (Equipamento)
+  };
+}
+
 // --- SELETOR DE ITENS (equipamentos + serviços com quantidade) ---------------
 // Usado no lead e no cadastro de cliente. Mantido no escopo do módulo para os
 // inputs não perderem o foco a cada tecla.
@@ -10495,9 +10559,9 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
         itens:itensLimpos,
         // equipTipo mantido para compatibilidade com telas que ainda leem o campo
         equipTipo:(itensLimpos.find(i=>i.tipo==='equipamento')||{}).nome||'',
-        vS:p.vS===''?'':num(p.vS),
+        vS:totalServ>0?totalServ:(p.vS===''?'':num(p.vS)),
         vI:p.vI===''?'':num(p.vI),
-        vE:p.vE===''?'':num(p.vE),
+        vE:totalEquip>0?totalEquip:(p.vE===''?'':num(p.vE)),
         atualizadoEm:new Date().toISOString(),
       },{merge:true});
       await registrarEventoLead(lead,'proposta',`Proposta atualizada${p.plano?' — plano '+p.plano:''}`);
@@ -10538,15 +10602,22 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
         <div>
           <label style={lbl}>Sistema/mês (R$)</label>
-          <input style={fi} type="number" step="0.01" min="0" value={p.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>
+          {totalServ>0
+            ?<><input style={{...fi,background:'#f8f9fa',cursor:'not-allowed',fontWeight:700,color:'#8b5cf6'}} value={moeda(totalServ)} readOnly/>
+               <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Soma dos serviços</div></>
+            :<input style={fi} type="number" step="0.01" min="0" value={p.vS} onChange={e=>up('vS',e.target.value)} placeholder="0,00"/>}
         </div>
         <div>
           <label style={lbl}>Implantação (R$)</label>
           <input style={fi} type="number" step="0.01" min="0" value={p.vI} onChange={e=>up('vI',e.target.value)} placeholder="0,00"/>
+          <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Valor avulso — manual</div>
         </div>
         <div>
           <label style={lbl}>Equipamento (R$)</label>
-          <input style={fi} type="number" step="0.01" min="0" value={p.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>
+          {totalEquip>0
+            ?<><input style={{...fi,background:'#f8f9fa',cursor:'not-allowed',fontWeight:700,color:'#06b6d4'}} value={moeda(totalEquip)} readOnly/>
+               <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Soma dos equipamentos</div></>
+            :<input style={fi} type="number" step="0.01" min="0" value={p.vE} onChange={e=>up('vE',e.target.value)} placeholder="0,00"/>}
         </div>
       </div>
 
@@ -10555,16 +10626,7 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
           style={{padding:'9px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
           {salvando?'Salvando...':salvo?'✓ Salvo!':'💾 Salvar proposta'}
         </button>
-        {totalItens>0&&(
-          <button onClick={()=>{
-            if(totalEquip>0)up('vE',String(totalEquip));
-            if(totalServ>0)up('vI',String(totalServ));
-          }}
-            title="Equipamentos vão para o campo Equipamento e serviços para Implantação"
-            style={{padding:'9px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
-            ↓ Levar itens para os valores ({moeda(totalItens)})
-          </button>
-        )}
+
         <span style={{fontSize:10,color:'#aaa'}}>Estes dados vão preenchidos ao converter em cliente.</span>
       </div>
     </div>
