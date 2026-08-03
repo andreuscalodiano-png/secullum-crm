@@ -1137,7 +1137,7 @@ function ConfigPlanilhas(){
 
   useEffect(()=>{
     const unsub=onSnapshot(collection(db,'config_planilhas'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       setPlanilhas(arr.sort((a,b)=>(a.nome||'').localeCompare(b.nome||'')));
       setCarregando(false);
     });
@@ -1289,7 +1289,7 @@ function ConfigKanban(){
   useEffect(()=>{
     const unsub=onSnapshot(collection(db,'config_kanban'),snap=>{
       if(snap.empty){setEtapas(ETAPAS_DEFAULT.map(e=>({...e})));}
-      else{const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setEtapas([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));}
+      else{const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setEtapas([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));}
       setCarregando(false);
     });
     return()=>unsub();
@@ -3235,7 +3235,7 @@ function UsuariosLista({usuarios,currentUser}){
         <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Usuários ({ativos.length})</div>
         <button onClick={async()=>{
           const snap=await getDocs(collection(db,'usuarios'));
-          const todos=[];snap.forEach(d=>todos.push({_docId:d.id,...d.data()}));
+          const todos=[];snap.forEach(d=>todos.push({...d.data(),_docId:d.id}));
           const porEmail={};const aRemover=[];
           todos.forEach(u=>{
             const email=(u.email||'').toLowerCase().trim();
@@ -3687,7 +3687,7 @@ function ConfigChangelog(){
 
   useEffect(()=>{
     const unsub=onSnapshot(collection(db,'changelog'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       arr.sort((a,b)=>(b.criadoEm||'').localeCompare(a.criadoEm||''));
       setVersoes(arr);
       setCarregando(false);
@@ -5204,12 +5204,26 @@ function OrcConfigServicos({servicos}){
   const lbl={fontSize:11,color:'#7f8c8d',display:'block',marginBottom:3,fontWeight:700,textTransform:'uppercase',letterSpacing:.4};
   async function salvar(){
     if(!form.nome.trim()||!form.valor)return;
+    const novo=!editId;
     const id=editId||'svc_'+Date.now();
-    await setDoc(doc(db,'orc_servicos',id),{nome:form.nome.trim().toUpperCase(),descricao:form.descricao.trim(),valor:parseFloat(String(form.valor).replace(',','.'))||0,criadoEm:new Date().toISOString()});
+    const dados={
+      nome:form.nome.trim().toUpperCase(),
+      descricao:form.descricao.trim(),
+      valor:parseFloat(String(form.valor).replace(',','.'))||0,
+    };
+    if(novo)dados.criadoEm=new Date().toISOString();
+    else dados.atualizadoEm=new Date().toISOString();
+    // merge para nao apagar campos que nao estao no formulario
+    await setDoc(doc(db,'orc_servicos',id),dados,{merge:true});
     setForm({nome:'',descricao:'',valor:''});setEditId(null);setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
   async function remover(id){if(!window.confirm('Remover?'))return;await deleteDoc(doc(db,'orc_servicos',id));}
-  async function clonar(s){await setDoc(doc(db,'orc_servicos','svc_'+Date.now()),{...s,nome:s.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});}
+  async function clonar(s){
+    // O id do original nao pode ir junto, senao o clone aponta para ele
+    const {id:_ig,...dados}=s;
+    const novoId='svc_'+Date.now();
+    await setDoc(doc(db,'orc_servicos',novoId),{...dados,nome:s.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});
+  }
   return(
     <div>
       <div style={{fontWeight:700,fontSize:12,color:'#3498db',marginBottom:12,textTransform:'uppercase'}}>Serviços ({servicos.length})</div>
@@ -5247,7 +5261,10 @@ function OrcConfigFormas({formas}){
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
   async function add(){if(!nova.trim())return;await setDoc(doc(db,'orc_formas','forma_'+Date.now()),{nome:nova.trim().toUpperCase(),criadoEm:new Date().toISOString()});setNova('');setSaved(true);setTimeout(()=>setSaved(false),2000);}
   async function rem(id){if(!window.confirm('Remover?'))return;await deleteDoc(doc(db,'orc_formas',id));}
-  async function clonar(f){await setDoc(doc(db,'orc_formas','forma_'+Date.now()),{...f,nome:f.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});}
+  async function clonar(f){
+    const {id:_ig,...dados}=f;
+    await setDoc(doc(db,'orc_formas','forma_'+Date.now()),{...dados,nome:f.nome+' (CÓPIA)',criadoEm:new Date().toISOString()});
+  }
   return(
     <div>
       <div style={{fontWeight:700,fontSize:12,color:'#9b59b6',marginBottom:12,textTransform:'uppercase'}}>Formas de pagamento ({formas.length})</div>
@@ -9224,7 +9241,7 @@ export default function App(){
     if(!authUser)return;
     const unsubs=[];
     unsubs.push(onSnapshot(collection(db,'clientes'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       setClientes(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'overrides'),snap=>{
@@ -9234,7 +9251,7 @@ export default function App(){
       const obj={};snap.forEach(d=>obj[d.id]=d.data());setImplantacoes(obj);
     }));
     unsubs.push(onSnapshot(collection(db,'usuarios'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       // Deduplicar por email — manter o registro mais completo (com uid/status)
       const porEmail={};
       arr.forEach(u=>{
@@ -9253,32 +9270,32 @@ export default function App(){
       setUsuarios(Object.values(porEmail));
     }));
     unsubs.push(onSnapshot(collection(db,'vendedores'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setVendedoresCad(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setVendedoresCad(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'equipamentos'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setEquipamentosCad(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setEquipamentosCad(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'solicitacoes'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setSolicitacoes(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setSolicitacoes(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'orcamentos'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcamentos(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setOrcamentos(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'orc_servicos'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcServicos(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setOrcServicos(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'orc_formas'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcFormas(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setOrcFormas(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'orc_templates'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));setOrcTemplates(arr);
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setOrcTemplates(arr);
     }));
     unsubs.push(onSnapshot(collection(db,'config_kanban'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       if(arr.length>0)setEtapasKanban([...arr].sort((a,b)=>(a.ordem||0)-(b.ordem||0)));
     }));
     unsubs.push(onSnapshot(collection(db,'leads'),snap=>{
-      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
       setLeads([...arr].sort((a,b)=>new Date(b.criadoEm||0)-new Date(a.criadoEm||0)));
     }));
     return()=>unsubs.forEach(u=>u());
