@@ -1849,7 +1849,10 @@ function ConfigGatilhos({usuarios}){
   }
   function fmtDestino(g){
     const d=g.destino||{};
-    if(d.tipo==='numero')return d.valor||'número avulso';
+    if(d.tipo==='numero'){
+      const l=Array.isArray(d.valor)?d.valor.filter(Boolean):(d.valor?[d.valor]:[]);
+      return l.length>1?`${l.length} números avulsos`:(l[0]||'número avulso');
+    }
     if(d.tipo==='responsavel')return 'Responsável do registro';
     if(d.tipo==='cliente')return 'O próprio cliente';
     if(d.tipo==='todos')return 'Toda a equipe';
@@ -1891,7 +1894,11 @@ function ConfigGatilhos({usuarios}){
             <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
               <div style={{width:30,height:30,borderRadius:8,background:ev.cor+'18',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>{ev.icone}</div>
               <div style={{flex:1,minWidth:170}}>
-                <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{g.nome}</div>
+                <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                  <span style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{g.nome}</span>
+                  {g.usarIA&&<span title="Mensagem reescrita pela IA a cada disparo"
+                    style={{fontSize:9,background:'#faf5ff',color:'#8e44ad',border:'1px solid #e9d5ff',padding:'1px 7px',borderRadius:10,fontWeight:700}}>✨ IA</span>}
+                </div>
                 <div style={{fontSize:11,color:'#95a5a6'}}>
                   {fmtQuando(g)} → <strong style={{color:'#7f8c8d'}}>{fmtDestino(g)}</strong>
                 </div>
@@ -1953,11 +1960,13 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
   const [g,setG]=useState(gatilho||{
     nome:'',evento:'cliente_criado',condicoes:[],
     destino:{tipo:'usuario',valor:[]},
-    finalidade:'interno',mensagem:'',ativo:true,
+    finalidade:'interno',mensagem:'',ativo:true,usarIA:true,instrucaoIA:'',
     frequencia:'diario',horario:'08:00',diaSemana:1,diaMes:1,relatorio:'',
   });
   const [salvando,setSalvando]=useState(false);
   const [erro,setErro]=useState('');
+  const [exemplos,setExemplos]=useState([]);
+  const [gerando,setGerando]=useState(false);
   const refMsg=useRef(null);
 
   const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
@@ -1969,15 +1978,40 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
   const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
   const semCelular=elegiveis.filter(u=>!u.celular);
 
-  function inserirVar(v){
+  function inserirVar(v,alvo='mensagem'){
     const campo=refMsg.current;
-    const texto=g.mensagem||'';
-    if(!campo){up('mensagem',texto+`{{${v}}}`);return;}
+    const texto=g[alvo]||'';
+    if(!campo){up(alvo,texto+`{{${v}}}`);return;}
     const ini=campo.selectionStart??texto.length;
     const fim=campo.selectionEnd??texto.length;
     const novo=texto.slice(0,ini)+`{{${v}}}`+texto.slice(fim);
-    up('mensagem',novo);
+    up(alvo,novo);
     setTimeout(()=>{campo.focus();campo.selectionStart=campo.selectionEnd=ini+v.length+4;},0);
+  }
+
+  // Gera 3 variações para o usuário conferir o tom antes de ativar
+  async function verExemplos(){
+    setGerando(true);setExemplos([]);
+    try{
+      const exemplo={
+        cliente:'PADARIA CENTRAL LTDA',empresa:'PADARIA CENTRAL LTDA',cidade:'IBAITI',uf:'PR',
+        plano:'Pro',total:'R$ 1.599,00',vendedor:'NICOLAS',contato:'JOÃO',telefone:'(43) 99999-8888',
+        status:'Faturado',funcionarios:'10',equipamento:'EVO FACIAL 40',
+        titulo:'CADASTRAR MANUALMENTE — PADARIA CENTRAL',categoria:'Financeiro',prioridade:'Alta',
+        lead:'MERCADO SÃO JOSÉ',origem:'Meta Ads',solucao:'Relógio de ponto fixo',
+        etapa:'Em Configuração',etapa_anterior:'Venda Fechada',
+      };
+      const instrucao=(g.instrucaoIA||'').replace(/\{\{\s*(\w+)\s*\}\}/g,(m,k)=>exemplo[k]??'');
+      const destino=(usuarios||[]).find(u=>(g.destino?.valor||[]).includes?.(u.id))?.nome||'Matheus';
+      const r=await fetch(`${FUNCTIONS_URL}/gatilhoPreverIA`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({instrucao,dados:exemplo,destinatario:destino.split(' ')[0],quantidade:3}),
+      });
+      const d=await r.json();
+      if(d.error)alert('Não foi possível gerar: '+d.error);
+      else setExemplos(d.textos||[]);
+    }catch(e){alert('Erro ao gerar exemplos: '+e.message);}
+    setGerando(false);
   }
   function addCondicao(){up('condicoes',[...(g.condicoes||[]),{campo:ev.vars[0],operador:'igual',valor:''}]);}
   function upCondicao(i,k,v){up('condicoes',(g.condicoes||[]).map((c,j)=>j===i?{...c,[k]:v}:c));}
@@ -1986,10 +2020,12 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
   async function salvar(){
     setErro('');
     if(!g.nome.trim()){setErro('Dê um nome ao gatilho.');return;}
-    if(!ehAgendado&&!g.mensagem.trim()){setErro('Escreva a mensagem que será enviada.');return;}
-    if(ehAgendado&&!g.relatorio&&!g.mensagem.trim()){setErro('Escolha um relatório ou escreva uma mensagem.');return;}
+    if(g.usarIA&&!(g.instrucaoIA||'').trim()){setErro('Descreva o que a mensagem deve comunicar.');return;}
+    if(!g.usarIA&&!ehAgendado&&!g.mensagem.trim()){setErro('Escreva a mensagem que será enviada.');return;}
+    if(!g.usarIA&&ehAgendado&&!g.relatorio&&!g.mensagem.trim()){setErro('Escolha um relatório ou escreva uma mensagem.');return;}
     const d=g.destino||{};
-    const semDestino=(d.tipo==='usuario'&&!(Array.isArray(d.valor)?d.valor.length:d.valor))||(d.tipo==='numero'&&!d.valor);
+    const qtdValor=Array.isArray(d.valor)?d.valor.filter(x=>String(x).trim()).length:(String(d.valor||'').trim()?1:0);
+    const semDestino=(d.tipo==='usuario'||d.tipo==='numero')&&qtdValor===0;
     if(semDestino){setErro('Escolha para quem a mensagem será enviada.');return;}
     setSalvando(true);
     try{
@@ -2123,9 +2159,27 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
             })}
           </div>
         )}
-        {g.destino?.tipo==='numero'&&(
-          <input style={fi} value={g.destino?.valor||''} onChange={e=>up('destino',{tipo:'numero',valor:mascaraTel(e.target.value)})} placeholder="(00) 00000-0000" maxLength={15}/>
-        )}
+        {g.destino?.tipo==='numero'&&(()=>{
+          const lista=Array.isArray(g.destino?.valor)?g.destino.valor:(g.destino?.valor?[g.destino.valor]:[]);
+          const setLista=nova=>up('destino',{tipo:'numero',valor:nova});
+          return(
+            <div>
+              {lista.map((num,i)=>(
+                <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:6}}>
+                  <input style={{...fi,flex:1}} value={num}
+                    onChange={e=>setLista(lista.map((x,j)=>j===i?mascaraTel(e.target.value):x))}
+                    placeholder="(00) 00000-0000" maxLength={15}/>
+                  <button onClick={()=>setLista(lista.filter((_,j)=>j!==i))}
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16}}>×</button>
+                </div>
+              ))}
+              <button onClick={()=>setLista([...lista,''])}
+                style={{padding:'5px 12px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+                + Adicionar número
+              </button>
+            </div>
+          );
+        })()}
         {g.destino?.tipo==='responsavel'&&(
           <div style={{fontSize:11,color:'#7f8c8d'}}>
             Envia para o vendedor do cliente, o responsável da solicitação ou o responsável da implantação — conforme o evento.
@@ -2160,22 +2214,92 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
           </div>
         )}
 
-        <label style={lbl}>{ehAgendado?'Texto de abertura (opcional)':'Texto da mensagem'}</label>
-        <textarea ref={refMsg} style={{...fi,minHeight:110,resize:'vertical',fontFamily:'inherit',lineHeight:1.6}}
-          value={g.mensagem} onChange={e=>up('mensagem',e.target.value)}
-          placeholder={ehAgendado?'Bom dia! Segue o resumo:':'🎉 Novo cliente!\n{{cliente}} — {{cidade}}/{{uf}}\nPlano: {{plano}} · Total: {{total}}\nVendedor: {{vendedor}}'}/>
-
-        <div style={{marginTop:8}}>
-          <div style={{fontSize:10,color:'#95a5a6',marginBottom:5}}>Clique para inserir na mensagem:</div>
-          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-            {ev.vars.map(v=>(
-              <button key={v} onClick={()=>inserirVar(v)}
-                style={{padding:'3px 9px',borderRadius:12,border:'1px solid #e9d5ff',background:'#faf5ff',cursor:'pointer',fontSize:10,color:'#8e44ad',fontFamily:'monospace'}}>
-                {v}
-              </button>
-            ))}
-          </div>
+        {/* Escolha do modo de redação */}
+        <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+          {[
+            {id:true, t:'✨ Escrever com IA', d:'Texto diferente a cada envio'},
+            {id:false,t:'📝 Texto fixo',      d:'Sempre a mesma mensagem'},
+          ].map(o=>(
+            <button key={String(o.id)} onClick={()=>up('usarIA',o.id)}
+              style={{flex:1,minWidth:170,textAlign:'left',padding:'9px 12px',borderRadius:8,cursor:'pointer',
+                border:`1.5px solid ${g.usarIA===o.id?'#8e44ad':'#dde1e7'}`,
+                background:g.usarIA===o.id?'#faf5ff':'#fff'}}>
+              <div style={{fontSize:12,fontWeight:700,color:g.usarIA===o.id?'#8e44ad':'#4a4a4a'}}>{o.t}</div>
+              <div style={{fontSize:10,color:'#95a5a6',marginTop:1}}>{o.d}</div>
+            </button>
+          ))}
         </div>
+
+        {g.usarIA?(
+          <>
+            <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:7,padding:'9px 12px',marginBottom:10,fontSize:11,color:'#6b21a8',lineHeight:1.6}}>
+              Descreva <strong>o que precisa ser comunicado</strong>, não a frase pronta.
+              A IA escreve de um jeito diferente a cada disparo — muda a saudação e a construção —
+              mantendo os dados exatos. Assim a equipe não passa a ignorar por parecer mensagem automática.
+            </div>
+            <label style={lbl}>O que a mensagem deve comunicar</label>
+            <textarea ref={refMsg} style={{...fi,minHeight:90,resize:'vertical',fontFamily:'inherit',lineHeight:1.6}}
+              value={g.instrucaoIA||''} onChange={e=>up('instrucaoIA',e.target.value)}
+              placeholder={ehAgendado
+                ?'Avise que segue a lista de pendências do dia e peça atenção aos casos mais antigos.'
+                :'Avise que entrou um cliente novo: {{cliente}}, de {{cidade}}/{{uf}}, plano {{plano}}, total {{total}}, vendido por {{vendedor}}. Peça para dar sequência na instalação.'}/>
+
+            <div style={{marginTop:8,marginBottom:10}}>
+              <div style={{fontSize:10,color:'#95a5a6',marginBottom:5}}>Clique para inserir os dados na instrução:</div>
+              <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                {ev.vars.map(v=>(
+                  <button key={v} onClick={()=>inserirVar(v,'instrucaoIA')}
+                    style={{padding:'3px 9px',borderRadius:12,border:'1px solid #e9d5ff',background:'#faf5ff',cursor:'pointer',fontSize:10,color:'#8e44ad',fontFamily:'monospace'}}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button onClick={verExemplos} disabled={gerando||!(g.instrucaoIA||'').trim()}
+              style={{padding:'7px 16px',borderRadius:7,border:'1px solid #e9d5ff',background:'#fff',cursor:gerando?'default':'pointer',fontSize:12,color:'#8e44ad',fontWeight:600}}>
+              {gerando?'Gerando...':'👀 Ver 3 exemplos'}
+            </button>
+
+            {exemplos.length>0&&(
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Como a equipe vai receber</div>
+                {exemplos.map((ex,i)=>(
+                  <div key={i} style={{background:'#dcf8c6',borderRadius:'10px 10px 10px 2px',padding:'9px 12px',marginBottom:6,fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5,maxWidth:400}}>
+                    {ex}
+                  </div>
+                ))}
+                <div style={{fontSize:10,color:'#95a5a6'}}>Repare que cada uma sai diferente — é isso que evita a sensação de mensagem automática.</div>
+              </div>
+            )}
+
+            <div style={{marginTop:12,paddingTop:10,borderTop:'1px dashed #e9d5ff'}}>
+              <label style={lbl}>Texto reserva (usado se a IA falhar)</label>
+              <textarea style={{...fi,minHeight:60,resize:'vertical',fontFamily:'inherit',fontSize:12}}
+                value={g.mensagem} onChange={e=>up('mensagem',e.target.value)}
+                placeholder="Novo cliente: {{cliente}} — {{cidade}}/{{uf}}. Total {{total}}."/>
+            </div>
+          </>
+        ):(
+          <>
+            <label style={lbl}>{ehAgendado?'Texto de abertura (opcional)':'Texto da mensagem'}</label>
+            <textarea ref={refMsg} style={{...fi,minHeight:110,resize:'vertical',fontFamily:'inherit',lineHeight:1.6}}
+              value={g.mensagem} onChange={e=>up('mensagem',e.target.value)}
+              placeholder={ehAgendado?'Bom dia! Segue o resumo:':'🎉 Novo cliente!\n{{cliente}} — {{cidade}}/{{uf}}\nPlano: {{plano}} · Total: {{total}}\nVendedor: {{vendedor}}'}/>
+
+            <div style={{marginTop:8}}>
+              <div style={{fontSize:10,color:'#95a5a6',marginBottom:5}}>Clique para inserir na mensagem:</div>
+              <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                {ev.vars.map(v=>(
+                  <button key={v} onClick={()=>inserirVar(v)}
+                    style={{padding:'3px 9px',borderRadius:12,border:'1px solid #e9d5ff',background:'#faf5ff',cursor:'pointer',fontSize:10,color:'#8e44ad',fontFamily:'monospace'}}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {erro&&<div style={{fontSize:12,color:'#e74c3c',marginBottom:10}}>{erro}</div>}

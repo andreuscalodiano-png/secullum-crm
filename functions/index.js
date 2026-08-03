@@ -1040,7 +1040,11 @@ async function resolverDestinos(destino, dados, extra = {}) {
   const tipo = destino.tipo || 'usuario';
 
   if (tipo === 'numero') {
-    if (destino.valor) out.push({ nome: 'Número avulso', numero: destino.valor });
+    // Aceita um número ou uma lista
+    const lista = Array.isArray(destino.valor) ? destino.valor : (destino.valor ? [destino.valor] : []);
+    lista.filter(n => String(n).trim()).forEach((n, i) =>
+      out.push({ nome: `Número avulso ${lista.length > 1 ? i + 1 : ''}`.trim(), numero: n })
+    );
     return out;
   }
   if (tipo === 'cliente') {
@@ -1095,7 +1099,7 @@ async function processarGatilhos(evento, dados, extra = {}) {
           continue;
         }
         const vars = montarVariaveis(evento, dados, extra);
-        const texto = aplicarVariaveis(g.mensagem, vars);
+        const textoFixo = aplicarVariaveis(g.mensagem, vars);
         const destinos = await resolverDestinos(g.destino, dados, extra);
 
         if (!destinos.length) {
@@ -1109,6 +1113,16 @@ async function processarGatilhos(evento, dados, extra = {}) {
         }
 
         for (const d of destinos) {
+          // Com IA ligada, cada pessoa recebe uma redação própria
+          const texto = g.usarIA
+            ? await gerarMensagemIA({
+                instrucao: aplicarVariaveis(g.instrucaoIA || g.mensagem, vars),
+                dados: vars,
+                destinatario: (d.nome || '').split(' ')[0],
+                textoFallback: textoFixo,
+              })
+            : textoFixo;
+
           const numero = await obterNumeroDatafy({
             numeroId: g.numeroId || null,
             finalidade: g.finalidade || 'interno',
@@ -1127,6 +1141,7 @@ async function processarGatilhos(evento, dados, extra = {}) {
             gatilhoId: g.id, gatilhoNome: g.nome, evento,
             destinatario: d.nome, destino: destinoNum,
             mensagem: texto.slice(0, 500),
+            comIA: !!g.usarIA,
             sucesso: r.ok,
             erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
             data: new Date().toISOString(),
@@ -1307,19 +1322,31 @@ exports.gatilhosAgendados = functions.pubsub
         if (freq === 'mensal' && Number(g.diaMes) !== diaMes) continue;
         if (freq === 'dias_uteis' && (diaSemana === 0 || diaSemana === 6)) continue;
 
-        let texto = g.mensagem || '';
+        let relatorio = '';
         if (g.relatorio) {
-          const rel = await montarRelatorio(g.relatorio);
-          if (!rel) {
+          relatorio = await montarRelatorio(g.relatorio);
+          if (!relatorio) {
             console.log(`[gatilho agendado] "${g.nome}" — relatório vazio, nada a enviar`);
             continue;
           }
-          texto = texto ? `${texto}\n\n${rel}` : rel;
         }
-        texto = aplicarVariaveis(texto, montarVariaveis('agendado', {}));
+        const aberturaFixa = aplicarVariaveis(g.mensagem || '', montarVariaveis('agendado', {}));
 
         const destinos = await resolverDestinos(g.destino, {});
         for (const d of destinos) {
+          // A IA escreve só a abertura; a lista do relatório vai como está
+          let texto;
+          if (g.usarIA) {
+            const abertura = await gerarMensagemIA({
+              instrucao: aplicarVariaveis(g.instrucaoIA || g.mensagem || 'Avise que segue o relatório abaixo.', montarVariaveis('agendado', {})),
+              dados: { itens_no_relatorio: (relatorio.match(/^•/gm) || []).length },
+              destinatario: (d.nome || '').split(' ')[0],
+              textoFallback: aberturaFixa,
+            });
+            texto = relatorio ? `${abertura}\n\n${relatorio}` : abertura;
+          } else {
+            texto = relatorio ? (aberturaFixa ? `${aberturaFixa}\n\n${relatorio}` : relatorio) : aberturaFixa;
+          }
           const numero = await obterNumeroDatafy({
             numeroId: g.numeroId || null,
             finalidade: g.finalidade || 'interno',
@@ -1336,6 +1363,7 @@ exports.gatilhosAgendados = functions.pubsub
             gatilhoId: g.id, gatilhoNome: g.nome, evento: 'agendado',
             destinatario: d.nome, destino: destinoNum,
             mensagem: texto.slice(0, 500), sucesso: r.ok,
+            comIA: !!g.usarIA,
             erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
             data: new Date().toISOString(),
           });
@@ -1374,30 +1402,142 @@ exports.gatilhoTestar = functions.https.onRequest(async (req, res) => {
       solucao: 'Relógio de ponto fixo', funcionarios: 'De 6 a 10 funcionários',
     };
 
-    let texto = g.mensagem || '';
-    if (g.evento === 'agendado' && g.relatorio) {
-      const rel = await montarRelatorio(g.relatorio);
-      texto = rel ? (texto ? `${texto}\n\n${rel}` : rel) : (texto || 'Nenhum item no relatório neste momento.');
-    }
-    texto = aplicarVariaveis(texto, montarVariaveis(g.evento || 'cliente_criado', exemplo, {
+    const varsTeste = montarVariaveis(g.evento || 'cliente_criado', exemplo, {
       etapaNova: 'Em Configuração', etapaAntiga: 'Venda Fechada', clienteNome: exemplo.nome,
-    }));
-    texto = `🧪 *TESTE DO GATILHO "${g.nome}"*\n\n${texto}`;
+    });
+    let relatorioTeste = '';
+    if (g.evento === 'agendado' && g.relatorio) {
+      relatorioTeste = (await montarRelatorio(g.relatorio)) || '_(nenhum item pendente neste momento)_';
+    }
+    const textoFixoTeste = aplicarVariaveis(g.mensagem || '', varsTeste);
 
     const destinos = await resolverDestinos(g.destino, exemplo);
     if (!destinos.length) throw new Error('Nenhum destinatário com celular cadastrado.');
 
     const resultados = [];
+    let previa = '';
     for (const d of destinos) {
+      let texto = g.usarIA
+        ? await gerarMensagemIA({
+            instrucao: aplicarVariaveis(g.instrucaoIA || g.mensagem, varsTeste),
+            dados: varsTeste,
+            destinatario: (d.nome || '').split(' ')[0],
+            textoFallback: textoFixoTeste,
+          })
+        : textoFixoTeste;
+      if (relatorioTeste) texto = texto ? `${texto}\n\n${relatorioTeste}` : relatorioTeste;
+      texto = `🧪 *TESTE DO GATILHO "${g.nome}"*\n\n${texto}`;
+      if (!previa) previa = texto;
       const numero = await obterNumeroDatafy({ numeroId: g.numeroId || null, finalidade: g.finalidade || 'interno' });
       let destinoNum = String(d.numero).replace(/\D/g, '');
       if (!destinoNum.startsWith('55') || destinoNum.length < 12) destinoNum = '55' + destinoNum.replace(/^0+/, '');
       const r = await chamarDatafy({ token: numero.token, path: '/messages/send/text', method: 'POST', body: { to: destinoNum, text: texto } });
       resultados.push({ para: d.nome, numero: destinoNum, ok: r.ok, erro: r.ok ? null : (r.data?.error?.message || JSON.stringify(r.data).slice(0, 200)) });
     }
-    res.status(200).json({ ok: true, previa: texto, resultados });
+    res.status(200).json({ ok: true, previa, resultados });
   } catch (err) {
     console.error('[gatilhoTestar] erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REDAÇÃO COM IA — evita que os avisos virem "mensagem de robô"
+//
+// Em vez de um texto fixo repetido, a IA reescreve o aviso a cada disparo:
+// muda a saudação, a ordem das frases e o jeito de dizer, mantendo os dados
+// exatos. Se a OpenAI falhar, cai no texto fixo do gatilho.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function saudacaoPorHora() {
+  const h = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })).getHours();
+  if (h < 12) return 'manhã';
+  if (h < 18) return 'tarde';
+  return 'noite';
+}
+
+const PROMPT_BASE = `Você escreve avisos internos de WhatsApp para a equipe da Guion Informática,
+uma revenda de sistemas de controle de ponto (Secullum) no interior do Paraná.
+
+COMO ESCREVER
+- Fale como um colega de trabalho falaria, não como um sistema.
+- Tom profissional, porém leve e direto. Nada de formalidade engessada.
+- Comece cumprimentando a pessoa pelo primeiro nome.
+- Varie a forma de escrever a cada mensagem: mude a saudação, a ordem das
+  informações e as palavras. Duas mensagens seguidas nunca devem parecer iguais.
+- Português do Brasil, no máximo 4 linhas curtas.
+- Pode usar 1 ou 2 emojis, sem exagero. Nem toda mensagem precisa de emoji.
+- Use *asterisco* para negrito (padrão do WhatsApp) no que for mais importante.
+
+REGRAS RÍGIDAS
+- Use apenas os dados fornecidos. Nunca invente nome, valor, data ou situação.
+- Não escreva "esta é uma mensagem automática" nem nada parecido.
+- Não repita o nome da pessoa mais de uma vez.
+- Não assine a mensagem.
+- Responda somente com o texto final da mensagem, sem aspas e sem comentários.`;
+
+async function gerarMensagemIA({ instrucao, dados, destinatario, textoFallback }) {
+  const key = OPENAI_KEY;
+  if (!key) return textoFallback || instrucao;
+  try {
+    const contexto = Object.entries(dados || {})
+      .filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+      .map(([k, v]) => `- ${k}: ${v}`)
+      .join('\n');
+
+    const userMsg = [
+      `Escreva a mensagem para: ${destinatario || 'colega de equipe'}`,
+      `Período do dia: ${saudacaoPorHora()}`,
+      ``,
+      `O QUE COMUNICAR:`,
+      instrucao,
+      ``,
+      `DADOS DISPONÍVEIS:`,
+      contexto || '(sem dados adicionais)',
+    ].join('\n');
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        max_tokens: 300,
+        temperature: 1.0,        // variação alta é o objetivo aqui
+        presence_penalty: 0.6,   // empurra para construções diferentes
+        frequency_penalty: 0.4,
+        messages: [
+          { role: 'system', content: PROMPT_BASE },
+          { role: 'user', content: userMsg },
+        ],
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      console.error('[IA] erro OpenAI:', data?.error?.message);
+      return textoFallback || instrucao;
+    }
+    const texto = (data.choices?.[0]?.message?.content || '').trim();
+    return texto || textoFallback || instrucao;
+  } catch (err) {
+    console.error('[IA] falha ao gerar:', err.message);
+    return textoFallback || instrucao;
+  }
+}
+
+// Endpoint para o botão "Ver exemplos" no editor de gatilho
+exports.gatilhoPreverIA = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { instrucao, dados = {}, destinatario = 'Matheus', quantidade = 3 } = req.body || {};
+    if (!instrucao) throw new Error('Descreva o que a mensagem deve comunicar.');
+    const n = Math.min(Math.max(Number(quantidade) || 3, 1), 4);
+    const textos = [];
+    for (let i = 0; i < n; i++) {
+      textos.push(await gerarMensagemIA({ instrucao, dados, destinatario }));
+    }
+    res.status(200).json({ ok: true, textos });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
