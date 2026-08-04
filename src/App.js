@@ -6248,6 +6248,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
   // Ordenação do menu (drag)
   const [dragMenuId,setDragMenuId]=useState(null);
   const [dragOverId,setDragOverId]=useState(null);
+  const [salvandoPadrao,setSalvandoPadrao]=useState(false);
+  const [padraoSalvo,setPadraoSalvo]=useState(false);
   // Mescla a ordem salva com itens novos que ainda nao estavam nela (ex: menus
   // adicionados em versoes posteriores). Sem isso, um menu novo nunca aparece
   // aqui para quem ja salvou uma ordem antes dele existir.
@@ -6389,13 +6391,48 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
   function salvarOrdemMenu(){
     onMenuOrderChange(localOrder);
-    // Salva no Firestore vinculado ao usuário logado
+    // Ordem pessoal — vale só para quem está logado
     try{
       const uid=auth.currentUser?.uid;
-      if(uid){
-        setDoc(doc(db,'usuarios',uid),{menuOrder:localOrder},{merge:true});
-      }
+      if(uid)setDoc(doc(db,'usuarios',uid),{menuOrder:localOrder},{merge:true});
     }catch(e){}
+  }
+
+  // ╔═ REGRA DE NEGÓCIO ═════════════════════════════════════════════════════
+  // A ordem do menu tem dois níveis: o PADRÃO DA EMPRESA (config/sistema) e a
+  // ordem PESSOAL de cada usuário. Quem nunca reordenou vê o padrão; quem
+  // reordenou mantém a sua. "Restaurar padrão" apaga a pessoal e volta ao geral.
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function definirComoPadrao(){
+    if(!window.confirm('Salvar esta ordem como PADRÃO da empresa?\n\nQuem nunca reordenou o menu passa a ver assim. Quem já personalizou continua com a ordem dele.'))return;
+    setSalvandoPadrao(true);
+    try{
+      await setDoc(doc(db,'config','sistema'),{
+        menuOrderPadrao:localOrder,
+        menuOrderPadraoEm:new Date().toISOString(),
+        menuOrderPadraoPor:auth.currentUser?.email||'—',
+      },{merge:true});
+      // A ordem pessoal também acompanha, para não ficar divergente
+      const uid=auth.currentUser?.uid;
+      if(uid)await setDoc(doc(db,'usuarios',uid),{menuOrder:localOrder},{merge:true});
+      onMenuOrderChange(localOrder);
+      setPadraoSalvo(true);setTimeout(()=>setPadraoSalvo(false),3000);
+    }catch(e){alert('Erro ao salvar o padrão: '+e.message);}
+    setSalvandoPadrao(false);
+  }
+
+  async function restaurarPadrao(){
+    if(!window.confirm('Voltar para a ordem padrão da empresa?\n\nSua ordem pessoal será descartada.'))return;
+    try{
+      const d=await getDocs(collection(db,'config'));
+      let padrao=null;
+      d.forEach(x=>{if(x.id==='sistema')padrao=x.data().menuOrderPadrao;});
+      const uid=auth.currentUser?.uid;
+      if(uid)await setDoc(doc(db,'usuarios',uid),{menuOrder:deleteField()},{merge:true});
+      const nova=padrao&&padrao.length?padrao:NAV_ITEMS_BASE.map(n=>n.id);
+      setLocalOrder(nova);
+      onMenuOrderChange(nova);
+    }catch(e){alert('Erro: '+e.message);}
   }
 
   function onDragStart(id){setDragMenuId(id);}
@@ -6578,13 +6615,31 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
             <span style={{fontSize:12,fontWeight:600,color:C.textMuted,flex:1}}>Configurações — fixo</span>
           </div>
         </div>
-        <div style={{display:'flex',gap:8}}>
-          <button onClick={()=>setLocalOrder(o=>[...o,'sep_'+Date.now()])} style={{padding:'8px 14px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted,display:'flex',alignItems:'center',gap:6}}>
-            <i className="ti ti-minus"/> + Separador
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <button onClick={()=>setLocalOrder(o=>[...o,'sep_'+Date.now()])} style={{padding:'8px 14px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted}}>
+            + Separador
           </button>
-          <button onClick={salvarOrdemMenu} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12,display:'flex',alignItems:'center',gap:6}}>
-            <i className="ti ti-device-floppy"/> Salvar ordem
+          <button onClick={salvarOrdemMenu} style={{padding:'8px 18px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            💾 Salvar para mim
           </button>
+          {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+            <button onClick={definirComoPadrao} disabled={salvandoPadrao}
+              title="Quem nunca reordenou o menu passa a ver nesta ordem"
+              style={{padding:'8px 18px',borderRadius:6,border:'none',background:padraoSalvo?C.green:'#2c3e50',color:'#fff',fontWeight:700,cursor:salvandoPadrao?'default':'pointer',fontSize:12}}>
+              {padraoSalvo?'✓ Padrão salvo!':salvandoPadrao?'Salvando...':'⭐ Definir como padrão da empresa'}
+            </button>
+          )}
+          <button onClick={restaurarPadrao}
+            title="Descarta sua ordem pessoal e volta à ordem padrão"
+            style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:C.textMuted}}>
+            ↺ Restaurar padrão
+          </button>
+        </div>
+
+        <div style={{fontSize:11,color:C.textMuted,marginTop:10,background:'#f8f9fa',borderRadius:7,padding:'10px 12px',lineHeight:1.6}}>
+          <strong>Salvar para mim</strong> muda só o seu menu.
+          {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&<> <strong>Definir como padrão</strong> vale para quem
+          nunca reordenou — quem já personalizou continua com a ordem dele até usar <strong>Restaurar padrão</strong>.</>}
         </div>
       </div>
 
@@ -11854,9 +11909,16 @@ export default function App(){
           }
           setUserProfile(perfil);
           setUsuarios(Object.values(perfis));
-          // Carregar ordem do menu do Firestore
+          // Ordem do menu: a pessoal manda; sem ela, usa o padrão da empresa
           if(perfil.menuOrder&&perfil.menuOrder.length){
             setMenuOrder(perfil.menuOrder);
+          }else{
+            try{
+              const cfg=await getDocs(collection(db,'config'));
+              let padrao=null;
+              cfg.forEach(d=>{if(d.id==='sistema')padrao=d.data().menuOrderPadrao;});
+              if(padrao&&padrao.length)setMenuOrder(padrao);
+            }catch(e){}
           }
         }catch(e){setUserProfile({email:user.email,perfil:'admin',nome:user.email});}
       }
