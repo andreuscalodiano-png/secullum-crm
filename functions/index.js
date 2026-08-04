@@ -1718,3 +1718,117 @@ exports.secullumSincronizar = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEMBRETE DE APRESENTAÇÃO — avisa quem vai apresentar, X minutos antes
+//
+// Roda a cada 5 minutos. Para cada lead com apresentação marcada, verifica se
+// já entrou na janela do lembrete e envia uma única vez (apresLembreteEnviado).
+// Se o lead for remarcado, a flag volta a false e o aviso é enviado de novo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+exports.lembreteApresentacao = functions.pubsub
+  .schedule('every 5 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const snap = await db.collection('leads').get();
+      const pendentes = [];
+      snap.forEach(d => {
+        const l = { id: d.id, ...d.data() };
+        if (!l.apresData || !l.apresResponsavelId) return;
+        if (l.apresLembreteEnviado) return;
+        const minutos = Number(l.apresLembrete) || 0;
+        if (minutos <= 0) return;
+        const dt = new Date(`${l.apresData}T${l.apresHora || '09:00'}:00-03:00`);
+        if (isNaN(dt.getTime())) return;
+        const faltam = dt.getTime() - Date.now();
+        // Dentro da janela e ainda não passou da hora
+        if (faltam <= minutos * 60000 && faltam > -300000) pendentes.push({ lead: l, dt, faltam });
+      });
+
+      if (!pendentes.length) return null;
+
+      const usnap = await db.collection('usuarios').get();
+      const usuarios = [];
+      usnap.forEach(d => usuarios.push({ id: d.id, ...d.data() }));
+
+      for (const p of pendentes) {
+        const l = p.lead;
+        const u = usuarios.find(x => x.id === l.apresResponsavelId);
+        if (!u || !u.celular) {
+          console.log(`[apresentacao] "${l.nome}" — responsável sem celular, pulando`);
+          continue;
+        }
+        const minutosFalta = Math.max(Math.round(p.faltam / 60000), 0);
+        const horaTxt = l.apresHora || '—';
+        const dataTxt = new Date(l.apresData + 'T12:00:00').toLocaleDateString('pt-BR');
+
+        const dadosMsg = {
+          lead: l.nome || '', telefone: l.telefone || '', email: l.email || '',
+          data: dataTxt, hora: horaTxt, minutos_restantes: minutosFalta,
+          local: l.apresLocal || '', observacoes: l.apresObs || '',
+          solucao: l.solucao || '', funcionarios: l.funcionarios || '',
+        };
+
+        const instrucao = [
+          `Lembre que há uma apresentação marcada em ${minutosFalta} minutos, às ${horaTxt} do dia ${dataTxt}.`,
+          `Cliente: ${l.nome || ''}${l.telefone ? ', telefone ' + l.telefone : ''}.`,
+          l.apresLocal ? `Local ou forma: ${l.apresLocal}.` : '',
+          l.solucao ? `O cliente procura: ${l.solucao}.` : '',
+          l.apresObs ? `Pontos anotados: ${l.apresObs}` : '',
+          'Deseje uma boa apresentação.',
+        ].filter(Boolean).join(' ');
+
+        const fallback =
+          `📅 *Apresentação em ${minutosFalta} min*\n\n` +
+          `*${(l.nome || '').toUpperCase()}*\n` +
+          `${dataTxt} às ${horaTxt}\n` +
+          (l.apresLocal ? `Local: ${l.apresLocal}\n` : '') +
+          (l.telefone ? `Contato: ${l.telefone}\n` : '') +
+          (l.apresObs ? `\n${l.apresObs}` : '');
+
+        const texto = await gerarMensagemIA({
+          instrucao,
+          dados: dadosMsg,
+          destinatario: (u.nome || '').split(' ')[0],
+          textoFallback: fallback,
+        });
+
+        try {
+          const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+          let destino = String(u.celular).replace(/\D/g, '');
+          if (!destino.startsWith('55') || destino.length < 12) destino = '55' + destino.replace(/^0+/, '');
+          const r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: destino, text: texto },
+          });
+          await db.collection('leads').doc(l.id).set({
+            apresLembreteEnviado: true,
+            apresLembreteEnviadoEm: new Date().toISOString(),
+            historico: [
+              ...(l.historico || []),
+              {
+                evento: 'lembrete',
+                detalhe: `Lembrete da apresentação enviado para ${u.nome || u.email}`,
+                data: new Date().toISOString(), usuario: 'Sistema',
+              },
+            ],
+          }, { merge: true });
+          await db.collection('gatilhos_log').add({
+            gatilhoNome: 'Lembrete de apresentação', evento: 'apresentacao',
+            destinatario: u.nome || u.email, destino,
+            mensagem: texto.slice(0, 500), comIA: true, sucesso: r.ok,
+            erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
+            data: new Date().toISOString(),
+          });
+          console.log(`[apresentacao] "${l.nome}" -> ${u.nome}: ${r.ok ? 'enviado' : 'falhou'}`);
+        } catch (e) {
+          console.error(`[apresentacao] erro em "${l.nome}":`, e.message);
+        }
+      }
+    } catch (err) {
+      console.error('[apresentacao] erro geral:', err.message);
+    }
+    return null;
+  });

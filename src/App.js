@@ -199,6 +199,11 @@ function linkWaLead(lead){
   return `https://wa.me/${num}?text=${msg}`;
 }
 
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// Com o Asaas desligado, "Gerar Faturamento Manual" cria uma SOLICITAÇÃO para
+// o financeiro. O cliente NÃO vira "Faturado" nesse momento — só quando a
+// solicitação for marcada como Resolvida.
+// ═══════════════════════════════════════════════════════════════════════════
 // Quem recebe a solicitação de faturamento manual.
 // Prioridade: responsável marcado em Configurações > primeiro financeiro ativo.
 function escolherResponsavelFaturamento(usuarios){
@@ -522,6 +527,11 @@ const CORES_SECAO={
   pagamento:  {cor:'#16a085',icone:'💳'},
   contrato:   {cor:'#27ae60',icone:'📄'},
   equipamento:{cor:'#0abde3',icone:'🚚'},
+  lead:       {cor:'#e84393',icone:'🎯'},
+  proposta:   {cor:'#e67e22',icone:'💼'},
+  agenda:     {cor:'#8e44ad',icone:'📅'},
+  historico:  {cor:'#7f8c8d',icone:'🕐'},
+  contato:    {cor:'#25D366',icone:'💬'},
 };
 function CabecalhoSecao({tipo,titulo,subtitulo,acao}){
   const {cor,icone}=CORES_SECAO[tipo]||{cor:'#7f8c8d',icone:'•'};
@@ -573,6 +583,11 @@ function equipValorVigente(e){
   if(equipEmPromocao(e))return numVal(e.valorPromocional);
   return numVal(e.precoVenda);
 }
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// PISO DE VENDA: quando há valor promocional cadastrado, ele é o piso — não
+// o preço de custo. Sem promocional, o piso passa a ser o custo. Vender abaixo
+// disso exige liberação de um usuário admin, registrada no item.
+// ═══════════════════════════════════════════════════════════════════════════
 // Piso de venda: o valor promocional manda quando existe; sem promocional,
 // o limite passa a ser o preço de custo. Zero significa "sem piso definido".
 function equipPisoVenda(e){
@@ -1713,6 +1728,97 @@ const CLIENTES_BASE = CSV_BASE.trim().split('\n').filter(l=>l.replace(/;/g,'').t
 }).filter(c=>c.nome);
 
 
+// --- IDENTIDADE VISUAL E VERSÃO ----------------------------------------------
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// A fonte é carregada da web (Inter) para o sistema ficar IDÊNTICO em todos
+// os computadores. Fontes do sistema como 'Segoe UI' variam de máquina para
+// máquina e mudam o desenho e o espaçamento das telas.
+// ═══════════════════════════════════════════════════════════════════════════
+const FONTE_APP="'Inter','Segoe UI',system-ui,-apple-system,sans-serif";
+
+// Muda a cada publicação. Serve para avisar quem está com a tela aberta.
+const APP_VERSAO='2026.08.03';
+
+// Carrega a fonte uma única vez
+(function carregarFonte(){
+  if(typeof document==='undefined')return;
+  if(document.getElementById('fonte-app'))return;
+  const pre=document.createElement('link');
+  pre.rel='preconnect';pre.href='https://fonts.gstatic.com';pre.crossOrigin='anonymous';
+  document.head.appendChild(pre);
+  const l=document.createElement('link');
+  l.id='fonte-app';
+  l.rel='stylesheet';
+  l.href='https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap';
+  document.head.appendChild(l);
+  // Aplica no documento inteiro, cobrindo o que não passa por style inline
+  const st=document.createElement('style');
+  st.textContent=`
+    body,input,select,textarea,button{font-family:${FONTE_APP};}
+    *{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
+  `;
+  document.head.appendChild(st);
+})();
+
+// --- AVISO DE VERSÃO NOVA ----------------------------------------------------
+// O navegador guarda o index.html em cache e pode segurar uma versão antiga
+// por dias. Aqui a versão publicada fica no Firestore (config/sistema.versao):
+// quando ela difere da versão carregada nesta aba, mostramos o aviso.
+function AvisoVersao(){
+  const [novaVersao,setNovaVersao]=useState(null);
+  const [atualizando,setAtualizando]=useState(false);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','sistema'),d=>{
+      if(!d.exists())return;
+      const publicada=d.data().versao;
+      if(publicada&&publicada!==APP_VERSAO)setNovaVersao(publicada);
+      else setNovaVersao(null);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function atualizar(){
+    setAtualizando(true);
+    try{
+      // Limpa o cache do navegador antes de recarregar
+      if('caches' in window){
+        const chaves=await caches.keys();
+        await Promise.all(chaves.map(k=>caches.delete(k)));
+      }
+      if('serviceWorker' in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister()));
+      }
+    }catch(e){}
+    // O parâmetro força o navegador a buscar do servidor
+    window.location.href=window.location.pathname+'?v='+Date.now();
+  }
+
+  if(!novaVersao)return null;
+
+  return(
+    <div style={{position:'fixed',bottom:20,left:'50%',transform:'translateX(-50%)',zIndex:99999,
+      background:'linear-gradient(135deg,#1a2a3a,#2c3e50)',borderRadius:12,padding:'14px 20px',
+      boxShadow:'0 8px 30px rgba(0,0,0,.3)',display:'flex',alignItems:'center',gap:14,
+      maxWidth:'92vw',flexWrap:'wrap'}}>
+      <div style={{width:36,height:36,borderRadius:9,background:'rgba(245,166,35,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17,flexShrink:0}}>🚀</div>
+      <div style={{flex:1,minWidth:180}}>
+        <div style={{fontWeight:700,fontSize:13,color:'#fff'}}>Nova versão disponível</div>
+        <div style={{fontSize:11,color:'rgba(255,255,255,.6)'}}>
+          Você está na {APP_VERSAO} · publicada: {novaVersao}
+        </div>
+      </div>
+      <button onClick={atualizar} disabled={atualizando}
+        style={{padding:'9px 20px',borderRadius:8,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,flexShrink:0}}>
+        {atualizando?'Atualizando...':'Atualizar agora'}
+      </button>
+      <button onClick={()=>setNovaVersao(null)} title="Lembrar depois"
+        style={{background:'none',border:'none',cursor:'pointer',color:'rgba(255,255,255,.4)',fontSize:18,flexShrink:0}}>×</button>
+    </div>
+  );
+}
+
 // --- ETAPAS KANBAN DEFAULT ---------------------------------------------------
 const ETAPAS_DEFAULT=[
   {id:'venda_fechada',       label:'Venda Fechada',          color:'#3498db',ordem:0,padrao:true, notifEmail:false,ativo:true},
@@ -2593,6 +2699,391 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
   );
 }
 
+// --- CONFIG: VERSÃO PUBLICADA -------------------------------------------------
+function ConfigVersao(){
+  const [publicada,setPublicada]=useState('');
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','sistema'),d=>{
+      setPublicada(d.exists()?(d.data().versao||''):'');
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  const desatualizado=publicada&&publicada!==APP_VERSAO;
+  const jaPublicado=publicada===APP_VERSAO;
+
+  async function publicar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','sistema'),{
+        versao:APP_VERSAO,
+        versaoPublicadaEm:new Date().toISOString(),
+        versaoPublicadaPor:auth.currentUser?.email||'—',
+      },{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),3000);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:4,textTransform:'uppercase'}}>🚀 Versão do sistema</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        O navegador guarda a página em cache e pode segurar uma versão antiga por dias — foi o que fez
+        um computador mostrar um menu com nome diferente do outro. Depois de publicar no Vercel, avise
+        aqui: quem estiver com o sistema aberto recebe o aviso para atualizar.
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px'}}>
+          <div style={{fontSize:9,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>Este navegador está na</div>
+          <div style={{fontSize:16,fontWeight:700,color:'#2c3e50'}}>{APP_VERSAO}</div>
+        </div>
+        <div style={{background:desatualizado?'#fff8ee':'#f0fff4',borderRadius:8,padding:'12px 14px',
+          border:`1px solid ${desatualizado?'#fde68a':'#9ae6b4'}`}}>
+          <div style={{fontSize:9,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>Versão anunciada à equipe</div>
+          <div style={{fontSize:16,fontWeight:700,color:desatualizado?'#b45309':'#276749'}}>{publicada||'nenhuma'}</div>
+        </div>
+      </div>
+
+      {desatualizado&&(
+        <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:7,padding:'10px 12px',marginBottom:12,fontSize:11,color:'#b45309',lineHeight:1.6}}>
+          ⚠ Este navegador está com uma versão <strong>diferente</strong> da anunciada. Recarregue com <strong>Ctrl+Shift+R</strong> antes de publicar.
+        </div>
+      )}
+
+      <button onClick={publicar} disabled={salvando||jaPublicado}
+        style={{padding:'10px 22px',borderRadius:7,border:'none',
+          background:salvo?'#27ae60':jaPublicado?'#dde1e7':'#3498db',
+          color:jaPublicado&&!salvo?'#95a5a6':'#fff',
+          fontWeight:700,cursor:jaPublicado?'default':'pointer',fontSize:13}}>
+        {salvo?'✓ Equipe avisada!':salvando?'Publicando...':jaPublicado?'Versão já anunciada':`📢 Anunciar a versão ${APP_VERSAO}`}
+      </button>
+
+      <div style={{fontSize:10,color:'#95a5a6',marginTop:10,lineHeight:1.6}}>
+        Quem estiver com o CRM aberto vê um aviso no rodapé com o botão <strong>Atualizar agora</strong>,
+        que limpa o cache e recarrega. Quem abrir depois já entra na versão nova.
+      </div>
+    </div>
+  );
+}
+
+// --- CONFIG: REGRAS DE NEGÓCIO ------------------------------------------------
+// Documenta as decisões que não são óbvias no código. Serve para a equipe e
+// para quem for alterar o sistema — inclusive numa conversa futura com a IA.
+const AREAS_REGRA=[
+  {id:'cadastro',   label:'Cadastro de cliente', cor:'#3498db'},
+  {id:'financeiro', label:'Financeiro',          cor:'#27ae60'},
+  {id:'produtos',   label:'Produtos e valores',  cor:'#e67e22'},
+  {id:'kanban',     label:'Implantação/Kanban',  cor:'#1abc9c'},
+  {id:'leads',      label:'Leads',               cor:'#e84393'},
+  {id:'orcamento',  label:'Orçamentos',          cor:'#9b59b6'},
+  {id:'sistema',    label:'Sistema/Técnico',     cor:'#7f8c8d'},
+];
+const NIVEIS_REGRA=[
+  {id:'critica',   label:'Crítica',    emoji:'🔴', cor:'#e74c3c', desc:'Quebrar isso causa erro em produção'},
+  {id:'importante',label:'Importante', emoji:'🟡', cor:'#f5a623', desc:'Afeta o processo de trabalho'},
+  {id:'preferencia',label:'Preferência',emoji:'⚪', cor:'#95a5a6', desc:'Padrão visual ou de uso'},
+];
+
+// Regras já descobertas — entram na primeira vez que a tela abre
+const REGRAS_INICIAIS=[
+  {titulo:'Data do 1º vencimento fica no bloco Sistema',
+   area:'financeiro',nivel:'critica',
+   descricao:'Na seção Formas de pagamento, a "Data 1º vencimento" pertence ao bloco do Sistema, junto do valor mensal — é ela que o financeiro usa para gerar a recorrência. Não transformar em campo genérico nem separar da seção. Cadastro e edição precisam ter a mesma estrutura.',
+   ondeAfeta:'NovoForm e DetalheCliente — seção Formas de pagamento'},
+
+  {titulo:'Sistema/mês e Equipamento são calculados, Implantação é manual',
+   area:'produtos',nivel:'critica',
+   descricao:'Sistema/mês = soma dos SERVIÇOS selecionados. Equipamento = soma dos EQUIPAMENTOS selecionados. Implantação é sempre manual (consultoria, avulsos). Preencher Sistema ou Equipamento à mão duplica a cobrança na hora de faturar.',
+   ondeAfeta:'Cadastro, edição do cliente e proposta do lead'},
+
+  {titulo:'Equipamento "sem custo" não gera cobrança',
+   area:'produtos',nivel:'importante',
+   descricao:'Equipamento cadastrado com "Requer pagamento = Não" (Ponto Virtual, Central do Funcionário) entra com valor zero mesmo tendo preço cadastrado. Não soma no total nem pede forma de pagamento.',
+   ondeAfeta:'Seletor de itens, em todas as telas'},
+
+  {titulo:'Piso de venda é o valor promocional',
+   area:'produtos',nivel:'critica',
+   descricao:'Quando o equipamento tem valor promocional cadastrado, ele é o piso — não o preço de custo. Sem promocional, o piso vira o custo. Vender abaixo exige liberação de um admin, que fica registrada no item.',
+   ondeAfeta:'Seletor de itens e itens do orçamento'},
+
+  {titulo:'Faturamento manual não muda o status na hora',
+   area:'financeiro',nivel:'critica',
+   descricao:'Com o Asaas desligado, o botão cria uma solicitação para o financeiro. O cliente só passa a "Faturado" quando essa solicitação for marcada como Resolvida — nunca no momento do clique.',
+   ondeAfeta:'DetalheCliente e Solicitações'},
+
+  {titulo:'Valores travam depois de faturado',
+   area:'financeiro',nivel:'importante',
+   descricao:'Cliente com status "Faturado" tem os valores bloqueados para edição. Alterar preço depois da cobrança emitida gera divergência com o que foi cobrado.',
+   ondeAfeta:'DetalheCliente — Produtos e valores'},
+
+  {titulo:'Nunca declarar componente dentro do render',
+   area:'sistema',nivel:'critica',
+   descricao:'Componente declarado dentro de outro componente faz o React tratá-lo como tipo novo a cada tecla: o input é desmontado e o campo perde o foco. Já aconteceu 3x neste projeto. Sempre extrair para o escopo do módulo.',
+   ondeAfeta:'Todo o App.js'},
+
+  {titulo:'ID do documento vem por último no Firestore',
+   area:'sistema',nivel:'critica',
+   descricao:'Ao montar objetos dos listeners, usar {...d.data(), id:d.id}. Na ordem inversa, um campo "id" salvo dentro do documento mascara o ID real e a edição de um item grava por cima de outro.',
+   ondeAfeta:'Todos os onSnapshot'},
+
+  {titulo:'Publicar functions ao mexer no index.js',
+   area:'sistema',nivel:'importante',
+   descricao:'Alterações em functions/index.js só entram no ar com "firebase deploy --only functions". O git push atualiza apenas o frontend na Vercel. Gatilhos e integrações não funcionam sem esse passo — use o atualizar.bat, que faz os dois na ordem certa.',
+   ondeAfeta:'Deploy'},
+
+  {titulo:'Migração sempre compatível com o dado antigo',
+   area:'sistema',nivel:'critica',
+   descricao:'O sistema está em produção. Antes de mudar formato de campo, garantir que o dado antigo continua sendo lido — converter na exibição em vez de assumir que já está no formato novo.',
+   ondeAfeta:'Todo o sistema'},
+];
+
+function ConfigRegras(){
+  const [regras,setRegras]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [editando,setEditando]=useState(null);
+  const [filtroArea,setFiltroArea]=useState('todas');
+  const [busca,setBusca]=useState('');
+  const [semeando,setSemeando]=useState(false);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'regras_negocio'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setRegras(arr);setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function semear(){
+    if(!window.confirm(`Cadastrar as ${REGRAS_INICIAIS.length} regras já identificadas no sistema?`))return;
+    setSemeando(true);
+    for(let i=0;i<REGRAS_INICIAIS.length;i++){
+      const r=REGRAS_INICIAIS[i];
+      await setDoc(doc(db,'regras_negocio','reg_base_'+i),{
+        ...r,criadoEm:new Date().toISOString(),criadoPor:'Sistema',
+      },{merge:true});
+    }
+    setSemeando(false);
+  }
+
+  async function salvar(r){
+    const id=r.id||'reg_'+Date.now();
+    const {id:_ig,...dados}=r;
+    await setDoc(doc(db,'regras_negocio',id),{
+      ...dados,
+      atualizadoEm:new Date().toISOString(),
+      atualizadoPor:auth.currentUser?.email||'—',
+      ...(r.id?{}:{criadoEm:new Date().toISOString(),criadoPor:auth.currentUser?.email||'—'}),
+    },{merge:true});
+    setEditando(null);
+  }
+  async function remover(r){
+    if(!window.confirm(`Remover a regra "${r.titulo}"?`))return;
+    await deleteDoc(doc(db,'regras_negocio',r.id));
+  }
+
+  // Gera o arquivo para anexar junto do App.js numa conversa com a IA
+  function exportar(){
+    const porArea={};
+    regras.forEach(r=>{(porArea[r.area]=porArea[r.area]||[]).push(r);});
+    const ordem={critica:0,importante:1,preferencia:2};
+    const L=[];
+    L.push('# Regras de negócio — Secullum CRM');
+    L.push('');
+    L.push(`> Gerado em ${new Date().toLocaleString('pt-BR')} · ${regras.length} regra(s)`);
+    L.push('> Leia estas regras ANTES de alterar qualquer parte do sistema.');
+    L.push('> Ao reconstruir um bloco existente, confirme antes se ele tem regra associada.');
+    L.push('');
+    AREAS_REGRA.forEach(a=>{
+      const lista=(porArea[a.id]||[]).sort((x,y)=>(ordem[x.nivel]??9)-(ordem[y.nivel]??9));
+      if(!lista.length)return;
+      L.push(`## ${a.label}`);
+      L.push('');
+      lista.forEach(r=>{
+        const n=NIVEIS_REGRA.find(x=>x.id===r.nivel)||NIVEIS_REGRA[1];
+        L.push(`### ${n.emoji} ${r.titulo}`);
+        L.push('');
+        L.push(r.descricao||'');
+        if(r.ondeAfeta){L.push('');L.push(`**Onde afeta:** ${r.ondeAfeta}`);}
+        L.push('');
+      });
+    });
+    const blob=new Blob([L.join('\n')],{type:'text/markdown;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=`regras-negocio-${new Date().toISOString().slice(0,10)}.md`;a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const filtradas=regras.filter(r=>{
+    if(filtroArea!=='todas'&&r.area!==filtroArea)return false;
+    if(busca){
+      const b=busca.toLowerCase();
+      return (r.titulo||'').toLowerCase().includes(b)||(r.descricao||'').toLowerCase().includes(b);
+    }
+    return true;
+  }).sort((a,b)=>{
+    const o={critica:0,importante:1,preferencia:2};
+    return (o[a.nivel]??9)-(o[b.nivel]??9);
+  });
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando regras...</div>;
+
+  // Formulário
+  if(editando){
+    const r=editando;
+    const up=(k,v)=>setEditando(x=>({...x,[k]:v}));
+    return(
+      <div>
+        <button onClick={()=>setEditando(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,padding:0}}>← Voltar às regras</button>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>Título da regra</label>
+          <input style={fi} value={r.titulo||''} onChange={e=>up('titulo',e.target.value)} placeholder="Ex: Data do 1º vencimento fica no bloco Sistema"/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <label style={lbl}>Área</label>
+            <select style={fi} value={r.area||'cadastro'} onChange={e=>up('area',e.target.value)}>
+              {AREAS_REGRA.map(a=><option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Nível</label>
+            <select style={fi} value={r.nivel||'importante'} onChange={e=>up('nivel',e.target.value)}>
+              {NIVEIS_REGRA.map(n=><option key={n.id} value={n.id}>{n.emoji} {n.label} — {n.desc}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <label style={lbl}>A regra, em linguagem normal</label>
+          <textarea style={{...fi,minHeight:110,resize:'vertical',lineHeight:1.6}} value={r.descricao||''} onChange={e=>up('descricao',e.target.value)}
+            placeholder="Explique o que deve acontecer e por quê. Se houver um erro que já aconteceu, cite — ajuda a entender a importância."/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Onde isso afeta (telas, campos)</label>
+          <input style={fi} value={r.ondeAfeta||''} onChange={e=>up('ondeAfeta',e.target.value)} placeholder="Ex: Cadastro e edição do cliente — seção Formas de pagamento"/>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={()=>salvar(r)} disabled={!(r.titulo||'').trim()}
+            style={{padding:'10px 22px',borderRadius:7,border:'none',background:'#16a085',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            💾 Salvar regra
+          </button>
+          <button onClick={()=>setEditando(null)} style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+        </div>
+      </div>
+    );
+  }
+
+  const contagem={};
+  NIVEIS_REGRA.forEach(n=>contagem[n.id]=regras.filter(r=>r.nivel===n.id).length);
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4,flexWrap:'wrap',gap:8}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#16a085',textTransform:'uppercase'}}>📋 Regras de negócio</div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {regras.length>0&&(
+            <button onClick={exportar}
+              style={{padding:'7px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+              📄 Exportar regras
+            </button>
+          )}
+          <button onClick={()=>setEditando({titulo:'',area:'cadastro',nivel:'importante',descricao:'',ondeAfeta:''})}
+            style={{padding:'7px 16px',borderRadius:7,border:'none',background:'#16a085',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            + Nova regra
+          </button>
+        </div>
+      </div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        As decisões que não são óbvias olhando o código. Use <strong>Exportar regras</strong> e anexe o arquivo
+        junto do App.js quando for pedir alguma alteração — assim nada se perde no caminho.
+      </div>
+
+      {regras.length===0&&(
+        <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:8,padding:'16px',marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:'#276749',marginBottom:6}}>Comece pelas regras já identificadas</div>
+          <div style={{fontSize:11,color:'#276749',marginBottom:12,lineHeight:1.6}}>
+            Durante o desenvolvimento levantamos {REGRAS_INICIAIS.length} regras — data de vencimento, cálculo dos valores,
+            piso de venda, faturamento manual, entre outras. Cadastre todas de uma vez e edite depois o que quiser.
+          </div>
+          <button onClick={semear} disabled={semeando}
+            style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {semeando?'Cadastrando...':`✓ Cadastrar as ${REGRAS_INICIAIS.length} regras`}
+          </button>
+        </div>
+      )}
+
+      {regras.length>0&&(<>
+        {/* Resumo */}
+        <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+          {NIVEIS_REGRA.map(n=>(
+            <div key={n.id} style={{background:n.cor+'12',border:`1px solid ${n.cor}44`,borderRadius:20,padding:'3px 12px',fontSize:11,fontWeight:700,color:n.cor}}>
+              {n.emoji} {n.label}: {contagem[n.id]||0}
+            </div>
+          ))}
+        </div>
+
+        {/* Filtros */}
+        <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
+          <select style={{...fi,width:'auto',fontSize:12}} value={filtroArea} onChange={e=>setFiltroArea(e.target.value)}>
+            <option value="todas">Todas as áreas</option>
+            {AREAS_REGRA.map(a=><option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+          <input style={{...fi,flex:1,minWidth:150,fontSize:12}} value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar nas regras..."/>
+        </div>
+
+        {/* Lista */}
+        {filtradas.length===0&&<div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'16px'}}>Nenhuma regra com este filtro.</div>}
+        {filtradas.map(r=>{
+          const n=NIVEIS_REGRA.find(x=>x.id===r.nivel)||NIVEIS_REGRA[1];
+          const a=AREAS_REGRA.find(x=>x.id===r.area)||AREAS_REGRA[0];
+          return(
+            <div key={r.id} style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:8,border:'1px solid #e8eaed',borderLeft:`4px solid ${n.cor}`}}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:10,marginBottom:6,flexWrap:'wrap'}}>
+                <span style={{fontSize:14,flexShrink:0}}>{n.emoji}</span>
+                <div style={{flex:1,minWidth:150}}>
+                  <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{r.titulo}</div>
+                  <div style={{display:'flex',gap:6,marginTop:3,flexWrap:'wrap'}}>
+                    <span style={{fontSize:9,background:a.cor+'18',color:a.cor,padding:'1px 8px',borderRadius:10,fontWeight:700,textTransform:'uppercase'}}>{a.label}</span>
+                    <span style={{fontSize:9,color:n.cor,fontWeight:700,textTransform:'uppercase'}}>{n.label}</span>
+                  </div>
+                </div>
+                <button onClick={()=>setEditando(r)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,flexShrink:0}}>✏️</button>
+                <button onClick={()=>remover(r)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+              </div>
+              <div style={{fontSize:12,color:'#4a4a4a',lineHeight:1.6,paddingLeft:24}}>{r.descricao}</div>
+              {r.ondeAfeta&&(
+                <div style={{fontSize:10,color:'#95a5a6',marginTop:5,paddingLeft:24}}>
+                  <strong>Onde afeta:</strong> {r.ondeAfeta}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Semear se faltar alguma das iniciais */}
+        {regras.filter(r=>String(r.id).startsWith('reg_base_')).length<REGRAS_INICIAIS.length&&(
+          <button onClick={semear} disabled={semeando}
+            style={{padding:'7px 14px',borderRadius:7,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600,marginTop:6}}>
+            {semeando?'Cadastrando...':'+ Recarregar as regras padrão do sistema'}
+          </button>
+        )}
+      </>)}
+    </div>
+  );
+}
+
 // --- CONFIG: SECULLUM (token + vínculo por CNPJ) ------------------------------
 function ConfigSecullum({todos}){
   const [token,setToken]=useState('');
@@ -3125,8 +3616,8 @@ const LOGO_SIDEBAR_SVG=(
       <line x1="-3.9" y1="3.9" x2="-6.4" y2="6.4" stroke="#f5a623" strokeWidth="2.2" strokeLinecap="round"/>
       <circle cx="0" cy="0" r="3.2" fill="#f5a623"/>
     </g>
-    <text x="28" y="18.5" fontFamily="'Segoe UI',Arial,sans-serif" fontSize="13" fontWeight="300" letterSpacing="0.8" fill="#ffffff">secullum</text>
-    <text x="105" y="18.5" fontFamily="'Segoe UI',Arial,sans-serif" fontSize="12" fontWeight="700" fill="#f5a623"> RH</text>
+    <text x="28" y="18.5" fontFamily="Inter,'Segoe UI',Arial,sans-serif" fontSize="13" fontWeight="300" letterSpacing="0.8" fill="#ffffff">secullum</text>
+    <text x="105" y="18.5" fontFamily="Inter,'Segoe UI',Arial,sans-serif" fontSize="12" fontWeight="700" fill="#f5a623"> RH</text>
   </svg>
 );
 const LOGO_LOGIN_SVG=(
@@ -3142,8 +3633,8 @@ const LOGO_LOGIN_SVG=(
       <line x1="-6" y1="6" x2="-9.9" y2="9.9" stroke="#f5a623" strokeWidth="3.2" strokeLinecap="round"/>
       <circle cx="0" cy="0" r="5" fill="#f5a623"/>
     </g>
-    <text x="44" y="31" fontFamily="'Segoe UI',Arial,sans-serif" fontSize="22" fontWeight="300" letterSpacing="0.5" fill="#2c3e50">secullum</text>
-    <text x="153" y="31" fontFamily="'Segoe UI',Arial,sans-serif" fontSize="17" fontWeight="700" fill="#f5a623">RH</text>
+    <text x="44" y="31" fontFamily="Inter,'Segoe UI',Arial,sans-serif" fontSize="22" fontWeight="300" letterSpacing="0.5" fill="#2c3e50">secullum</text>
+    <text x="153" y="31" fontFamily="Inter,'Segoe UI',Arial,sans-serif" fontSize="17" fontWeight="700" fill="#f5a623">RH</text>
   </svg>
 );
 
@@ -4245,6 +4736,10 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
           </div>
         )}
 
+        {/* ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════
+             A "Data 1º vencimento" fica DENTRO do bloco Sistema. A edição
+             (DetalheCliente) precisa ter exatamente a mesma estrutura.
+             ═════════════════════════════════════════════════════════════════ */}
         {/* Sistema */}
         {parseValor(f.vS)>0&&(
           <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',border:'1px solid #bee3f8'}}>
@@ -4592,6 +5087,10 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
               ✅ Faturado — valores bloqueados
             </span>
           ):null}/>
+        {/* ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════
+             Cliente com status "Faturado" tem os valores TRAVADOS. Alterar
+             preço depois de faturado gera divergência com a cobrança emitida.
+             ═════════════════════════════════════════════════════════════════ */}
         {f.status==='Faturado'&&!editMode&&(
           <div style={{fontSize:11,color:'#7f8c8d',background:'#f8f9fa',borderRadius:6,padding:'8px 12px',marginBottom:10,display:'flex',alignItems:'center',gap:6}}>
             <span>🔒</span> Cliente já faturado. Para editar os valores, altere o status primeiro.
@@ -4726,6 +5225,12 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
           </div>
         )}
 
+        {/* ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════
+             A "Data 1º vencimento" fica DENTRO do bloco Sistema, junto do valor
+             mensal — é ela que o financeiro usa para gerar a recorrência.
+             NÃO transformar em campo genérico nem mover para fora da seção.
+             O cadastro (NovoForm) tem a mesma estrutura: manter os dois iguais.
+             ═════════════════════════════════════════════════════════════════ */}
         {/* Sistema — a data do 1º vencimento pertence a este bloco */}
         {parseValor(f.vS)>0&&(
           <div style={{background:'#ebf8ff',borderRadius:8,padding:'12px',border:'1px solid #bee3f8'}}>
@@ -6263,6 +6768,16 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
       {/* ══ ABA: Sistema ══ */}
       {abaConfig==='sistema'&&<>
+      {/* Versão do sistema */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigVersao/></div>
+      )}
+
+      {/* Regras de negócio */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigRegras/></div>
+      )}
+
       {/* Manutenção de dados */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={sec}><ConfigManutencao/></div>
@@ -9950,7 +10465,7 @@ function ModalNovoLead({onFechar}){
             <label style={lbl}>Observações</label>
             <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
           </div>
-          <textarea style={{...fi,resize:'vertical',minHeight:60}} value={f.obs} onChange={e=>up('obs',e.target.value)}/>
+          <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
         </div>
 
         {erro&&<div style={{fontSize:12,color:'#e74c3c',marginBottom:10}}>{erro}</div>}
@@ -10331,6 +10846,11 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
   const num=v=>numVal(v);
   const total=(itens||[]).reduce((t,i)=>t+num(i.valor)*(parseInt(i.qtd,10)||1),0);
 
+  // ╔═ REGRA DE NEGÓCIO ═════════════════════════════════════════════════════
+  // Equipamento com requerPagamento === false (ex.: Ponto Virtual, Central do
+  // Funcionário) entra com valor ZERO mesmo tendo preço cadastrado, e não
+  // participa do piso de venda nem do total de Equipamento.
+  // ═══════════════════════════════════════════════════════════════════════════
   function add(tipo,ref){
     // Equipamento marcado como "Sem custo" não gera cobrança nem piso
     const semCusto=tipo==='equipamento'&&ref.requerPagamento===false;
@@ -10498,7 +11018,189 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
   );
 }
 
+// --- AGENDAMENTO DE APRESENTAÇÃO (lead) --------------------------------------
+// Fora do render para os campos não perderem foco.
+const LEMBRETES_APRES=[
+  {min:0,   label:'Sem lembrete'},
+  {min:15,  label:'15 minutos antes'},
+  {min:30,  label:'30 minutos antes'},
+  {min:60,  label:'1 hora antes'},
+  {min:120, label:'2 horas antes'},
+  {min:180, label:'3 horas antes'},
+  {min:1440,label:'1 dia antes'},
+];
+function BlocoAgendamentoLead({lead,usuarios}){
+  const [a,setA]=useState({
+    data:lead.apresData||'',
+    hora:lead.apresHora||'',
+    lembrete:lead.apresLembrete??60,
+    responsavelId:lead.apresResponsavelId||'',
+    local:lead.apresLocal||'',
+    obs:lead.apresObs||'',
+  });
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+
+  useEffect(()=>{
+    setA({
+      data:lead.apresData||'',hora:lead.apresHora||'',
+      lembrete:lead.apresLembrete??60,
+      responsavelId:lead.apresResponsavelId||'',
+      local:lead.apresLocal||'',obs:lead.apresObs||'',
+    });
+    setSalvo(false);
+  },[lead.id]);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setA(x=>({...x,[k]:v}));setSalvo(false);};
+  const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
+
+  // Quando falta pouco, mostra a contagem
+  const quando=(()=>{
+    if(!a.data)return null;
+    const dt=new Date(`${a.data}T${a.hora||'00:00'}:00`);
+    if(isNaN(dt.getTime()))return null;
+    const diff=dt.getTime()-Date.now();
+    const dias=Math.floor(Math.abs(diff)/86400000);
+    const horas=Math.floor((Math.abs(diff)%86400000)/3600000);
+    if(diff<0)return {txt:`Passou há ${dias>0?dias+'d ':''}${horas}h`,cor:'#95a5a6',passou:true};
+    if(diff<3600000)return {txt:`Em ${Math.floor(diff/60000)} minutos`,cor:'#e74c3c',passou:false};
+    if(diff<86400000)return {txt:`Hoje, em ${horas}h`,cor:'#f5a623',passou:false};
+    return {txt:`Em ${dias} dia(s)`,cor:'#27ae60',passou:false};
+  })();
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      const resp=elegiveis.find(u=>u.id===a.responsavelId);
+      await setDoc(doc(db,'leads',lead.id),{
+        apresData:a.data,
+        apresHora:a.hora,
+        apresLembrete:Number(a.lembrete)||0,
+        apresResponsavelId:a.responsavelId||'',
+        apresResponsavelNome:resp?(resp.nome||resp.email):'',
+        apresLocal:(a.local||'').toUpperCase(),
+        apresObs:(a.obs||'').toUpperCase(),
+        apresLembreteEnviado:false,   // volta a valer se remarcar
+        atualizadoEm:new Date().toISOString(),
+      },{merge:true});
+      const quandoTxt=a.data?`${new Date(a.data+'T12:00:00').toLocaleDateString('pt-BR')}${a.hora?' às '+a.hora:''}`:'—';
+      await registrarEventoLead(lead,'agendamento',`Apresentação agendada para ${quandoTxt}${resp?' — '+(resp.nome||resp.email):''}`);
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro ao salvar: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function cancelar(){
+    if(!window.confirm('Cancelar o agendamento desta apresentação?'))return;
+    await setDoc(doc(db,'leads',lead.id),{
+      apresData:'',apresHora:'',apresResponsavelId:'',apresResponsavelNome:'',
+      apresLocal:'',apresObs:'',apresLembreteEnviado:false,
+      atualizadoEm:new Date().toISOString(),
+    },{merge:true});
+    await registrarEventoLead(lead,'agendamento','Agendamento de apresentação cancelado');
+    setA({data:'',hora:'',lembrete:60,responsavelId:'',local:'',obs:''});
+  }
+
+  return(
+    <div style={estiloSecao('agenda',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
+      <CabecalhoSecao tipo="agenda" titulo="Agendamento da apresentação" subtitulo="Data, horário e lembrete automático"
+        acao={quando?(
+          <span style={{fontSize:11,fontWeight:700,color:quando.cor,background:quando.cor+'18',border:`1px solid ${quando.cor}44`,padding:'3px 12px',borderRadius:12,whiteSpace:'nowrap'}}>
+            {quando.txt}
+          </span>
+        ):null}/>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+        <div>
+          <label style={lbl}>Data</label>
+          <input style={fi} type="date" value={a.data} onChange={e=>up('data',e.target.value)}/>
+        </div>
+        <div>
+          <label style={lbl}>Horário</label>
+          <input style={fi} type="time" value={a.hora} onChange={e=>up('hora',e.target.value)}/>
+        </div>
+        <div>
+          <label style={lbl}>Lembrar</label>
+          <select style={fi} value={a.lembrete} onChange={e=>up('lembrete',e.target.value)}>
+            {LEMBRETES_APRES.map(l=><option key={l.min} value={l.min}>{l.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+        <div>
+          <label style={lbl}>Quem vai apresentar</label>
+          <select style={fi} value={a.responsavelId} onChange={e=>up('responsavelId',e.target.value)}>
+            <option value="">— Selecione —</option>
+            {elegiveis.map(u=>(
+              <option key={u.id} value={u.id}>{(u.nome||u.email||'').toUpperCase()}{!u.celular?' (sem celular)':''}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Local / forma</label>
+          <input style={{...fi,textTransform:'uppercase'}} value={a.local} onChange={e=>up('local',e.target.value.toUpperCase())} placeholder="PRESENCIAL, GOOGLE MEET, WHATSAPP..."/>
+        </div>
+      </div>
+
+      <div style={{marginBottom:12}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+          <label style={lbl}>Observações da apresentação</label>
+          <BotaoMic onTranscricao={t=>up('obs',(a.obs?(a.obs+'\n\n🎤 TRANSCRIÇÃO: "'):'🎤 TRANSCRIÇÃO: "')+t.toUpperCase()+'"')}/>
+        </div>
+        <textarea style={{...fi,minHeight:60,resize:'vertical',textTransform:'uppercase'}} value={a.obs}
+          onChange={e=>up('obs',e.target.value.toUpperCase())} placeholder="O QUE PRECISA SER PREPARADO, PONTOS A DESTACAR..."/>
+      </div>
+
+      {/* Aviso do lembrete */}
+      {a.data&&Number(a.lembrete)>0&&(
+        <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:7,padding:'9px 12px',marginBottom:12,fontSize:11,color:'#6b21a8',lineHeight:1.6}}>
+          🔔 {a.responsavelId
+            ? <>Quem vai apresentar recebe um aviso no WhatsApp <strong>{LEMBRETES_APRES.find(l=>String(l.min)===String(a.lembrete))?.label.toLowerCase()}</strong>.</>
+            : <>Selecione quem vai apresentar para o lembrete ser enviado.</>}
+          {lead.apresLembreteEnviado&&<span style={{color:'#27ae60',fontWeight:700}}> · Lembrete já enviado</span>}
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando||!a.data}
+          style={{padding:'9px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':salvando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Agendado!':'📅 Salvar agendamento'}
+        </button>
+        {lead.apresData&&(
+          <button onClick={cancelar}
+            style={{padding:'9px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#e74c3c',fontWeight:600}}>
+            Cancelar agendamento
+          </button>
+        )}
+        {a.data&&a.hora&&(
+          <a href={(()=>{
+              const ini=`${a.data.replace(/-/g,'')}T${a.hora.replace(':','')}00`;
+              const dt=new Date(`${a.data}T${a.hora}:00`); dt.setHours(dt.getHours()+1);
+              const fim=`${dt.toISOString().slice(0,10).replace(/-/g,'')}T${String(dt.getHours()).padStart(2,'0')}${String(dt.getMinutes()).padStart(2,'0')}00`;
+              const txt=encodeURIComponent(`Apresentação — ${lead.nome||''}`);
+              const det=encodeURIComponent(`Lead: ${lead.nome||''}\nTelefone: ${lead.telefone||''}\nEmail: ${lead.email||''}\n${a.obs||''}`);
+              return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${txt}&dates=${ini}/${fim}&details=${det}&location=${encodeURIComponent(a.local||'')}`;
+            })()}
+            target="_blank" rel="noopener noreferrer"
+            style={{padding:'9px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',fontSize:12,color:'#4285f4',fontWeight:600,textDecoration:'none'}}>
+            📆 Google Agenda
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- PROPOSTA DO LEAD (plano, serviços e equipamento) ------------------------
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// NUNCA declarar componente dentro do render de outro componente. O React
+// trata como tipo novo a cada tecla, desmonta o input e o campo perde o foco.
+// Já aconteceu 3x neste projeto (CampoDetalhe, PainelLateral, BlocoProposta).
+// Sempre extrair para o escopo do módulo.
+// ═══════════════════════════════════════════════════════════════════════════
 // Componente no escopo do modulo: se ficasse dentro do render, o React
 // remontaria os inputs a cada tecla e o campo perderia o foco.
 function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
@@ -10571,9 +11273,9 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
   }
 
   return(
-    <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+    <div style={estiloSecao('proposta',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>💼 Proposta ao cliente</div>
+        <div style={{fontWeight:700,fontSize:12,color:CORES_SECAO.proposta.cor,textTransform:'uppercase'}}>💼 Proposta ao cliente</div>
         {totalGeral>0&&<div style={{fontSize:12,color:'#7f8c8d'}}>Total: <strong style={{color:'#27ae60',fontSize:14}}>{moeda(totalGeral)}</strong></div>}
       </div>
 
@@ -10633,7 +11335,7 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
   );
 }
 
-function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,equipamentosCad,vendedoresCad,perfil}){
+function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,equipamentosCad,vendedoresCad,perfil,usuarios}){
   const [sel,setSel]=useState(null);
   const [filtroStatus,setFiltroStatus]=useState('todos');
   const [busca,setBusca]=useState('');
@@ -10693,10 +11395,10 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
     return(
       <div>
         <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:16,display:'flex',alignItems:'center',gap:6,padding:0}}>← Voltar</button>
-        <div style={{background:'#fff',borderRadius:10,padding:'20px 24px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+        <div style={estiloSecao('lead',{background:'#fff',borderRadius:10,padding:'20px 24px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:12,marginBottom:14}}>
             <div>
-              <div style={{fontWeight:700,fontSize:18,color:'#2c3e50',marginBottom:4}}>{lead.nome||'—'}</div>
+              <div style={{fontWeight:700,fontSize:18,color:'#2c3e50',marginBottom:4,textTransform:'uppercase'}}>{lead.nome||'—'}</div>
               <div style={{display:'flex',gap:12,flexWrap:'wrap',fontSize:12,color:'#7f8c8d'}}>
                 {lead.email&&<span>✉️ {lead.email}</span>}
                 {lead.telefone&&<span>📞 {lead.telefone}</span>}
@@ -10722,21 +11424,24 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
           </div>
         </div>
         {/* Obs */}
-        <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+        <div style={estiloSecao('dados',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Observações</div>
+            <div style={{fontWeight:700,fontSize:12,color:CORES_SECAO.dados.cor,textTransform:'uppercase'}}>📝 Observações</div>
             <BotaoMic onTranscricao={t=>setObsEdit(prev=>(prev?(prev+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
           </div>
-          <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value)} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="Anotações sobre este lead..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8}}/>
+          <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value.toUpperCase())} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="ANOTAÇÕES SOBRE ESTE LEAD..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8,textTransform:'uppercase'}}/>
           <button onClick={()=>salvarObs(lead)} disabled={salvando} style={{padding:'7px 16px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>{salvando?'Salvando...':'💾 Salvar'}</button>
         </div>
+        {/* Agendamento da apresentação */}
+        <BlocoAgendamentoLead lead={lead} usuarios={usuarios}/>
+
         {/* Proposta: plano, serviços e valores */}
         <BlocoPropostaLead lead={lead} orcServicos={orcServicos} equipamentosCad={equipamentosCad} perfil={perfil}/>
 
         {/* Tempo de resposta + histórico */}
-        <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+        <div style={estiloSecao('historico',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Histórico</div>
+            <div style={{fontWeight:700,fontSize:12,color:CORES_SECAO.historico.cor,textTransform:'uppercase'}}>🕐 Histórico</div>
             {(()=>{
               const ms=tempoRespostaMs(lead);
               if(ms!==null)return(
@@ -10790,7 +11495,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
         {/* WhatsApp */}
         {lead.telefone&&(
-          <div style={{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4',display:'flex',alignItems:'center',gap:12}}>
+          <div style={estiloSecao('contato',{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4',display:'flex',alignItems:'center',gap:12})}>
             <div style={{flex:1}}>
               <div style={{fontWeight:700,fontSize:12,color:'#276749',marginBottom:2}}>Contato via WhatsApp</div>
               <div style={{fontSize:11,color:'#7f8c8d'}}>{lead.nome} • {lead.telefone}</div>
@@ -10892,7 +11597,24 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
               <div key={lead.id} onClick={()=>{setSel(lead);setObsEdit('');}} style={{background:'#fff',borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.06)',cursor:'pointer',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
                 <div style={{width:38,height:38,borderRadius:'50%',background:st.color+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,fontWeight:700,color:st.color,flexShrink:0}}>{(lead.nome||'?')[0].toUpperCase()}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{lead.nome||'Sem nome'}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2,flexWrap:'wrap'}}>
+                    <span style={{fontWeight:700,fontSize:13,color:'#2c3e50',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textTransform:'uppercase'}}>{lead.nome||'SEM NOME'}</span>
+                    {lead.apresData&&(()=>{
+                      const dt=new Date(`${lead.apresData}T${lead.apresHora||'00:00'}:00`);
+                      const dif=dt.getTime()-Date.now();
+                      const hoje=dif>0&&dif<86400000;
+                      const passou=dif<0;
+                      return(
+                        <span title={`Apresentação ${dt.toLocaleString('pt-BR')}`}
+                          style={{fontSize:9,padding:'1px 8px',borderRadius:10,fontWeight:700,whiteSpace:'nowrap',
+                            background:passou?'#f0f0f0':hoje?'#fff8ee':'#faf5ff',
+                            color:passou?'#95a5a6':hoje?'#b45309':'#6b21a8',
+                            border:`1px solid ${passou?'#e0e0e0':hoje?'#fde68a':'#e9d5ff'}`}}>
+                          📅 {dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}{lead.apresHora?' '+lead.apresHora:''}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   <div style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:10,flexWrap:'wrap'}}>
                     {lead.email&&<span>✉️ {lead.email}</span>}
                     {lead.telefone&&<span>📞 {lead.telefone}</span>}
@@ -11195,6 +11917,11 @@ export default function App(){
     }));
     unsubs.push(onSnapshot(collection(db,'usuarios'),snap=>{
       const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      // ╔═ REGRA DE NEGÓCIO ═════════════════════════════════════════════════
+      // Ao montar objetos do Firestore, o id do DOCUMENTO vem por último:
+      // {...d.data(), id:d.id}. Invertido, um campo "id" salvo no documento
+      // mascara o id real e a edição de um item grava por cima de outro.
+      // ═══════════════════════════════════════════════════════════════════════
       // Deduplicar por email — manter o registro mais completo (com uid/status)
       const porEmail={};
       arr.forEach(u=>{
@@ -11406,7 +12133,8 @@ export default function App(){
   const filtroAtivo=busca||filtroAno!=='Todos'||filtroMes!=='Todos'||filtroVendedor!=='Todos'||filtroPlano!=='Todos'||filtroStatus!=='Todos';
 
   return(
-    <div style={{display:'flex',minHeight:'100vh',fontFamily:"'Segoe UI',sans-serif",background:C.bg,fontSize:13}}>
+    <div style={{display:'flex',minHeight:'100vh',fontFamily:FONTE_APP,background:C.bg,fontSize:13}}>
+      <AvisoVersao/>
 
       {mostrarChangelog&&<ModalChangelog changelog={changelogAtual} onFechar={fecharChangelog}/>}
 
@@ -11751,6 +12479,7 @@ export default function App(){
             equipamentosCad={equipamentosCad}
             vendedoresCad={vendedoresCad}
             perfil={perfil}
+            usuarios={usuarios}
             onConverterCliente={converterLeadEmCliente}
             onConverterOrcamento={converterLeadEmOrcamento}
           />}
