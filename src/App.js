@@ -2156,6 +2156,14 @@ const EVENTOS_GATILHO=[
    vars:['cliente','contato','telefone','email','total','vendedor','data','hora']},
   {id:'agendado',          label:'Por horário (relatório)', icone:'⏰', cor:'#e67e22',
    vars:['data','hora']},
+  {id:'reuniao_lembrete',  label:'Lembrete de reunião',     icone:'📅', cor:'#2980b9',
+   vars:['lead','telefone','email','data','hora','minutos_restantes','local','observacoes','solucao','funcionarios','responsavel','link','total_reunioes']},
+];
+// Momentos do lembrete de reunião — cada um tem a própria marca de "já enviei"
+const MOMENTOS_REUNIAO=[
+  {id:'resumo',titulo:'Resumo da manhã',  desc:'No horário escolhido, cada responsável recebe a lista das reuniões dele no dia. Quem não tem reunião não recebe nada.'},
+  {id:'antes', titulo:'Antes da reunião', desc:'Usa o tempo escolhido no campo Lembrete de cada lead (30 min, 1 hora, 1 dia...). Vai só para o responsável.'},
+  {id:'hora',  titulo:'Na hora',          desc:'No horário da reunião, com o link da sala. Para o responsável e, se você ligar abaixo, para o cliente.'},
 ];
 const RELATORIOS_GATILHO=[
   {id:'implantacoes_atrasadas',label:'Implantações atrasadas'},
@@ -2347,6 +2355,8 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
     destino:{tipo:'usuario',valor:[]},
     finalidade:'interno',mensagem:'',ativo:true,usarIA:true,instrucaoIA:'',
     frequencia:'diario',horario:'08:00',diaSemana:1,diaMes:1,relatorio:'',
+    momentos:{resumo:true,antes:true,hora:true},horaResumo:'08:00',
+    gestorId:'',enviarLink:true,avisarCliente:false,
   });
   const [salvando,setSalvando]=useState(false);
   const [erro,setErro]=useState('');
@@ -2360,8 +2370,12 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
 
   const ev=EVENTOS_GATILHO.find(e=>e.id===g.evento)||EVENTOS_GATILHO[0];
   const ehAgendado=g.evento==='agendado';
+  const ehReuniao=g.evento==='reuniao_lembrete';
   const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
   const semCelular=elegiveis.filter(u=>!u.celular);
+  const semSala=elegiveis.filter(u=>!String(u.salaReuniao||'').trim());
+  const momento=(k)=>((g.momentos||{})[k])!==false;
+  const upMomento=(k,v)=>up('momentos',{...(g.momentos||{}),[k]:v});
 
   function inserirVar(v,alvo='mensagem'){
     const campo=refMsg.current;
@@ -2408,10 +2422,16 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
     if(g.usarIA&&!(g.instrucaoIA||'').trim()){setErro('Descreva o que a mensagem deve comunicar.');return;}
     if(!g.usarIA&&!ehAgendado&&!g.mensagem.trim()){setErro('Escreva a mensagem que será enviada.');return;}
     if(!g.usarIA&&ehAgendado&&!g.relatorio&&!g.mensagem.trim()){setErro('Escolha um relatório ou escreva uma mensagem.');return;}
-    const d=g.destino||{};
-    const qtdValor=Array.isArray(d.valor)?d.valor.filter(x=>String(x).trim()).length:(String(d.valor||'').trim()?1:0);
-    const semDestino=(d.tipo==='usuario'||d.tipo==='numero')&&qtdValor===0;
-    if(semDestino){setErro('Escolha para quem a mensagem será enviada.');return;}
+    if(ehReuniao&&!MOMENTOS_REUNIAO.some(m=>((g.momentos||{})[m.id])!==false)){
+      setErro('Marque ao menos um momento para avisar.');return;
+    }
+    // No lembrete de reunião o destinatário vem do agendamento do lead
+    if(!ehReuniao){
+      const d=g.destino||{};
+      const qtdValor=Array.isArray(d.valor)?d.valor.filter(x=>String(x).trim()).length:(String(d.valor||'').trim()?1:0);
+      const semDestino=(d.tipo==='usuario'||d.tipo==='numero')&&qtdValor===0;
+      if(semDestino){setErro('Escolha para quem a mensagem será enviada.');return;}
+    }
     setSalvando(true);
     try{
       const id=g.id||'gat_'+Date.now();
@@ -2433,9 +2453,77 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
       {/* 1 — Quando */}
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:`3px solid ${ev.cor}`}}>
         <div style={{fontSize:10,color:ev.cor,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · Quando disparar</div>
-        <select style={{...fi,marginBottom:ehAgendado?10:0}} value={g.evento} onChange={e=>{up('evento',e.target.value);up('condicoes',[]);}}>
+        <select style={{...fi,marginBottom:(ehAgendado||ehReuniao)?10:0}} value={g.evento} onChange={e=>{up('evento',e.target.value);up('condicoes',[]);}}>
           {EVENTOS_GATILHO.map(e=><option key={e.id} value={e.id}>{e.icone} {e.label}</option>)}
         </select>
+
+        {ehReuniao&&(
+          <div>
+            <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,marginBottom:10}}>
+              Lê os agendamentos feitos na ficha do lead (data, hora, responsável e o tempo de lembrete).
+              Marque abaixo quais avisos quer ligar — cada um dispara uma vez por reunião e volta a valer se você remarcar.
+            </div>
+            {MOMENTOS_REUNIAO.map(m=>(
+              <label key={m.id} style={{display:'flex',alignItems:'flex-start',gap:9,padding:'9px 11px',borderRadius:7,cursor:'pointer',marginBottom:6,
+                background:momento(m.id)?'#ebf8ff':'#fff',border:`1px solid ${momento(m.id)?'#bee3f8':'#e8eaed'}`}}>
+                <input type="checkbox" checked={momento(m.id)} onChange={()=>upMomento(m.id,!momento(m.id))} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+                <div>
+                  <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{m.titulo}</div>
+                  <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.55,marginTop:2}}>{m.desc}</div>
+                </div>
+              </label>
+            ))}
+
+            {momento('resumo')&&(
+              <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:8,marginTop:8}}>
+                <div>
+                  <label style={lbl}>Hora do resumo</label>
+                  <select style={fi} value={g.horaResumo||'08:00'} onChange={e=>up('horaResumo',e.target.value)}>
+                    {Array.from({length:48},(_,i)=>`${String(Math.floor(i/2)).padStart(2,'0')}:${i%2===0?'00':'30'}`)
+                      .map(h=><option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>Gestor que recebe a agenda completa</label>
+                  <select style={fi} value={g.gestorId||''} onChange={e=>up('gestorId',e.target.value)}>
+                    <option value="">— Ninguém, cada um recebe só as suas —</option>
+                    {elegiveis.filter(u=>u.celular).map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'9px 11px',borderRadius:7,cursor:'pointer',marginTop:8,
+              background:g.enviarLink!==false?'#f0fff4':'#fff',border:`1px solid ${g.enviarLink!==false?'#9ae6b4':'#e8eaed'}`}}>
+              <input type="checkbox" checked={g.enviarLink!==false} onChange={()=>up('enviarLink',g.enviarLink===false)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+              <div>
+                <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>Enviar o link da sala</div>
+                <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.55,marginTop:2}}>
+                  Usa a sala fixa cadastrada em cada usuário, ou o link específico da reunião quando preenchido na ficha do lead.
+                  {semSala.length>0&&<span style={{color:'#e67e22',fontWeight:700,display:'block',marginTop:3}}>
+                    ⚠ Sem sala cadastrada: {semSala.map(u=>u.nome||u.email).join(', ')} — o aviso vai sem link.
+                  </span>}
+                </div>
+              </div>
+            </label>
+
+            {momento('hora')&&(
+              <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'9px 11px',borderRadius:7,cursor:'pointer',marginTop:6,
+                background:g.avisarCliente?'#fff8ee':'#fff',border:`1px solid ${g.avisarCliente?'#fde68a':'#e8eaed'}`}}>
+                <input type="checkbox" checked={!!g.avisarCliente} onChange={()=>up('avisarCliente',!g.avisarCliente)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+                <div>
+                  <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>Avisar também o cliente na hora</div>
+                  <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.55,marginTop:2}}>
+                    Manda o link para o próprio cliente no horário da reunião.
+                    <strong style={{color:'#b45309',display:'block',marginTop:3}}>
+                      Só chega se ele te respondeu nas últimas 24 horas — é regra da Meta. Fora disso a mensagem falha e fica registrada no log.
+                    </strong>
+                  </div>
+                </div>
+              </label>
+            )}
+          </div>
+        )}
 
         {ehAgendado&&(
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
@@ -2477,7 +2565,7 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
       </div>
 
       {/* 2 — Condições */}
-      {!ehAgendado&&(
+      {!ehAgendado&&!ehReuniao&&(
         <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:'3px solid #95a5a6'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:6}}>
             <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>2 · Condições (opcional)</div>
@@ -2503,6 +2591,22 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
       )}
 
       {/* 3 — Para quem */}
+      {ehReuniao?(
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:'3px solid #25D366'}}>
+          <div style={{fontSize:10,color:'#25D366',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>3 · Para quem enviar</div>
+          <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginBottom:10}}>
+            Aqui o destinatário é automático: cada aviso vai para o <strong>responsável escolhido no agendamento do lead</strong>.
+            {g.gestorId&&momento('resumo')&&<> O gestor recebe a agenda completa no resumo da manhã.</>}
+            {g.avisarCliente&&momento('hora')&&<> O cliente também recebe o aviso na hora.</>}
+          </div>
+          <div style={{maxWidth:280}}>
+            <label style={lbl}>Enviar pelo número</label>
+            <select style={fi} value={g.finalidade||'comercial'} onChange={e=>up('finalidade',e.target.value)}>
+              {FINALIDADES_WA.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
+          </div>
+        </div>
+      ):(
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:10,borderLeft:'3px solid #25D366'}}>
         <div style={{fontSize:10,color:'#25D366',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>3 · Para quem enviar</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
@@ -2581,6 +2685,7 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
           </div>
         )}
       </div>
+      )}
 
       {/* 4 — Mensagem */}
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:12,borderLeft:'3px solid #8e44ad'}}>
@@ -5485,6 +5590,8 @@ function UsuariosLista({usuarios,currentUser}){
   const [savedNome,setSavedNome]=useState(null);
   const [editandoCel,setEditandoCel]=useState(null);
   const [novoCel,setNovoCel]=useState('');
+  const [editandoSala,setEditandoSala]=useState(null);
+  const [novaSala,setNovaSala]=useState('');
 
   const ehOProprio=uid=>uid===currentUser?.id||uid===currentUser?.uid;
 
@@ -5513,6 +5620,17 @@ function UsuariosLista({usuarios,currentUser}){
       await setDoc(doc(db,'usuarios',u.id),{celular:novoCel.trim()},{merge:true});
     }catch(e){alert('Erro ao salvar o celular: '+e.message);}
     setEditandoCel(null);
+  }
+
+  // Sala fixa de reunião — vai no lembrete quando não há link específico no lead
+  async function salvarSala(u){
+    if(!u?.id){alert('Registro sem identificador válido.');setEditandoSala(null);return;}
+    const link=novaSala.trim();
+    if(link&&!/^https?:\/\//i.test(link)){alert('O link precisa começar com https://');return;}
+    try{
+      await setDoc(doc(db,'usuarios',u.id),{salaReuniao:link},{merge:true});
+    }catch(e){alert('Erro ao salvar a sala: '+e.message);}
+    setEditandoSala(null);
   }
 
   async function salvarPerfil(u){
@@ -5721,6 +5839,34 @@ function UsuariosLista({usuarios,currentUser}){
                     }}
                     title="Editar celular para avisos por WhatsApp"
                     style={{background:'none',border:'none',cursor:'pointer',color:'#25D366',fontSize:10,padding:'0 2px'}}>✏️</button>
+                </>
+              )}
+            </div>
+            {/* Sala de reunião — link fixo enviado nos lembretes de reunião */}
+            <div style={{fontSize:11,color:'#95a5a6',display:'flex',alignItems:'center',gap:5,marginTop:1}}>
+              {editandoSala===u.id?(
+                <>
+                  <span>🎥</span>
+                  <input autoFocus value={novaSala}
+                    onChange={e=>setNovaSala(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter')salvarSala(u);if(e.key==='Escape')setEditandoSala(null);}}
+                    placeholder="https://meet.google.com/abc-defg-hij"
+                    style={{padding:'3px 7px',borderRadius:5,border:'1.5px solid #2980b9',fontSize:11,width:240,outline:'none'}}/>
+                  <button onClick={()=>salvarSala(u)} style={{padding:'3px 9px',borderRadius:5,border:'none',background:'#2980b9',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:10}}>✓</button>
+                  <button onClick={()=>setEditandoSala(null)} style={{padding:'3px 7px',borderRadius:5,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#95a5a6'}}>✕</button>
+                </>
+              ):(
+                <>
+                  <span>🎥</span>
+                  <span style={{color:u.salaReuniao?'#7f8c8d':'#b2bec3',maxWidth:260,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {u.salaReuniao||'sem sala de reunião'}
+                  </span>
+                  <button onClick={()=>{
+                      if(!u.id){alert('Registro sem identificador — não é possível editar.');return;}
+                      setEditandoSala(u.id);setNovaSala(u.salaReuniao||'');setEditandoNome(null);setEditandoCel(null);
+                    }}
+                    title="Link fixo da sala usado nos lembretes de reunião"
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#2980b9',fontSize:10,padding:'0 2px'}}>✏️</button>
                 </>
               )}
             </div>
@@ -11370,10 +11516,49 @@ function NovaCampanha({leads,onFechar}){
   const [templates,setTemplates]=useState([]);
   const [mostrarCuidados,setMostrarCuidados]=useState(false);
   const [salvando,setSalvando]=useState(false);
+  const [iaSugestoes,setIaSugestoes]=useState([]);
+  const [iaGerando,setIaGerando]=useState(false);
+  const refTexto=useRef(null);
 
   const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
   const up=(k,v)=>setC(x=>({...x,[k]:v}));
+
+  // Insere a variável na posição do cursor da caixa de mensagem
+  function inserirVarTexto(n){
+    const campo=refTexto.current;
+    const t=c.texto||'';
+    const marca='{{'+n+'}}';
+    if(!campo){up('texto',t+marca);return;}
+    const i=campo.selectionStart??t.length, j=campo.selectionEnd??t.length;
+    const novo=t.slice(0,i)+marca+t.slice(j);
+    up('texto',novo);
+    setTimeout(()=>{campo.focus();campo.selectionStart=campo.selectionEnd=i+marca.length;},0);
+  }
+
+  // Ajuda de IA: 'melhorar' refina o rascunho, 'sugerir' cria 3 versões
+  async function pedirIACampanha(acao){
+    if(acao==='melhorar'&&!c.texto.trim()){alert('Escreva um rascunho da mensagem primeiro.');return;}
+    setIaGerando(true);setIaSugestoes([]);
+    try{
+      const publico=[
+        c.filtroStatus!=='todos'?`leads com status "${c.filtroStatus}"`:'',
+        c.filtroOrigem!=='todas'?`origem ${c.filtroOrigem}`:'',
+        c.filtroPorte!=='todos'?`porte ${c.filtroPorte}`:'',
+      ].filter(Boolean).join(', ');
+      const r=await fetch(`${FUNCTIONS_URL}/iaSugerirTemplate`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          acao,rascunho:c.texto,objetivo:c.nome,publico,
+          formato:'campanha',quantidade:acao==='melhorar'?1:3,
+        }),
+      });
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else setIaSugestoes(d.versoes||[]);
+    }catch(e){alert('Erro: '+e.message);}
+    setIaGerando(false);
+  }
 
   useEffect(()=>{
     fetch(`${FUNCTIONS_URL}/datafyTemplates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'listar'})})
@@ -11537,9 +11722,53 @@ function NovaCampanha({leads,onFechar}){
         ):(
           <div>
             <label style={lbl}>Mensagem</label>
-            <textarea style={{...fi,minHeight:90,resize:'vertical',lineHeight:1.6}} value={c.texto} onChange={e=>up('texto',e.target.value)}
+            <textarea ref={refTexto} style={{...fi,minHeight:90,resize:'vertical',lineHeight:1.6}} value={c.texto} onChange={e=>up('texto',e.target.value)}
               placeholder={'Oi! 😊\n\nEstamos com condição especial este mês...'}/>
-            <div style={{fontSize:10,color:'#95a5a6',marginTop:4}}>Variáveis disponíveis: primeiro_nome · nome · solucao · funcionarios</div>
+
+            <div style={{display:'flex',alignItems:'center',gap:5,marginTop:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:10,color:'#95a5a6'}}>Variáveis (clique para inserir):</span>
+              {[
+                {n:'primeiro_nome',l:'Primeiro nome'},
+                {n:'nome',l:'Nome completo'},
+                {n:'solucao',l:'Solução buscada'},
+                {n:'funcionarios',l:'Nº funcionários'},
+              ].map(v=>(
+                <button key={v.n} onClick={()=>inserirVarTexto(v.n)} title={v.l}
+                  style={{padding:'3px 9px',borderRadius:12,border:'1px solid #d6bcfa',background:'#faf5ff',cursor:'pointer',fontSize:10,color:'#6b21a8',fontWeight:700,fontFamily:'monospace'}}>
+                  {'{{'+v.n+'}}'}
+                </button>
+              ))}
+            </div>
+
+            <div style={{display:'flex',alignItems:'center',gap:6,marginTop:8,flexWrap:'wrap'}}>
+              <button onClick={()=>pedirIACampanha('melhorar')} disabled={iaGerando}
+                style={{padding:'7px 14px',borderRadius:7,border:'1px solid #8e44ad',background:iaGerando?'#ecf0f1':'#fff',color:iaGerando?'#95a5a6':'#8e44ad',cursor:iaGerando?'default':'pointer',fontSize:11,fontWeight:700}}>
+                ✨ Melhorar meu texto
+              </button>
+              <button onClick={()=>pedirIACampanha('sugerir')} disabled={iaGerando}
+                style={{padding:'7px 14px',borderRadius:7,border:'none',background:iaGerando?'#dde1e7':'#8e44ad',color:'#fff',cursor:iaGerando?'default':'pointer',fontSize:11,fontWeight:700}}>
+                💡 Sugerir 3 versões
+              </button>
+              {iaGerando&&<span style={{fontSize:11,color:'#8e44ad'}}>Gerando com IA...</span>}
+            </div>
+
+            {iaSugestoes.length>0&&(
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:10,color:'#6b21a8',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>Sugestões da IA — clique para usar</div>
+                {iaSugestoes.map((s,i)=>(
+                  <div key={i} style={{background:'#faf5ff',border:'1px solid #e9d8fd',borderRadius:7,padding:'10px 12px',marginBottom:6}}>
+                    <div style={{fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.6,marginBottom:8}}>{s}</div>
+                    <div style={{display:'flex',gap:6}}>
+                      <button onClick={()=>{up('texto',s);setIaSugestoes([]);setTimeout(()=>refTexto.current?.focus(),0);}}
+                        style={{padding:'5px 13px',borderRadius:6,border:'none',background:'#8e44ad',color:'#fff',cursor:'pointer',fontSize:11,fontWeight:700}}>
+                        ✓ Usar este texto
+                      </button>
+                      <span style={{fontSize:10,color:'#95a5a6',alignSelf:'center'}}>{s.length} caracteres</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {c.tipo==='imagem'&&(
               <div style={{marginTop:10}}>
@@ -11795,6 +12024,236 @@ const AUTONOMIAS_IA=[
    desc:'Conduz a conversa comercial, sugere a melhor solução e propõe horário de apresentação.'},
 ];
 
+// ─── SEÇÃO DE PREÇOS ─────────────────────────────────────────────────────────
+// Fonte única de valores para a IA. Fica em config/precos.
+// A prévia mostra exatamente o texto que o backend monta e envia no prompt,
+// então o que você lê aqui é o que a IA lê lá.
+
+// Fora do SecaoPrecos de propósito: componente declarado dentro do render vira
+// um tipo novo a cada tecla e o React remonta os inputs, fazendo perder o foco.
+function BlocoPreco({titulo,ajuda,children}){
+  return(
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:2}}>{titulo}</div>
+      <div style={{fontSize:10,color:'#95a5a6',marginBottom:7}}>{ajuda}</div>
+      {children}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEÇÃO DE PREÇOS — amarrada nos cadastros do orçamento
+//
+// A IA não tem tabela de preços própria. Ela lê o MESMO cadastro do orçamento:
+//   Configurações > Orçamento > Serviços  → planos, licenças, escala de func.
+//   Configurações > Equipamentos          → EVO 40, EVO 45 e afins
+//
+// Aqui você só marca o que ela pode falar. Nenhum valor é copiado: mudou o
+// preço lá — ou entrou promoção — a IA passa a falar o valor novo na hora.
+// O preço de custo nunca vai para a IA.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function LinhaPreco({ativo,onToggle,nome,desc,valor,selo,corSelo,riscado}){
+  return(
+    <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'8px 10px',borderRadius:6,cursor:'pointer',
+      background:ativo?'#f0fff4':'#fff',border:`1px solid ${ativo?'#9ae6b4':'#e8eaed'}`,marginBottom:5}}>
+      <input type="checkbox" checked={ativo} onChange={onToggle} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{nome}</span>
+          {selo&&<span style={{fontSize:9,fontWeight:700,color:'#fff',background:corSelo||'#e67e22',padding:'1px 7px',borderRadius:9}}>{selo}</span>}
+        </div>
+        {desc&&<div style={{fontSize:10,color:'#95a5a6',marginTop:2}}>{desc}</div>}
+      </div>
+      <span style={{fontSize:12,fontWeight:700,color:ativo?'#27ae60':'#b2bec3',flexShrink:0,textDecoration:riscado?'line-through':'none'}}>{valor}</span>
+    </label>
+  );
+}
+
+function SecaoPrecos({legado}){
+  const [servicos,setServicos]=useState([]);
+  const [equipamentos,setEquipamentos]=useState([]);
+  const [r,setR]=useState({servicosLiberados:[],equipamentosLiberados:[],negociar:false,condicoes:'',observacoes:''});
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [verPrompt,setVerPrompt]=useState(false);
+
+  const fi={padding:'7px 9px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setR(x=>({...x,[k]:v}));setSalvo(false);};
+  const toggle=(k,id)=>{
+    const atual=r[k]||[];
+    up(k,atual.includes(id)?atual.filter(x=>x!==id):[...atual,id]);
+  };
+
+  useEffect(()=>{
+    const u1=onSnapshot(doc(db,'config','precos'),d=>{
+      if(d.exists())setR(x=>({...x,...d.data()}));
+      setCarregando(false);
+    });
+    const u2=onSnapshot(collection(db,'orc_servicos'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setServicos(a.sort((x,y)=>numVal(x.valor)-numVal(y.valor)));
+    });
+    const u3=onSnapshot(collection(db,'equipamentos'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setEquipamentos(a.sort((x,y)=>equipValorVigente(x)-equipValorVigente(y)));
+    });
+    return()=>{u1();u2();u3();};
+  },[]);
+
+  const money=v=>'R$ '+Number(numVal(v)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Espelha precosParaPrompt() do index.js — o que você lê aqui é o que a IA lê lá
+  function textoPrompt(){
+    const l=[];
+    const sv=servicos.filter(s=>(r.servicosLiberados||[]).includes(s.id));
+    if(sv.length){
+      l.push('Planos e serviços (mensalidade do sistema):');
+      sv.forEach(s=>l.push(`- ${s.nome}: ${money(s.valor)}${s.descricao?` — ${s.descricao}`:''}`));
+    }
+    const eq=equipamentos.filter(e=>(r.equipamentosLiberados||[]).includes(e.id));
+    if(eq.length){
+      l.push('','Equipamentos (valor único, à parte da mensalidade):');
+      eq.forEach(e=>{
+        if(e.requerPagamento===false){l.push(`- ${e.nome}: sem custo`);return;}
+        const piso=r.negociar&&equipPisoVenda(e)>0
+          ? ` [piso interno: ${money(equipPisoVenda(e))} — NUNCA revele este número ao cliente]`:'';
+        l.push(`- ${e.nome}: ${money(equipValorVigente(e))}${equipEmPromocao(e)?' (promoção vigente)':''}${piso}`);
+      });
+    }
+    if(r.condicoes)l.push('','Condições de pagamento:',r.condicoes);
+    if(r.observacoes)l.push('',r.observacoes);
+    if(!l.length)return '';
+    l.push('','REGRAS SOBRE VALORES (siga à risca):',
+      '- Informe apenas os valores exatos escritos acima. Nunca calcule, estime nem arredonde.',
+      '- Se perguntarem um valor que não está aqui, diga que vai confirmar com o consultor. Nunca chute.',
+      r.negociar
+        ? '- Você pode negociar até o piso interno indicado, mas nunca diga que existe um piso nem revele o número. Abaixo dele, só com um consultor.'
+        : '- Nunca conceda desconto, parcelamento ou condição fora do que está escrito. Se insistirem, ofereça chamar um consultor em vez de negociar.');
+    return l.join('\n');
+  }
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','precos'),{...r,atualizadoEm:new Date().toISOString(),atualizadoPor:auth.currentUser?.email||'—'},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  const nServ=(r.servicosLiberados||[]).length;
+  const nEquip=(r.equipamentosLiberados||[]).length;
+  const vazio=nServ===0&&nEquip===0;
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando preços...</div>;
+
+  return(
+    <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #27ae60'}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+        <div style={{fontSize:10,color:'#27ae60',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>💰 Preços que a IA pode informar</div>
+        <div style={{flex:1}}/>
+        <button onClick={()=>setVerPrompt(!verPrompt)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:11,fontWeight:600}}>
+          {verPrompt?'Ocultar':'Ver o que a IA lê'}
+        </button>
+      </div>
+
+      <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:7,padding:'11px 13px',marginBottom:14,fontSize:11,color:'#2b6cb0',lineHeight:1.7}}>
+        <strong>Os preços não são cadastrados aqui.</strong> Esta tela lê o mesmo cadastro que o orçamento usa:
+        os planos e a escala de funcionários vêm de <strong>Configurações › Orçamento › Serviços</strong> e os relógios
+        de <strong>Configurações › Equipamentos</strong>.<br/>
+        Aqui você só marca <em>o que</em> a IA pode falar. Mudou o valor lá, ou entrou uma promoção,
+        a IA já passa a oferecer o valor novo — sem cadastrar duas vezes e sem risco de ficar desencontrado.
+        O preço de custo nunca é enviado para a IA.
+      </div>
+
+      {legado&&vazio&&(
+        <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:6,padding:'9px 11px',marginBottom:12,fontSize:11,color:'#b45309',lineHeight:1.6}}>
+          Existe uma tabela antiga em texto livre, ainda em uso porque nada foi liberado abaixo. Ela para de valer assim que você marcar o primeiro item.
+          <div style={{whiteSpace:'pre-wrap',fontFamily:'monospace',fontSize:10,marginTop:6,color:'#7f8c8d'}}>{legado}</div>
+        </div>
+      )}
+
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:2}}>Planos e serviços ({nServ} de {servicos.length} liberados)</div>
+        <div style={{fontSize:10,color:'#95a5a6',marginBottom:7}}>Vem de Configurações › Orçamento › Serviços. Para fazer promoção, mude o valor lá.</div>
+        {servicos.length===0
+          ?<div style={{fontSize:11,color:'#e67e22',padding:'8px 0'}}>Nenhum serviço cadastrado ainda. Cadastre em Configurações › Orçamento › Serviços.</div>
+          :servicos.map(s=>(
+            <LinhaPreco key={s.id} ativo={(r.servicosLiberados||[]).includes(s.id)}
+              onToggle={()=>toggle('servicosLiberados',s.id)}
+              nome={s.nome} desc={s.descricao} valor={money(s.valor)}/>
+          ))}
+      </div>
+
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:2}}>Equipamentos ({nEquip} de {equipamentos.length} liberados)</div>
+        <div style={{fontSize:10,color:'#95a5a6',marginBottom:7}}>Vem de Configurações › Equipamentos. A promoção vigente entra sozinha no lugar do preço de venda.</div>
+        {equipamentos.length===0
+          ?<div style={{fontSize:11,color:'#e67e22',padding:'8px 0'}}>Nenhum equipamento cadastrado ainda.</div>
+          :equipamentos.map(e=>{
+            const promo=equipEmPromocao(e);
+            const semCusto=e.requerPagamento===false;
+            return(
+              <LinhaPreco key={e.id} ativo={(r.equipamentosLiberados||[]).includes(e.id)}
+                onToggle={()=>toggle('equipamentosLiberados',e.id)}
+                nome={e.nome}
+                desc={promo?`Promoção ${fmtPeriodoPromo(e)} — de ${money(e.precoVenda)}`:''}
+                valor={semCusto?'sem custo':money(equipValorVigente(e))}
+                selo={promo?'PROMO':''} corSelo="#e74c3c"/>
+            );
+          })}
+      </div>
+
+      <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'11px 13px',borderRadius:7,cursor:'pointer',marginBottom:14,
+        background:r.negociar?'#fff5f5':'#fff',border:`1px solid ${r.negociar?'#feb2b2':'#e8eaed'}`}}>
+        <input type="checkbox" checked={!!r.negociar} onChange={()=>up('negociar',!r.negociar)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+        <div>
+          <div style={{fontWeight:700,fontSize:12,color:r.negociar?'#c53030':'#2c3e50'}}>Deixar a IA negociar até o piso</div>
+          <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.6,marginTop:2}}>
+            Usa o mesmo piso do orçamento: valor promocional quando existe, senão o preço de custo.
+            A IA recebe a instrução de nunca revelar o número. Abaixo do piso continua exigindo consultor.
+            {r.negociar&&<strong style={{color:'#c53030',display:'block',marginTop:3}}>Ligado: o piso de cada equipamento liberado vai para o prompt.</strong>}
+          </div>
+        </div>
+      </label>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Condições de pagamento</label>
+        <textarea style={{...fi,minHeight:52,resize:'vertical',lineHeight:1.6}} value={r.condicoes||''} onChange={e=>up('condicoes',e.target.value)}
+          placeholder="Boleto, Pix ou cartão. Equipamento em até 3x sem juros."/>
+      </div>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Observações (opcional)</label>
+        <textarea style={{...fi,minHeight:52,resize:'vertical',lineHeight:1.6}} value={r.observacoes||''} onChange={e=>up('observacoes',e.target.value)}
+          placeholder="Sem fidelidade. Teste de 15 dias sem compromisso."/>
+      </div>
+
+      {verPrompt&&(
+        <div style={{background:'#2d3748',borderRadius:7,padding:'12px 14px',marginBottom:12}}>
+          <div style={{fontSize:9,color:'#a0aec0',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Texto exato enviado para a IA</div>
+          <pre style={{margin:0,whiteSpace:'pre-wrap',fontSize:11,color:'#e2e8f0',lineHeight:1.6,fontFamily:'monospace'}}>
+            {textoPrompt()||'(vazio — a IA não vai receber nenhum valor)'}
+          </pre>
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'8px 20px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#27ae60',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>
+          {salvando?'Salvando...':'Salvar o que a IA pode informar'}
+        </button>
+        {salvo&&<span style={{fontSize:11,color:'#27ae60',fontWeight:600}}>✓ Salvo</span>}
+        {vazio&&!legado&&<span style={{fontSize:11,color:'#e67e22'}}>Nada liberado — a IA não vai falar de valores.</span>}
+      </div>
+    </div>
+  );
+}
+
+
 function AbaAtendimentoIA({usuarios}){
   const [c,setC]=useState({
     ativo:false,autonomia:'basico',personalidade:'',tabelaPrecos:'',
@@ -11877,15 +12336,14 @@ function AbaAtendimentoIA({usuarios}){
         </div>
       </div>
 
-      {c.autonomia!=='basico'&&(
-        <div style={{marginBottom:12}}>
-          <label style={lbl}>Tabela de preços que a IA pode informar</label>
-          <textarea style={{...fi,minHeight:100,resize:'vertical',fontFamily:'monospace',fontSize:12,lineHeight:1.6}}
-            value={c.tabelaPrecos} onChange={e=>up('tabelaPrecos',e.target.value)}
-            placeholder={'Licença mensal Ponto Web:\n- Até 10 funcionários: R$ 89,90\n- Até 15: R$ 99,90\n- Até 20: R$ 129,90\n\nRelógio facial EVO 40: R$ 1.150,00'}/>
-          <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>A IA só usa o que está escrito aqui. Fora disso, ela encaminha para um consultor.</div>
-        </div>
-      )}
+      {c.autonomia==='basico'
+        ?(
+          <div style={{background:'#f8f9fa',border:'1px dashed #dde1e7',borderRadius:8,padding:'12px 14px',marginBottom:12,fontSize:11,color:'#7f8c8d',lineHeight:1.6}}>
+            🔒 No nível <strong>Tira dúvidas</strong> a IA não recebe nenhum valor — a seção de preços fica fora do prompt.
+            Suba para <strong>Informa preços</strong> se quiser que ela fale de valores.
+          </div>
+        )
+        :<SecaoPrecos legado={c.tabelaPrecos}/>}
 
       <div style={{marginBottom:12}}>
         <label style={lbl}>Orientações da empresa (opcional)</label>
@@ -12581,6 +13039,7 @@ function BlocoAgendamentoLead({lead,usuarios}){
     responsavelId:lead.apresResponsavelId||'',
     local:lead.apresLocal||'',
     obs:lead.apresObs||'',
+    link:lead.apresLink||'',
   });
   const [salvando,setSalvando]=useState(false);
   const [salvo,setSalvo]=useState(false);
@@ -12591,6 +13050,7 @@ function BlocoAgendamentoLead({lead,usuarios}){
       lembrete:lead.apresLembrete??60,
       responsavelId:lead.apresResponsavelId||'',
       local:lead.apresLocal||'',obs:lead.apresObs||'',
+      link:lead.apresLink||'',
     });
     setSalvo(false);
   },[lead.id]);
@@ -12626,7 +13086,10 @@ function BlocoAgendamentoLead({lead,usuarios}){
         apresResponsavelNome:resp?(resp.nome||resp.email):'',
         apresLocal:(a.local||'').toUpperCase(),
         apresObs:(a.obs||'').toUpperCase(),
-        apresLembreteEnviado:false,   // volta a valer se remarcar
+        apresLink:(a.link||'').trim(),
+        // Remarcou? Os três avisos voltam a valer
+        apresLembreteEnviado:false,
+        apresAvisoHoraEnviado:false,
         atualizadoEm:new Date().toISOString(),
       },{merge:true});
       const quandoTxt=a.data?`${new Date(a.data+'T12:00:00').toLocaleDateString('pt-BR')}${a.hora?' às '+a.hora:''}`:'—';
@@ -12640,11 +13103,12 @@ function BlocoAgendamentoLead({lead,usuarios}){
     if(!window.confirm('Cancelar o agendamento desta apresentação?'))return;
     await setDoc(doc(db,'leads',lead.id),{
       apresData:'',apresHora:'',apresResponsavelId:'',apresResponsavelNome:'',
-      apresLocal:'',apresObs:'',apresLembreteEnviado:false,
+      apresLocal:'',apresObs:'',apresLink:'',
+      apresLembreteEnviado:false,apresAvisoHoraEnviado:false,
       atualizadoEm:new Date().toISOString(),
     },{merge:true});
     await registrarEventoLead(lead,'agendamento','Agendamento de apresentação cancelado');
-    setA({data:'',hora:'',lembrete:60,responsavelId:'',local:'',obs:''});
+    setA({data:'',hora:'',lembrete:60,responsavelId:'',local:'',obs:'',link:''});
   }
 
   return(
@@ -12688,6 +13152,28 @@ function BlocoAgendamentoLead({lead,usuarios}){
           <input style={{...fi,textTransform:'uppercase'}} value={a.local} onChange={e=>up('local',e.target.value.toUpperCase())} placeholder="PRESENCIAL, GOOGLE MEET, WHATSAPP..."/>
         </div>
       </div>
+
+      {/* Link da reunião — vazio usa a sala fixa do responsável */}
+      {(()=>{
+        const resp=elegiveis.find(u=>u.id===a.responsavelId);
+        const salaFixa=String(resp?.salaReuniao||'').trim();
+        return(
+          <div style={{marginBottom:12}}>
+            <label style={lbl}>Link desta reunião (opcional)</label>
+            <input style={fi} value={a.link} onChange={e=>up('link',e.target.value)}
+              placeholder={salaFixa?`Vazio = usa a sala de ${(resp.nome||resp.email).split(' ')[0]}`:'https://meet.google.com/...'}/>
+            <div style={{fontSize:10,color:salaFixa?'#27ae60':'#e67e22',marginTop:3,lineHeight:1.5}}>
+              {a.link.trim()
+                ? 'Este link será enviado nos lembretes desta reunião.'
+                : salaFixa
+                  ? `Será enviada a sala fixa de ${(resp.nome||resp.email)}: ${salaFixa}`
+                  : resp
+                    ? `${(resp.nome||resp.email)} ainda não tem sala cadastrada — o lembrete vai sem link. Cadastre em Configurações › Usuários.`
+                    : 'Escolha o responsável para saber qual sala será enviada.'}
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{marginBottom:12}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>

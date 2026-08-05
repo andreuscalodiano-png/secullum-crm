@@ -1720,115 +1720,336 @@ exports.secullumSincronizar = functions.https.onRequest(async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LEMBRETE DE APRESENTAÇÃO — avisa quem vai apresentar, X minutos antes
+// LEMBRETES DE REUNIÃO — três momentos, configurados por gatilho
 //
-// Roda a cada 5 minutos. Para cada lead com apresentação marcada, verifica se
-// já entrou na janela do lembrete e envia uma única vez (apresLembreteEnviado).
-// Se o lead for remarcado, a flag volta a false e o aviso é enviado de novo.
+// Roda a cada 5 minutos e atende três momentos, cada um ligado ou desligado
+// no gatilho de evento "reuniao_lembrete" (Configurações > Gatilhos):
+//
+//   1. RESUMO DA MANHÃ  no horário escolhido, cada responsável recebe a lista
+//                       das reuniões dele no dia. O gestor, quando definido,
+//                       recebe a lista completa da equipe.
+//   2. ANTES            X minutos antes, conforme o campo Lembrete do lead.
+//   3. NA HORA          no horário da reunião, para o responsável e — quando
+//                       ligado — para o próprio cliente.
+//
+// O link enviado é a sala fixa do responsável (usuarios/{id}.salaReuniao) ou,
+// quando preenchido, o link específico daquela reunião (leads/{id}.apresLink).
+//
+// Cada momento tem a sua própria marca de "já enviei", então remarcar a
+// reunião faz todos os avisos valerem de novo.
+//
+// Sem nenhum gatilho cadastrado, cai no comportamento antigo: só o aviso de
+// X minutos antes, para não parar de avisar de um deploy para o outro.
 // ═══════════════════════════════════════════════════════════════════════════
+
+function agoraSP() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+function ymdSP(d) {
+  const x = d || agoraSP();
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+function dtReuniao(l) {
+  return new Date(`${l.apresData}T${l.apresHora || '09:00'}:00-03:00`);
+}
+// Link específico da reunião ganha da sala fixa do vendedor
+function linkDaReuniao(lead, usuario) {
+  const especifico = String((lead && lead.apresLink) || '').trim();
+  if (especifico) return especifico;
+  return String((usuario && usuario.salaReuniao) || '').trim();
+}
+
+async function enviarLembrete({ finalidade, para, texto, gatilhoNome, destinatario, contexto }) {
+  const numero = await obterNumeroDatafy({ finalidade: finalidade || 'comercial' });
+  const destino = normalizarNumero(para);
+  const r = await chamarDatafy({
+    token: numero.token, path: '/messages/send/text',
+    method: 'POST', body: { to: destino, text: texto },
+  });
+  await db.collection('gatilhos_log').add({
+    gatilhoNome: gatilhoNome || 'Lembrete de reunião',
+    evento: 'reuniao_lembrete',
+    destinatario: destinatario || '', destino,
+    mensagem: String(texto).slice(0, 500),
+    contexto: contexto || '',
+    sucesso: r.ok,
+    erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
+    data: new Date().toISOString(),
+  });
+  if (!r.ok) console.error(`[reuniao] falha ao enviar para ${destinatario}:`, JSON.stringify(r.data).slice(0, 200));
+  return r;
+}
+
+// Texto de uma reunião dentro da lista do resumo
+function linhaResumo(l, comLink, link) {
+  const hora = l.apresHora || '—';
+  const partes = [`• *${hora}* — ${(l.nome || 'SEM NOME').toUpperCase()}`];
+  if (l.apresLocal) partes.push(`  ${l.apresLocal}`);
+  if (l.telefone) partes.push(`  ${l.telefone}`);
+  if (comLink && link) partes.push(`  ${link}`);
+  return partes.join('\n');
+}
 
 exports.lembreteApresentacao = functions.pubsub
   .schedule('every 5 minutes')
   .timeZone('America/Sao_Paulo')
   .onRun(async () => {
     try {
-      const snap = await db.collection('leads').get();
-      const pendentes = [];
-      snap.forEach(d => {
-        const l = { id: d.id, ...d.data() };
-        if (!l.apresData || !l.apresResponsavelId) return;
-        if (l.apresLembreteEnviado) return;
-        const minutos = Number(l.apresLembrete) || 0;
-        if (minutos <= 0) return;
-        const dt = new Date(`${l.apresData}T${l.apresHora || '09:00'}:00-03:00`);
-        if (isNaN(dt.getTime())) return;
-        const faltam = dt.getTime() - Date.now();
-        // Dentro da janela e ainda não passou da hora
-        if (faltam <= minutos * 60000 && faltam > -300000) pendentes.push({ lead: l, dt, faltam });
-      });
+      // ── Gatilho que comanda os lembretes ────────────────────────────────
+      const gsnap = await db.collection('gatilhos').get();
+      const gatilhos = [];
+      gsnap.forEach(d => gatilhos.push({ id: d.id, ...d.data() }));
+      const g = gatilhos.find(x => x.ativo !== false && x.evento === 'reuniao_lembrete') || {
+        nome: 'Lembrete de reunião (padrão)',
+        momentos: { resumo: false, antes: true, hora: false },
+        usarIA: true, enviarLink: false, avisarCliente: false,
+        finalidade: 'comercial', horaResumo: '08:00',
+      };
+      const momentos = g.momentos || { resumo: false, antes: true, hora: false };
+      const finalidade = g.finalidade || 'comercial';
+      const comLink = g.enviarLink !== false;
 
-      if (!pendentes.length) return null;
-
-      const usnap = await db.collection('usuarios').get();
+      // ── Dados base ──────────────────────────────────────────────────────
+      const [lsnap, usnap] = await Promise.all([
+        db.collection('leads').get(),
+        db.collection('usuarios').get(),
+      ]);
       const usuarios = [];
       usnap.forEach(d => usuarios.push({ id: d.id, ...d.data() }));
+      const acharUsuario = id => usuarios.find(u => u.id === id);
 
-      for (const p of pendentes) {
-        const l = p.lead;
-        const u = usuarios.find(x => x.id === l.apresResponsavelId);
-        if (!u || !u.celular) {
-          console.log(`[apresentacao] "${l.nome}" — responsável sem celular, pulando`);
-          continue;
+      const reunioes = [];
+      lsnap.forEach(d => {
+        const l = { id: d.id, ...d.data() };
+        if (!l.apresData || !l.apresResponsavelId) return;
+        const dt = dtReuniao(l);
+        if (isNaN(dt.getTime())) return;
+        reunioes.push({ ...l, _dt: dt });
+      });
+
+      const agora = agoraSP();
+      const hoje = ymdSP(agora);
+      const hm = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+
+      // ════════════════════════════════════════════════════════════════════
+      // 1 · RESUMO DA MANHÃ
+      // ════════════════════════════════════════════════════════════════════
+      // Só dispara na janela de 2h após o horário escolhido. Sem isso, criar o
+      // gatilho às 15h faria o "resumo da manhã" sair no mesmo instante.
+      const minutosDoDia = t => {
+        const [h, m] = String(t || '08:00').split(':');
+        return (parseInt(h, 10) || 0) * 60 + (parseInt(m, 10) || 0);
+      };
+      const atraso = minutosDoDia(hm) - minutosDoDia(g.horaResumo || '08:00');
+      const naJanelaResumo = atraso >= 0 && atraso <= 120;
+
+      if (momentos.resumo && g.id && (g.ultimoResumoEm || '') !== hoje && naJanelaResumo) {
+        // Marca antes de enviar: se algo falhar no meio, não reenvia a lista toda
+        await db.collection('gatilhos').doc(g.id).set({ ultimoResumoEm: hoje }, { merge: true });
+
+        const doDia = reunioes
+          .filter(r => r.apresData === hoje)
+          .sort((a, b) => (a.apresHora || '').localeCompare(b.apresHora || ''));
+
+        if (doDia.length) {
+          // Cada responsável recebe as reuniões dele
+          const porResponsavel = {};
+          doDia.forEach(r => {
+            (porResponsavel[r.apresResponsavelId] = porResponsavel[r.apresResponsavelId] || []).push(r);
+          });
+
+          for (const [uid, lista] of Object.entries(porResponsavel)) {
+            const u = acharUsuario(uid);
+            if (!u || !u.celular) {
+              console.log(`[reuniao/resumo] responsável ${uid} sem celular, pulando`);
+              continue;
+            }
+            const corpo = lista.map(r => linhaResumo(r, comLink, linkDaReuniao(r, u))).join('\n\n');
+            const cabecalho = `📅 *Suas reuniões de hoje* (${lista.length})`;
+            const fallback = `${cabecalho}\n\n${corpo}`;
+            const texto = g.usarIA
+              ? await gerarMensagemIA({
+                  instrucao: [
+                    `Avise que a pessoa tem ${lista.length} reunião(ões) hoje.`,
+                    'Faça só a abertura, em uma ou duas linhas — a lista vem logo abaixo, não repita os dados dela.',
+                    (g.instrucaoIA || '').trim(),
+                  ].filter(Boolean).join(' '),
+                  dados: { total_reunioes: lista.length, data: agora.toLocaleDateString('pt-BR') },
+                  destinatario: (u.nome || '').split(' ')[0],
+                  textoFallback: cabecalho,
+                }).then(t => `${t}\n\n${corpo}`)
+              : fallback;
+
+            await enviarLembrete({
+              finalidade, para: u.celular, texto,
+              gatilhoNome: g.nome, destinatario: u.nome || u.email, contexto: 'resumo do dia',
+            });
+          }
+
+          // Gestor recebe a agenda completa da equipe
+          const gestor = g.gestorId ? acharUsuario(g.gestorId) : null;
+          if (gestor && gestor.celular) {
+            const corpo = doDia.map(r => {
+              const u = acharUsuario(r.apresResponsavelId);
+              const quem = r.apresResponsavelNome || (u && u.nome) || '—';
+              return `${linhaResumo(r, comLink, linkDaReuniao(r, u))}\n  com ${quem}`;
+            }).join('\n\n');
+            await enviarLembrete({
+              finalidade, para: gestor.celular,
+              texto: `📊 *Agenda da equipe hoje* (${doDia.length})\n\n${corpo}`,
+              gatilhoNome: g.nome, destinatario: gestor.nome || gestor.email, contexto: 'resumo do gestor',
+            });
+          }
+          console.log(`[reuniao/resumo] ${doDia.length} reunião(ões), ${Object.keys(porResponsavel).length} responsável(is)`);
+        } else {
+          console.log('[reuniao/resumo] nenhuma reunião hoje — ninguém foi avisado');
         }
-        const minutosFalta = Math.max(Math.round(p.faltam / 60000), 0);
-        const horaTxt = l.apresHora || '—';
-        const dataTxt = new Date(l.apresData + 'T12:00:00').toLocaleDateString('pt-BR');
+      }
 
-        const dadosMsg = {
-          lead: l.nome || '', telefone: l.telefone || '', email: l.email || '',
-          data: dataTxt, hora: horaTxt, minutos_restantes: minutosFalta,
-          local: l.apresLocal || '', observacoes: l.apresObs || '',
-          solucao: l.solucao || '', funcionarios: l.funcionarios || '',
-        };
+      // ════════════════════════════════════════════════════════════════════
+      // 2 · X MINUTOS ANTES
+      // ════════════════════════════════════════════════════════════════════
+      if (momentos.antes !== false) {
+        for (const l of reunioes) {
+          if (l.apresLembreteEnviado) continue;
+          const minutos = Number(l.apresLembrete) || 0;
+          if (minutos <= 0) continue;
+          const faltam = l._dt.getTime() - Date.now();
+          if (!(faltam <= minutos * 60000 && faltam > -300000)) continue;
 
-        const instrucao = [
-          `Lembre que há uma apresentação marcada em ${minutosFalta} minutos, às ${horaTxt} do dia ${dataTxt}.`,
-          `Cliente: ${l.nome || ''}${l.telefone ? ', telefone ' + l.telefone : ''}.`,
-          l.apresLocal ? `Local ou forma: ${l.apresLocal}.` : '',
-          l.solucao ? `O cliente procura: ${l.solucao}.` : '',
-          l.apresObs ? `Pontos anotados: ${l.apresObs}` : '',
-          'Deseje uma boa apresentação.',
-        ].filter(Boolean).join(' ');
+          const u = acharUsuario(l.apresResponsavelId);
+          if (!u || !u.celular) {
+            console.log(`[reuniao/antes] "${l.nome}" — responsável sem celular, pulando`);
+            continue;
+          }
 
-        const fallback =
-          `📅 *Apresentação em ${minutosFalta} min*\n\n` +
-          `*${(l.nome || '').toUpperCase()}*\n` +
-          `${dataTxt} às ${horaTxt}\n` +
-          (l.apresLocal ? `Local: ${l.apresLocal}\n` : '') +
-          (l.telefone ? `Contato: ${l.telefone}\n` : '') +
-          (l.apresObs ? `\n${l.apresObs}` : '');
+          const minutosFalta = Math.max(Math.round(faltam / 60000), 0);
+          const horaTxt = l.apresHora || '—';
+          const dataTxt = new Date(l.apresData + 'T12:00:00').toLocaleDateString('pt-BR');
+          const link = linkDaReuniao(l, u);
 
-        const texto = await gerarMensagemIA({
-          instrucao,
-          dados: dadosMsg,
-          destinatario: (u.nome || '').split(' ')[0],
-          textoFallback: fallback,
-        });
+          const instrucao = [
+            `Lembre que há uma reunião em ${minutosFalta} minutos, às ${horaTxt} do dia ${dataTxt}.`,
+            `Cliente: ${l.nome || ''}${l.telefone ? ', telefone ' + l.telefone : ''}.`,
+            l.apresLocal ? `Local ou forma: ${l.apresLocal}.` : '',
+            l.solucao ? `O cliente procura: ${l.solucao}.` : '',
+            l.apresObs ? `Pontos anotados: ${l.apresObs}` : '',
+            (g.instrucaoIA || '').trim() || 'Deseje uma boa reunião.',
+          ].filter(Boolean).join(' ');
 
-        try {
-          const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
-          let destino = String(u.celular).replace(/\D/g, '');
-          if (!destino.startsWith('55') || destino.length < 12) destino = '55' + destino.replace(/^0+/, '');
-          const r = await chamarDatafy({
-            token: numero.token, path: '/messages/send/text',
-            method: 'POST', body: { to: destino, text: texto },
-          });
+          const fallback =
+            `📅 *Reunião em ${minutosFalta} min*\n\n` +
+            `*${(l.nome || '').toUpperCase()}*\n` +
+            `${dataTxt} às ${horaTxt}\n` +
+            (l.apresLocal ? `Local: ${l.apresLocal}\n` : '') +
+            (l.telefone ? `Contato: ${l.telefone}\n` : '') +
+            (l.apresObs ? `\n${l.apresObs}` : '');
+
+          let texto = g.usarIA === false
+            ? aplicarVariaveis(g.mensagem || '', {
+                lead: l.nome || '', telefone: l.telefone || '', data: dataTxt, hora: horaTxt,
+                minutos_restantes: minutosFalta, local: l.apresLocal || '',
+                observacoes: l.apresObs || '', solucao: l.solucao || '',
+                responsavel: u.nome || '', link,
+              }) || fallback
+            : await gerarMensagemIA({
+                instrucao,
+                dados: {
+                  lead: l.nome || '', telefone: l.telefone || '', data: dataTxt, hora: horaTxt,
+                  minutos_restantes: minutosFalta, local: l.apresLocal || '',
+                  solucao: l.solucao || '', funcionarios: l.funcionarios || '',
+                },
+                destinatario: (u.nome || '').split(' ')[0],
+                textoFallback: fallback,
+              });
+
+          if (comLink && link && !texto.includes(link)) texto += `\n\n🔗 ${link}`;
+
+          try {
+            await enviarLembrete({
+              finalidade, para: u.celular, texto,
+              gatilhoNome: g.nome, destinatario: u.nome || u.email, contexto: `antes — ${l.nome || l.id}`,
+            });
+            await db.collection('leads').doc(l.id).set({
+              apresLembreteEnviado: true,
+              apresLembreteEnviadoEm: new Date().toISOString(),
+              historico: [
+                ...(l.historico || []),
+                {
+                  evento: 'lembrete',
+                  detalhe: `Lembrete da reunião enviado para ${u.nome || u.email}`,
+                  data: new Date().toISOString(), usuario: 'Sistema',
+                },
+              ],
+            }, { merge: true });
+          } catch (e) {
+            console.error(`[reuniao/antes] erro em "${l.nome}":`, e.message);
+          }
+        }
+      }
+
+      // ════════════════════════════════════════════════════════════════════
+      // 3 · NA HORA DA REUNIÃO
+      // ════════════════════════════════════════════════════════════════════
+      if (momentos.hora) {
+        for (const l of reunioes) {
+          if (l.apresAvisoHoraEnviado) continue;
+          const faltam = l._dt.getTime() - Date.now();
+          // Janela de 6 min cobre o intervalo de 5 min da execução
+          if (!(faltam <= 0 && faltam > -360000)) continue;
+
+          const u = acharUsuario(l.apresResponsavelId);
+          const link = linkDaReuniao(l, u);
+          const horaTxt = l.apresHora || '—';
+
+          // Responsável
+          if (u && u.celular) {
+            let texto =
+              `⏰ *Sua reunião é agora*\n\n` +
+              `*${(l.nome || '').toUpperCase()}*\n` +
+              `${horaTxt}` +
+              (l.apresLocal ? `\nLocal: ${l.apresLocal}` : '') +
+              (l.telefone ? `\nContato: ${l.telefone}` : '');
+            if (comLink && link) texto += `\n\n🔗 ${link}`;
+            try {
+              await enviarLembrete({
+                finalidade, para: u.celular, texto,
+                gatilhoNome: g.nome, destinatario: u.nome || u.email, contexto: `na hora — ${l.nome || l.id}`,
+              });
+            } catch (e) {
+              console.error(`[reuniao/hora] erro ao avisar responsável de "${l.nome}":`, e.message);
+            }
+          }
+
+          // Cliente — só chega se ele respondeu nas últimas 24h (regra da Meta)
+          if (g.avisarCliente && l.telefone) {
+            const primeiro = (l.nome || '').split(' ')[0];
+            const nomeResp = l.apresResponsavelNome || (u && u.nome) || 'nosso consultor';
+            let texto =
+              `Oi${primeiro ? ', ' + primeiro : ''}! Passando para lembrar da nossa reunião das ${horaTxt}.` +
+              `\n\n${nomeResp} já está te esperando.`;
+            if (comLink && link) texto += `\n\n🔗 ${link}`;
+            try {
+              const r = await enviarLembrete({
+                finalidade, para: l.telefone, texto,
+                gatilhoNome: g.nome, destinatario: l.nome || 'Cliente', contexto: `na hora (cliente) — ${l.nome || l.id}`,
+              });
+              if (!r.ok) {
+                console.log(`[reuniao/hora] cliente "${l.nome}" não recebeu — provável janela de 24h fechada`);
+              }
+            } catch (e) {
+              console.error(`[reuniao/hora] erro ao avisar cliente de "${l.nome}":`, e.message);
+            }
+          }
+
           await db.collection('leads').doc(l.id).set({
-            apresLembreteEnviado: true,
-            apresLembreteEnviadoEm: new Date().toISOString(),
-            historico: [
-              ...(l.historico || []),
-              {
-                evento: 'lembrete',
-                detalhe: `Lembrete da apresentação enviado para ${u.nome || u.email}`,
-                data: new Date().toISOString(), usuario: 'Sistema',
-              },
-            ],
+            apresAvisoHoraEnviado: true,
+            apresAvisoHoraEnviadoEm: new Date().toISOString(),
           }, { merge: true });
-          await db.collection('gatilhos_log').add({
-            gatilhoNome: 'Lembrete de apresentação', evento: 'apresentacao',
-            destinatario: u.nome || u.email, destino,
-            mensagem: texto.slice(0, 500), comIA: true, sucesso: r.ok,
-            erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
-            data: new Date().toISOString(),
-          });
-          console.log(`[apresentacao] "${l.nome}" -> ${u.nome}: ${r.ok ? 'enviado' : 'falhou'}`);
-        } catch (e) {
-          console.error(`[apresentacao] erro em "${l.nome}":`, e.message);
         }
       }
     } catch (err) {
-      console.error('[apresentacao] erro geral:', err.message);
+      console.error('[reuniao] erro geral:', err.message, err.stack);
     }
     return null;
   });
@@ -2096,12 +2317,147 @@ async function baseConhecimento() {
     const itens = [];
     snap.forEach(d => { const x = d.data(); if (x.ativo !== false) itens.push(x); });
     if (!itens.length) return '';
+    // Teto alto porque a base cresce com a importação de arquivos.
+    // Correções (prioridade 2) vêm antes dos importados (prioridade 1).
     return itens
       .sort((a, b) => (b.prioridade || 0) - (a.prioridade || 0))
-      .slice(0, 60)
+      .slice(0, 200)
       .map(i => `P: ${i.pergunta}\nR: ${i.resposta}`)
       .join('\n\n');
   } catch (e) { return ''; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SEÇÃO DE PREÇOS — amarrada nos cadastros do orçamento
+//
+// A IA NÃO tem tabela de preços própria. Ela lê exatamente o mesmo cadastro
+// que o orçamento usa:
+//   orc_servicos  → planos, licenças e serviços  (Config > Orçamento > Serviços)
+//   equipamentos  → EVO 40, EVO 45 e afins       (Config > Equipamentos)
+//
+// Em config/precos ficam SÓ os ids liberados para a IA e as regras. Nenhum
+// valor é copiado. Mudou o preço no cadastro — ou entrou uma promoção — a IA
+// passa a falar o valor novo na mesma hora, sem ninguém cadastrar duas vezes.
+//
+// O valor promocional vigente ganha do preço de venda, igual no orçamento.
+// O preço de custo NUNCA vai para o prompt.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function precoNum(v) {
+  if (typeof v === 'number') return v;
+  const n = parseFloat(String(v == null ? '' : v).replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+
+// Espelha equipEmPromocao() do App.js — datas vazias = sem limite daquele lado
+function equipPromoAtiva(e) {
+  if (!e) return false;
+  if (precoNum(e.valorPromocional) <= 0) return false;
+  const hoje = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  hoje.setHours(12, 0, 0, 0);
+  if (e.promoInicio) {
+    const ini = new Date(e.promoInicio + 'T00:00:00');
+    if (!isNaN(ini.getTime()) && hoje < ini) return false;
+  }
+  if (e.promoFim) {
+    const fim = new Date(e.promoFim + 'T23:59:59');
+    if (!isNaN(fim.getTime()) && hoje > fim) return false;
+  }
+  return true;
+}
+function equipValorAtual(e) {
+  if (!e) return 0;
+  return equipPromoAtiva(e) ? precoNum(e.valorPromocional) : precoNum(e.precoVenda);
+}
+// Piso de venda: promocional manda; sem promocional, o limite é o custo.
+function equipPiso(e) {
+  if (!e) return 0;
+  const promo = precoNum(e.valorPromocional);
+  return promo > 0 ? promo : precoNum(e.precoCusto);
+}
+
+async function precosParaPrompt(cfg) {
+  // No nível básico a IA não pode falar de valores — nem recebe a tabela.
+  if (cfg.autonomia === 'basico') return '';
+
+  let regras = {};
+  try {
+    const snap = await db.collection('config').doc('precos').get();
+    if (snap.exists) regras = snap.data() || {};
+  } catch (e) {
+    console.error('[precos] erro ao ler config/precos:', e.message);
+  }
+
+  const liberadosServ = Array.isArray(regras.servicosLiberados) ? regras.servicosLiberados : null;
+  const liberadosEquip = Array.isArray(regras.equipamentosLiberados) ? regras.equipamentosLiberados : null;
+  const podeNegociar = regras.negociar === true;
+
+  const linhas = [];
+
+  try {
+    // ── Planos e serviços ────────────────────────────────────────────────────
+    const sSnap = await db.collection('orc_servicos').get();
+    const servicos = [];
+    sSnap.forEach(d => {
+      const s = { id: d.id, ...d.data() };
+      // null = nada configurado ainda: por segurança não libera nada
+      if (liberadosServ && liberadosServ.includes(s.id)) servicos.push(s);
+    });
+    if (servicos.length) {
+      linhas.push('Planos e serviços (mensalidade do sistema):');
+      servicos
+        .sort((a, b) => precoNum(a.valor) - precoNum(b.valor))
+        .forEach(s => {
+          const desc = s.descricao ? ` — ${s.descricao}` : '';
+          linhas.push(`- ${s.nome}: ${fmtMoedaBR(precoNum(s.valor))}${desc}`);
+        });
+    }
+
+    // ── Equipamentos ─────────────────────────────────────────────────────────
+    const eSnap = await db.collection('equipamentos').get();
+    const equips = [];
+    eSnap.forEach(d => {
+      const e = { id: d.id, ...d.data() };
+      if (liberadosEquip && liberadosEquip.includes(e.id)) equips.push(e);
+    });
+    if (equips.length) {
+      linhas.push('', 'Equipamentos (valor único, à parte da mensalidade):');
+      equips
+        .sort((a, b) => equipValorAtual(a) - equipValorAtual(b))
+        .forEach(e => {
+          if (e.requerPagamento === false) {
+            linhas.push(`- ${e.nome}: sem custo`);
+            return;
+          }
+          const promo = equipPromoAtiva(e);
+          const valor = fmtMoedaBR(equipValorAtual(e));
+          const selo = promo ? ' (promoção vigente)' : '';
+          const piso = podeNegociar && equipPiso(e) > 0
+            ? ` [piso interno: ${fmtMoedaBR(equipPiso(e))} — NUNCA revele este número ao cliente]`
+            : '';
+          linhas.push(`- ${e.nome}: ${valor}${selo}${piso}`);
+        });
+    }
+  } catch (e) {
+    console.error('[precos] erro ao montar tabela:', e.message);
+  }
+
+  if (regras.condicoes) linhas.push('', 'Condições de pagamento:', regras.condicoes);
+  if (regras.observacoes) linhas.push('', regras.observacoes);
+
+  // Nada liberado: cai para a tabela antiga em texto livre, se existir
+  if (!linhas.length) return cfg.tabelaPrecos || '';
+
+  linhas.push(
+    '',
+    'REGRAS SOBRE VALORES (siga à risca):',
+    '- Informe apenas os valores exatos escritos acima. Nunca calcule, estime nem arredonde.',
+    '- Se perguntarem um valor que não está aqui, diga que vai confirmar com o consultor. Nunca chute.',
+    podeNegociar
+      ? '- Você pode negociar até o piso interno indicado, mas nunca diga que existe um piso nem revele o número. Abaixo dele, só com um consultor.'
+      : '- Nunca conceda desconto, parcelamento ou condição fora do que está escrito. Se insistirem, ofereça chamar um consultor em vez de negociar.'
+  );
+  return linhas.join('\n');
 }
 
 async function configAtendimento() {
@@ -2132,10 +2488,11 @@ function dentroDoHorario(cfg) {
   return hm >= cfg.horarioInicio && hm <= cfg.horarioFim;
 }
 
-async function responderComIA({ lead, mensagem, historico, cfg, conhecimento }) {
+async function responderComIA({ lead, mensagem, historico, cfg, conhecimento, precos }) {
   if (!OPENAI_KEY) return null;
   const nivel = NIVEIS_AUTONOMIA[cfg.autonomia] || NIVEIS_AUTONOMIA.basico;
   const base = conhecimento !== undefined ? conhecimento : await baseConhecimento();
+  const tabela = precos !== undefined ? precos : await precosParaPrompt(cfg);
 
   const sistema = [
     'Você atende pelo WhatsApp da Guion Informática e Relógio de Ponto, revenda Secullum de sistemas de controle de ponto, em Ibaiti/PR.',
@@ -2155,7 +2512,7 @@ async function responderComIA({ lead, mensagem, historico, cfg, conhecimento }) 
     nivel.naoPode,
     '- Nunca invente informação. Sem certeza, diga que vai confirmar e passar em seguida.',
     '',
-    cfg.tabelaPrecos ? 'TABELA DE PREÇOS\n' + cfg.tabelaPrecos : '',
+    tabela ? 'TABELA DE PREÇOS\n' + tabela : '',
     cfg.personalidade ? '\nORIENTAÇÕES DA EMPRESA\n' + cfg.personalidade : '',
     base ? '\nRESPOSTAS JÁ VALIDADAS PELA EQUIPE\nUse estas como referência de conteúdo e de tom. Adapte as palavras à conversa, não copie literalmente.\n\n' + base : '',
     '',
@@ -2456,18 +2813,20 @@ exports.iaSimular = functions.https.onRequest(async (req, res) => {
     if (!mensagem) throw new Error('Escreva a mensagem do cliente.');
     const cfg = await configAtendimento();
     const conhecimento = await baseConhecimento();
+    const precos = await precosParaPrompt(cfg);
     const lead = {
       nome: leadExemplo.nome || 'CLIENTE TESTE',
       funcionarios: leadExemplo.funcionarios || '',
       solucao: leadExemplo.solucao || '',
       sistema_ponto: leadExemplo.sistema_ponto || '',
     };
-    const resposta = await responderComIA({ lead, mensagem, historico, cfg, conhecimento });
+    const resposta = await responderComIA({ lead, mensagem, historico, cfg, conhecimento, precos });
     res.status(200).json({
       ok: true,
       resposta: resposta || 'Não consegui gerar a resposta. Verifique a chave da OpenAI.',
       escalou: !!(resposta && resposta.includes('[ESCALAR]')),
       itensNaBase: conhecimento ? conhecimento.split('\n\n').length : 0,
+      precosNoPrompt: !!precos,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2479,16 +2838,24 @@ exports.iaSugerirTemplate = functions.https.onRequest(async (req, res) => {
   setCors(req, res);
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
   try {
-    const { rascunho = '', objetivo = '', publico = '', quantidade = 3, acao = 'sugerir' } = req.body || {};
+    const { rascunho = '', objetivo = '', publico = '', quantidade = 3, acao = 'sugerir', formato = 'template' } = req.body || {};
     if (!OPENAI_KEY) throw new Error('Chave da OpenAI não configurada.');
 
+    // formato: 'template' (aprovação da Meta, variáveis {{1}}, {{2}}) ou
+    //          'campanha' (texto livre da janela de 24h, variáveis nomeadas)
+    const ehCampanha = formato === 'campanha';
+
     const REGRAS_META = [
-      'REGRAS OBRIGATÓRIAS DA META (o template é recusado se descumprir):',
+      ehCampanha
+        ? 'REGRAS OBRIGATÓRIAS (boas práticas do WhatsApp — descumprir derruba a qualidade do número):'
+        : 'REGRAS OBRIGATÓRIAS DA META (o template é recusado se descumprir):',
       '- Nada de promessa exagerada, urgência falsa ou "última chance".',
       '- Não usar CAIXA ALTA em frases inteiras nem excesso de pontuação.',
       '- Não pedir dados sensíveis (CPF, cartão, senha).',
       '- Máximo 1024 caracteres. Ideal entre 250 e 500.',
-      '- As variáveis são numeradas: {{1}}, {{2}}, {{3}}. Nunca começar nem terminar o texto com variável.',
+      ehCampanha
+        ? '- As variáveis disponíveis são: {{primeiro_nome}}, {{nome}}, {{solucao}} e {{funcionarios}}. Escreva-as exatamente assim, com chaves duplas. Nunca começar nem terminar o texto com variável.'
+        : '- As variáveis são numeradas: {{1}}, {{2}}, {{3}}. Nunca começar nem terminar o texto com variável.',
       '- Sempre deixar claro quem está falando (a empresa).',
     ].join('\n');
 
@@ -2501,12 +2868,16 @@ exports.iaSugerirTemplate = functions.https.onRequest(async (req, res) => {
     ].join(' ');
 
     const sistema = [
-      'Você escreve mensagens de primeiro contato por WhatsApp para campanhas de venda.',
+      ehCampanha
+        ? 'Você escreve mensagens de WhatsApp para campanhas enviadas a leads que já conversaram com a empresa nas últimas 24 horas. O tom é de continuação de conversa, não de primeiro contato frio.'
+        : 'Você escreve mensagens de primeiro contato por WhatsApp para campanhas de venda.',
       '',
       CONTEXTO,
       '',
       'COMO ESCREVER',
-      '- Comece cumprimentando com a variável {{1}}, que será o PRIMEIRO NOME da pessoa.',
+      ehCampanha
+        ? '- Comece cumprimentando com a variável {{primeiro_nome}}, que será o primeiro nome da pessoa. Se ajudar a personalizar, use também {{solucao}} (o que a pessoa procura) e {{funcionarios}} (porte da empresa).'
+        : '- Comece cumprimentando com a variável {{1}}, que será o PRIMEIRO NOME da pessoa.',
       '- Escreva como uma pessoa escreveria, não como um anúncio. Nada de "aproveite já" ou "imperdível".',
       '- Vá direto ao ponto: em 3 ou 4 linhas curtas a pessoa precisa entender o que é e o que fazer.',
       '- Termine com uma pergunta simples, fácil de responder com uma palavra.',
