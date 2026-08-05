@@ -10580,16 +10580,30 @@ function ModalNovoLead({onFechar}){
   const [f,setF]=useState({nome:'',email:'',telefone:'',funcionarios:'',sistema_ponto:'',solucao:'',origem:'Manual',obs:''});
   const [salvando,setSalvando]=useState(false);
   const [erro,setErro]=useState('');
-  const up=(k,v)=>setF(x=>({...x,[k]:v}));
-  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const [campoErro,setCampoErro]=useState('');
+  const up=(k,v)=>{setF(x=>({...x,[k]:v}));if(campoErro===k){setCampoErro('');setErro('');}};
+  const fiBase={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const fi=fiBase;
+  // Realça em vermelho o campo que travou o cadastro
+  const campo=k=>campoErro===k?{...fiBase,border:'1.5px solid #e74c3c',background:'#fff5f5'}:fiBase;
   const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
 
   const FAIXAS=['Até 5 funcionários','De 6 a 10 funcionários','De 11 a 15 funcionários','De 16 a 20 funcionários','De 21 a 30 funcionários','De 31 a 50 funcionários','Mais de 50 funcionários'];
   const SOLUCOES=['Reconhecimento facial em tablet/celular','Relógio de ponto fixo (Facial/Biométrico)'];
 
   async function salvar(){
-    if(!f.nome.trim()){setErro('Informe o nome do contato.');return;}
-    setSalvando(true);setErro('');
+    // Todos os campos de qualificação são obrigatórios: lead sem telefone não
+    // entra em campanha, e sem porte/solução ninguém consegue orçar.
+    const falta=[
+      ['nome',        !f.nome.trim(),                                    'Informe o nome do contato.'],
+      ['telefone',    f.telefone.replace(/\D/g,'').length<10,            'Informe um telefone válido com DDD.'],
+      ['email',       !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(f.email.trim()), 'Informe um email válido.'],
+      ['funcionarios',!f.funcionarios,                                   'Selecione quantos funcionários a empresa tem.'],
+      ['sistema_ponto',!f.sistema_ponto,                                 'Informe se a empresa já usa sistema de ponto.'],
+      ['solucao',     !f.solucao,                                        'Selecione a solução buscada.'],
+    ].find(([,invalido])=>invalido);
+    if(falta){setCampoErro(falta[0]);setErro(falta[2]);return;}
+    setSalvando(true);setErro('');setCampoErro('');
     try{
       const id='lead_'+Date.now();
       await setDoc(doc(db,'leads',id),{
@@ -10623,23 +10637,23 @@ function ModalNovoLead({onFechar}){
 
         <div style={{marginBottom:10}}>
           <label style={lbl}>Nome do contato *</label>
-          <input style={{...fi,textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())} autoFocus/>
+          <input style={{...campo('nome'),textTransform:'uppercase'}} value={f.nome} onChange={e=>up('nome',e.target.value.toUpperCase())} autoFocus/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div><label style={lbl}>Email</label><input style={fi} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
-          <div><label style={lbl}>Telefone</label><input style={fi} value={f.telefone} onChange={e=>up('telefone',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
+          <div><label style={lbl}>Email *</label><input style={campo('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
+          <div><label style={lbl}>Telefone *</label><input style={campo('telefone')} value={f.telefone} onChange={e=>up('telefone',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/></div>
         </div>
         <div style={{marginBottom:10}}>
-          <label style={lbl}>Quantos funcionários</label>
-          <select style={fi} value={f.funcionarios} onChange={e=>up('funcionarios',e.target.value)}>
+          <label style={lbl}>Quantos funcionários *</label>
+          <select style={campo('funcionarios')} value={f.funcionarios} onChange={e=>up('funcionarios',e.target.value)}>
             <option value="">— Selecione —</option>
             {FAIXAS.map(x=><option key={x} value={x}>{x}</option>)}
           </select>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div>
-            <label style={lbl}>Já usa sistema de ponto?</label>
-            <select style={fi} value={f.sistema_ponto} onChange={e=>up('sistema_ponto',e.target.value)}>
+            <label style={lbl}>Já usa sistema de ponto? *</label>
+            <select style={campo('sistema_ponto')} value={f.sistema_ponto} onChange={e=>up('sistema_ponto',e.target.value)}>
               <option value="">—</option><option value="Sim">Sim</option><option value="Não">Não</option>
             </select>
           </div>
@@ -10656,15 +10670,15 @@ function ModalNovoLead({onFechar}){
           </div>
         </div>
         <div style={{marginBottom:10}}>
-          <label style={lbl}>Solução buscada</label>
-          <select style={fi} value={f.solucao} onChange={e=>up('solucao',e.target.value)}>
+          <label style={lbl}>Solução buscada *</label>
+          <select style={campo('solucao')} value={f.solucao} onChange={e=>up('solucao',e.target.value)}>
             <option value="">— Selecione —</option>
             {SOLUCOES.map(x=><option key={x} value={x}>{x}</option>)}
           </select>
         </div>
         <div style={{marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-            <label style={lbl}>Observações</label>
+            <label style={lbl}>Observações (opcional)</label>
             <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
           </div>
           <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
