@@ -11989,6 +11989,10 @@ function AbaTreino(){
   const [correcao,setCorrecao]=useState('');
   const [novoItem,setNovoItem]=useState({pergunta:'',resposta:''});
   const [verBase,setVerBase]=useState(false);
+  const [importando,setImportando]=useState(false);
+  const [extraidos,setExtraidos]=useState(null);
+  const [nomeArquivo,setNomeArquivo]=useState('');
+  const [salvandoLote,setSalvandoLote]=useState(false);
   const [exemplo,setExemplo]=useState({nome:'CLIENTE TESTE',funcionarios:'De 6 a 10 funcionários',solucao:''});
   const fimRef=useRef(null);
 
@@ -12057,6 +12061,93 @@ function AbaTreino(){
   async function removerBase(id){
     if(!window.confirm('Remover este item da base?'))return;
     await deleteDoc(doc(db,'base_conhecimento',id));
+  }
+
+  // Reconhece os formatos mais comuns antes de recorrer à IA
+  function lerFormatoDireto(txt){
+    const itens=[];
+    const linhas=txt.split(/\r?\n/);
+
+    // Formato "pergunta | resposta" ou "pergunta ; resposta"
+    linhas.forEach(l=>{
+      const t=l.trim();
+      if(!t||t.startsWith('#'))return;
+      const m=t.split(/\s*[|;]\s*/);
+      if(m.length>=2&&m[0].length>3&&m[1].length>3){
+        itens.push({pergunta:m[0].trim(),resposta:m.slice(1).join(' ').trim()});
+      }
+    });
+    if(itens.length)return itens;
+
+    // Formato de blocos "P: ..." / "R: ..."
+    let perg=null;
+    linhas.forEach(l=>{
+      const t=l.trim();
+      const mp=t.match(/^(P|PERGUNTA|Q)\s*[:\-]\s*(.+)/i);
+      const mr=t.match(/^(R|RESPOSTA|A)\s*[:\-]\s*(.+)/i);
+      if(mp){perg=mp[2].trim();return;}
+      if(mr&&perg){itens.push({pergunta:perg,resposta:mr[2].trim()});perg=null;}
+    });
+    return itens;
+  }
+
+  async function carregarArquivo(file){
+    if(!file)return;
+    setNomeArquivo(file.name);
+    setImportando(true);setExtraidos(null);
+    try{
+      const texto=await file.text();
+      if(!texto.trim()){alert('O arquivo está vazio.');setImportando(false);return;}
+
+      const direto=lerFormatoDireto(texto);
+      if(direto.length>=2){
+        setExtraidos({itens:direto,origem:'formato reconhecido'});
+        setImportando(false);
+        return;
+      }
+
+      // Texto corrido — a IA organiza em perguntas e respostas
+      const r=await fetch(`${FUNCTIONS_URL}/iaExtrairConhecimento`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({texto:texto.slice(0,72000)}),
+      });
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else if(!(d.itens||[]).length)alert('Não consegui extrair perguntas deste arquivo. Tente o formato:\n\npergunta | resposta\n\numa por linha.');
+      else setExtraidos({itens:d.itens,origem:'organizado pela IA'});
+    }catch(e){alert('Erro ao ler o arquivo: '+e.message);}
+    setImportando(false);
+  }
+
+  async function salvarExtraidos(){
+    if(!extraidos?.itens?.length)return;
+    setSalvandoLote(true);
+    let ok=0;
+    for(const it of extraidos.itens){
+      try{
+        await addDoc(collection(db,'base_conhecimento'),{
+          pergunta:it.pergunta,resposta:it.resposta,ativo:true,prioridade:1,
+          origem:`Arquivo: ${nomeArquivo}`,criadoEm:new Date().toISOString(),
+          criadoPor:auth.currentUser?.email||'—',
+        });
+        ok++;
+      }catch(e){}
+    }
+    alert(`✅ ${ok} item(ns) adicionados à base.`);
+    setExtraidos(null);setNomeArquivo('');
+    setSalvandoLote(false);
+  }
+
+  function exportarBase(){
+    const L=['# Base de conhecimento — Guion Informática','',
+      `> ${base.length} item(ns) · gerado em ${new Date().toLocaleString('pt-BR')}`,
+      '> Formato: pergunta | resposta','',];
+    base.forEach(b=>L.push(`${b.pergunta} | ${b.resposta}`));
+    const blob=new Blob([L.join('\n')],{type:'text/plain;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=`base-conhecimento-${new Date().toISOString().slice(0,10)}.txt`;a.click();
+    URL.revokeObjectURL(url);
   }
 
   return(
@@ -12160,11 +12251,73 @@ function AbaTreino(){
             <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>📚 Base de conhecimento</div>
             <div style={{fontSize:11,color:'#95a5a6'}}>{base.length} resposta(s) validada(s) — entram em toda conversa</div>
           </div>
-          <button onClick={()=>setVerBase(v=>!v)}
-            style={{padding:'6px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
-            {verBase?'Ocultar':'Ver e editar'}
-          </button>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {base.length>0&&(
+              <button onClick={exportarBase}
+                style={{padding:'6px 13px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+                📄 Exportar
+              </button>
+            )}
+            <label style={{padding:'6px 13px',borderRadius:7,border:'1px solid #e9d5ff',background:'#faf5ff',cursor:importando?'default':'pointer',fontSize:12,fontWeight:600,color:'#6b21a8',display:'inline-flex',alignItems:'center',gap:5}}>
+              {importando?'⏳ Lendo arquivo...':'📎 Subir arquivo'}
+              <input type="file" accept=".txt,.md,.csv,text/plain" disabled={importando}
+                style={{display:'none'}}
+                onChange={e=>{carregarArquivo(e.target.files[0]);e.target.value='';}}/>
+            </label>
+            <button onClick={()=>setVerBase(v=>!v)}
+              style={{padding:'6px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+              {verBase?'Ocultar':'Ver e editar'}
+            </button>
+          </div>
         </div>
+
+        {/* Ajuda sobre formatos */}
+        {!extraidos&&(
+          <div style={{background:'#f8f9fa',borderRadius:7,padding:'10px 12px',marginBottom:10,fontSize:10,color:'#7f8c8d',lineHeight:1.7}}>
+            <strong style={{color:'#6b21a8'}}>Subindo um arquivo:</strong> aceita <code style={{background:'#fff',padding:'1px 5px',borderRadius:3}}>.txt</code>,
+            <code style={{background:'#fff',padding:'1px 5px',borderRadius:3,marginLeft:3}}>.md</code> e
+            <code style={{background:'#fff',padding:'1px 5px',borderRadius:3,marginLeft:3}}>.csv</code>.
+            Se cada linha estiver como <strong>pergunta | resposta</strong>, ou em blocos <strong>P:</strong> e <strong>R:</strong>, é lido direto.
+            Se for texto corrido — um manual, uma apostila, suas anotações — a IA organiza em perguntas e respostas para você conferir antes de salvar.
+          </div>
+        )}
+
+        {/* Prévia do que foi extraído */}
+        {extraidos&&(
+          <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:8,padding:'13px',marginBottom:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:12,color:'#6b21a8'}}>{extraidos.itens.length} item(ns) encontrados</div>
+                <div style={{fontSize:10,color:'#95a5a6'}}>{nomeArquivo} · {extraidos.origem}</div>
+              </div>
+              <div style={{display:'flex',gap:6}}>
+                <button onClick={salvarExtraidos} disabled={salvandoLote}
+                  style={{padding:'7px 16px',borderRadius:7,border:'none',background:salvandoLote?'#dde1e7':'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                  {salvandoLote?'Salvando...':`✓ Adicionar ${extraidos.itens.length} à base`}
+                </button>
+                <button onClick={()=>{setExtraidos(null);setNomeArquivo('');}}
+                  style={{padding:'7px 13px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Descartar</button>
+              </div>
+            </div>
+            <div style={{maxHeight:260,overflowY:'auto'}}>
+              {extraidos.itens.map((it,i)=>(
+                <div key={i} style={{background:'#fff',borderRadius:7,padding:'9px 12px',marginBottom:5,display:'flex',gap:10,alignItems:'flex-start'}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <input style={{...fi,fontSize:11,fontWeight:700,marginBottom:4,padding:'5px 8px'}} value={it.pergunta}
+                      onChange={e=>setExtraidos(x=>({...x,itens:x.itens.map((y,j)=>j===i?{...y,pergunta:e.target.value}:y)}))}/>
+                    <textarea style={{...fi,fontSize:11,minHeight:44,resize:'vertical',padding:'5px 8px'}} value={it.resposta}
+                      onChange={e=>setExtraidos(x=>({...x,itens:x.itens.map((y,j)=>j===i?{...y,resposta:e.target.value}:y)}))}/>
+                  </div>
+                  <button onClick={()=>setExtraidos(x=>({...x,itens:x.itens.filter((_,j)=>j!==i)}))}
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15,flexShrink:0}}>×</button>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:8}}>
+              Revise antes de salvar — dá para editar qualquer texto aqui mesmo e remover o que não serve.
+            </div>
+          </div>
+        )}
 
         {verBase&&(
           <div>

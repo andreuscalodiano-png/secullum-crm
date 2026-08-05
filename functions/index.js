@@ -2558,3 +2558,76 @@ exports.iaSugerirTemplate = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Extrai perguntas e respostas de um texto corrido enviado pelo usuário
+exports.iaExtrairConhecimento = functions.runWith({ timeoutSeconds: 300 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { texto = '' } = req.body || {};
+      if (!texto.trim()) throw new Error('Envie o conteúdo do arquivo.');
+      if (!OPENAI_KEY) throw new Error('Chave da OpenAI não configurada.');
+
+      // Divide textos longos para não estourar o limite do modelo
+      const PEDACO = 9000;
+      const pedacos = [];
+      for (let i = 0; i < texto.length; i += PEDACO) pedacos.push(texto.slice(i, i + PEDACO));
+
+      const sistema = [
+        'Você organiza material de apoio ao atendimento em pares de pergunta e resposta.',
+        '',
+        'A empresa é a Guion Informática e Relógio de Ponto, revenda Secullum de sistemas de controle de ponto.',
+        '',
+        'REGRAS',
+        '- Escreva a pergunta como um cliente perguntaria no WhatsApp, com as palavras dele.',
+        '- A resposta deve ser curta e direta, no máximo 3 linhas, pronta para ser enviada.',
+        '- Use apenas o que está no texto. Não invente preço, prazo nem condição.',
+        '- Ignore índices, sumários, cabeçalhos e rodapés.',
+        '- Se um trecho não gerar dúvida de cliente, pule.',
+        '',
+        'Responda APENAS com JSON válido, sem comentário e sem markdown:',
+        '{"itens":[{"pergunta":"...","resposta":"..."}]}',
+      ].join('\n');
+
+      const todos = [];
+      for (const p of pedacos.slice(0, 8)) {
+        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini', max_tokens: 2500, temperature: 0.3,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: sistema },
+              { role: 'user', content: 'Extraia as perguntas e respostas deste material:\n\n' + p },
+            ],
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { console.error('[extrair]', data?.error?.message); continue; }
+        try {
+          const j = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+          (j.itens || []).forEach(it => {
+            if (it.pergunta && it.resposta) {
+              todos.push({ pergunta: String(it.pergunta).trim(), resposta: String(it.resposta).trim() });
+            }
+          });
+        } catch (e) { console.error('[extrair] JSON inválido'); }
+      }
+
+      // Remove repetições
+      const vistos = new Set();
+      const itens = todos.filter(i => {
+        const k = i.pergunta.toLowerCase().replace(/[^a-z0-9à-ú ]/gi, '').trim();
+        if (vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+
+      res.status(200).json({ ok: true, itens, pedacos: pedacos.length });
+    } catch (err) {
+      console.error('[iaExtrairConhecimento]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
