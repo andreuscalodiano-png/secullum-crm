@@ -496,7 +496,9 @@ exports.metaLeads = functions.https.onRequest(async (req, res) => {
             atualizadoEm: new Date().toISOString(),
           };
 
-          await db.collection('leads').doc(String(leadId)).set(leadDoc, { merge: true });
+          // Mesmo id usado pelo sync da planilha: o lead que chega pelos dois
+          // caminhos cai no mesmo documento em vez de duplicar.
+          await db.collection('leads').doc('lead_meta_' + leadId).set(leadDoc, { merge: true });
           console.log('[metaLeads] lead salvo:', leadId, campos.nome || '(sem nome)');
         }
       }
@@ -696,8 +698,12 @@ async function importarLinhas(dados, origemNome) {
     }
 
     const plat = val(linha, col.plataforma).toLowerCase();
+    // Id derivado do dado, nunca de Date.now(): duas execuções simultâneas do
+    // sync gravam no mesmo documento em vez de criar o lead duas vezes.
     const docId = leadId ? 'lead_meta_' + leadId
-                         : 'lead_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+                : telNum ? 'lead_tel_' + telNum
+                : email  ? 'lead_mail_' + email.replace(/[^a-z0-9]/gi, '_').slice(0, 60)
+                         : 'lead_' + nome.toLowerCase().replace(/[^a-z0-9]/gi, '_').slice(0, 60);
 
     batch.set(db.collection('leads').doc(docId), {
       nome: nome.toUpperCase(),
@@ -2477,6 +2483,8 @@ async function configAtendimento() {
     avisarResponsavel: d.avisarResponsavel !== false,
     responsavelId: d.responsavelId || '',
     maxMensagens: Number(d.maxMensagens) || 12,
+    // Desligado de propósito: mensagem de número desconhecido não vira lead
+    criarLeadDeDesconhecido: d.criarLeadDeDesconhecido === true,
   };
 }
 
@@ -2677,15 +2685,35 @@ exports.datafyWebhook = functions.https.onRequest(async (req, res) => {
           const registro = { de: 'cliente', texto, data: agora, messageId: m.id || '' };
 
           if (!lead) {
-            // Contato desconhecido — vira lead novo para não se perder
-            const id = 'lead_wa_' + Date.now();
-            await db.collection('leads').doc(id).set({
-              nome: (v.contacts?.[0]?.profile?.name || 'CONTATO WHATSAPP').toUpperCase(),
-              telefone: de, origem: 'WhatsApp', status: 'novo',
-              criadoEm: agora, atualizadoEm: agora,
-              conversa: [registro], historico: [],
-            });
-            console.log('[atendimento] lead novo criado a partir do WhatsApp:', de);
+            // ── NÚMERO DESCONHECIDO ────────────────────────────────────────
+            // Antes, qualquer mensagem recebida virava lead. Isso enchia a
+            // lista de "CONTATO WHATSAPP" vindo de engano, spam e número
+            // internacional. Agora fica em quarentena: a mensagem não se
+            // perde, mas também não polui o funil.
+            // Ligar cfgPre.criarLeadDeDesconhecido volta ao comportamento
+            // antigo, aí com id derivado do telefone (nunca duplica).
+            const nomePerfil = (v.contacts?.[0]?.profile?.name || '').toUpperCase();
+
+            if (cfgPre.criarLeadDeDesconhecido) {
+              await db.collection('leads').doc('lead_wa_' + de).set({
+                nome: nomePerfil || 'CONTATO WHATSAPP',
+                telefone: de, origem: 'WhatsApp', status: 'novo',
+                criadoEm: agora, atualizadoEm: agora,
+                conversa: admin.firestore.FieldValue.arrayUnion(registro),
+              }, { merge: true });
+              console.log('[atendimento] lead criado a partir do WhatsApp:', de);
+            } else {
+              await db.collection('whatsapp_desconhecidos').doc(de).set({
+                telefone: de,
+                nomePerfil,
+                ultimaMensagem: texto,
+                ultimaMensagemEm: agora,
+                mensagens: admin.firestore.FieldValue.arrayUnion(registro),
+                primeiroContatoEm: agora,
+                atendido: false,
+              }, { merge: true });
+              console.log('[atendimento] número desconhecido em quarentena:', de);
+            }
             continue;
           }
 

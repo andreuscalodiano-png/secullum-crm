@@ -12269,6 +12269,97 @@ function SecaoPrecos({legado}){
 }
 
 
+// ─── NÚMEROS DESCONHECIDOS (QUARENTENA) ──────────────────────────────────────
+// Mensagem de quem não está na base não vira lead: fica aqui até alguém olhar.
+// Evita que engano, spam e número internacional entupam o funil.
+function PainelDesconhecidos(){
+  const [lista,setLista]=useState([]);
+  const [aberto,setAberto]=useState(false);
+  const [ocupado,setOcupado]=useState('');
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'whatsapp_desconhecidos'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({id:d.id,...d.data()}));
+      setLista(arr.filter(x=>!x.atendido).sort((a,b)=>new Date(b.ultimaMensagemEm||0)-new Date(a.ultimaMensagemEm||0)));
+    });
+    return()=>unsub();
+  },[]);
+
+  async function virarLead(x){
+    setOcupado(x.id);
+    try{
+      // Mesmo id do webhook: se a pessoa escrever de novo, cai neste lead
+      await setDoc(doc(db,'leads','lead_wa_'+x.telefone),{
+        nome:(x.nomePerfil||'CONTATO WHATSAPP').toUpperCase(),
+        telefone:x.telefone,origem:'WhatsApp',status:'novo',
+        conversa:x.mensagens||[],
+        criadoEm:x.primeiroContatoEm||new Date().toISOString(),
+        atualizadoEm:new Date().toISOString(),
+        criadoPor:auth.currentUser?.email||'—',
+      },{merge:true});
+      await deleteDoc(doc(db,'whatsapp_desconhecidos',x.id));
+    }catch(e){alert('Erro: '+e.message);}
+    setOcupado('');
+  }
+  async function descartar(x){
+    if(!window.confirm(`Descartar as mensagens de ${x.telefone}?\n\nSe a pessoa escrever de novo, ela reaparece aqui.`))return;
+    await deleteDoc(doc(db,'whatsapp_desconhecidos',x.id));
+  }
+
+  if(!lista.length)return null;
+
+  return(
+    <div style={{background:'#fff8ee',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #f5a623'}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+        <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>
+          📥 Números desconhecidos ({lista.length})
+        </div>
+        <div style={{flex:1}}/>
+        <button onClick={()=>setAberto(!aberto)} style={{background:'none',border:'none',cursor:'pointer',color:'#b45309',fontSize:11,fontWeight:700}}>
+          {aberto?'Ocultar':'Ver mensagens'}
+        </button>
+      </div>
+      <div style={{fontSize:11,color:'#b45309',lineHeight:1.6,marginTop:4}}>
+        Mensagens de quem não está na base. Não viram lead automaticamente — se for cliente de verdade, promova aqui.
+      </div>
+
+      {aberto&&(
+        <div style={{marginTop:10,display:'flex',flexDirection:'column',gap:6}}>
+          {lista.map(x=>(
+            <div key={x.id} style={{background:'#fff',borderRadius:7,padding:'10px 12px',border:'1px solid #fde68a'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:4}}>
+                <span style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{x.nomePerfil||'Sem nome no perfil'}</span>
+                <span style={{fontSize:11,color:'#7f8c8d'}}>📞 {x.telefone}</span>
+                <span style={{fontSize:10,color:'#95a5a6'}}>
+                  {(x.mensagens||[]).length} msg{(x.mensagens||[]).length>1?'s':''}
+                  {x.ultimaMensagemEm?' · '+new Date(x.ultimaMensagemEm).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):''}
+                </span>
+              </div>
+              <div style={{fontSize:11,color:'#4a4a4a',background:'#f8f9fa',borderRadius:5,padding:'7px 9px',marginBottom:8,lineHeight:1.5,maxHeight:70,overflowY:'auto'}}>
+                {x.ultimaMensagem||'(sem texto)'}
+              </div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <button onClick={()=>virarLead(x)} disabled={ocupado===x.id}
+                  style={{padding:'5px 13px',borderRadius:6,border:'none',background:ocupado===x.id?'#dde1e7':'#e84393',color:'#fff',cursor:'pointer',fontSize:11,fontWeight:700}}>
+                  {ocupado===x.id?'Criando...':'＋ Criar lead'}
+                </button>
+                <button onClick={()=>descartar(x)}
+                  style={{padding:'5px 13px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+                  Descartar
+                </button>
+                <a href={`https://wa.me/${String(x.telefone).replace(/\D/g,'')}`} target="_blank" rel="noopener noreferrer"
+                  style={{padding:'5px 13px',borderRadius:6,border:'1px solid #25D366',background:'#fff',color:'#25D366',fontSize:11,fontWeight:700,textDecoration:'none'}}>
+                  Abrir no WhatsApp
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AbaAtendimentoIA({usuarios}){
   const [c,setC]=useState({
     ativo:false,autonomia:'basico',personalidade:'',tabelaPrecos:'',
@@ -12276,7 +12367,7 @@ function AbaAtendimentoIA({usuarios}){
     foraHorario:'Recebemos sua mensagem! Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos assim que possível 😊',
     palavrasEscalar:['reclamação','processo','advogado','cancelar contrato','procon'],
     avisarResponsavel:true,responsavelId:'',maxMensagens:12,
-    numeroTeste:'',modoTreino:true,
+    numeroTeste:'',modoTreino:true,criarLeadDeDesconhecido:false,
   });
   const [carregando,setCarregando]=useState(true);
   const [salvando,setSalvando]=useState(false);
@@ -12366,6 +12457,21 @@ function AbaAtendimentoIA({usuarios}){
           value={c.personalidade} onChange={e=>up('personalidade',e.target.value)}
           placeholder="Ex: Sempre mencionar que a implantação e o suporte são inclusos. Não temos fidelidade contratual."/>
       </div>
+
+      <PainelDesconhecidos/>
+
+      {/* Quem pode virar lead */}
+      <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'11px 13px',borderRadius:8,cursor:'pointer',marginBottom:12,
+        background:c.criarLeadDeDesconhecido?'#fff8ee':'#f8f9fa',border:`1px solid ${c.criarLeadDeDesconhecido?'#fde68a':'#e8eaed'}`}}>
+        <input type="checkbox" checked={!!c.criarLeadDeDesconhecido} onChange={()=>up('criarLeadDeDesconhecido',!c.criarLeadDeDesconhecido)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+        <div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>Criar lead de número desconhecido</div>
+          <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.6,marginTop:2}}>
+            Desligado, mensagem de quem não está na base fica em <strong>Números desconhecidos</strong> em vez de virar lead.
+            Recomendado deixar desligado: engano, spam e número internacional entopem o funil com "CONTATO WHATSAPP".
+          </div>
+        </div>
+      </label>
 
       {/* Número de teste */}
       <div style={{background:'#faf5ff',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #6b21a8'}}>
