@@ -1832,3 +1832,518 @@ exports.lembreteApresentacao = functions.pubsub
     }
     return null;
   });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ANÚNCIOS — templates, campanhas e atendimento por IA
+//
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// A Meta só permite TEXTO LIVRE para quem enviou mensagem nas últimas 24h.
+// Para iniciar conversa é obrigatório TEMPLATE APROVADO. Campanhas de
+// marketing têm limite diário por qualidade do número (começa em 250/dia).
+// Enviar demais ou receber denúncias derruba a qualidade e pode suspender.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── TEMPLATES ───────────────────────────────────────────────────────────────
+
+exports.datafyTemplates = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { acao = 'listar', numeroId, template, nome } = req.body || {};
+    const numero = await obterNumeroDatafy({ numeroId });
+
+    if (acao === 'listar') {
+      const r = await chamarDatafy({ token: numero.token, path: '/templates' });
+      res.status(r.ok ? 200 : r.status).json(r.data);
+      return;
+    }
+    if (acao === 'criar') {
+      if (!template) throw new Error('Envie os dados do template.');
+      const r = await chamarDatafy({
+        token: numero.token, path: '/templates', method: 'POST', body: template,
+      });
+      await db.collection('anuncios_log').add({
+        tipo: 'template_criado', nome: template.name || '',
+        sucesso: r.ok, resposta: JSON.stringify(r.data).slice(0, 400),
+        usuario: req.body.usuario || '—', data: new Date().toISOString(),
+      });
+      res.status(r.ok ? 200 : r.status).json(r.data);
+      return;
+    }
+    if (acao === 'remover') {
+      if (!nome) throw new Error('Informe o nome do template.');
+      const r = await chamarDatafy({
+        token: numero.token, path: `/templates/${encodeURIComponent(nome)}`, method: 'DELETE',
+      });
+      res.status(r.ok ? 200 : r.status).json(r.data);
+      return;
+    }
+    throw new Error('Ação desconhecida: ' + acao);
+  } catch (err) {
+    console.error('[anuncios] templates:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── DISPARO DE CAMPANHA ─────────────────────────────────────────────────────
+
+function normalizarNumero(tel) {
+  let n = String(tel || '').replace(/\D/g, '');
+  if (!n) return '';
+  if (!n.startsWith('55') || n.length < 12) n = '55' + n.replace(/^0+/, '');
+  return n;
+}
+
+// Envia uma mensagem da campanha para um destinatário
+async function enviarDaCampanha(campanha, lead, token) {
+  const destino = normalizarNumero(lead.telefone);
+  if (!destino) throw new Error('sem telefone');
+
+  const primeiroNome = String(lead.nome || '').trim().split(' ')[0] || 'tudo bem';
+
+  if (campanha.tipo === 'template') {
+    // Substitui as variáveis do template pelos dados do lead
+    const vars = (campanha.variaveis || []).map(v => {
+      const mapa = {
+        nome: lead.nome || '', primeiro_nome: primeiroNome,
+        telefone: lead.telefone || '', email: lead.email || '',
+        solucao: lead.solucao || '', funcionarios: lead.funcionarios || '',
+        campanha: lead.campanha || '',
+      };
+      return String(v).replace(/\{\{(\w+)\}\}/g, (m, k) => mapa[k] ?? '');
+    });
+    const body = {
+      to: destino,
+      template: campanha.template,
+      language: campanha.idioma || 'pt_BR',
+    };
+    if (vars.length) body.body = vars;
+    if (campanha.headerMidia) body.header = { image: { link: campanha.headerMidia } };
+    return chamarDatafy({ token, path: '/messages/send/template', method: 'POST', body });
+  }
+
+  // Texto livre — só vale para quem respondeu nas últimas 24h
+  const texto = String(campanha.texto || '')
+    .replace(/\{\{nome\}\}/g, lead.nome || '')
+    .replace(/\{\{primeiro_nome\}\}/g, primeiroNome)
+    .replace(/\{\{solucao\}\}/g, lead.solucao || '')
+    .replace(/\{\{funcionarios\}\}/g, lead.funcionarios || '');
+
+  if (campanha.tipo === 'imagem' && campanha.midia) {
+    return chamarDatafy({
+      token, path: '/messages/send/image', method: 'POST',
+      body: { to: destino, image: { link: campanha.midia, caption: texto } },
+    });
+  }
+  if (campanha.tipo === 'cta' && campanha.linkUrl) {
+    return chamarDatafy({
+      token, path: '/messages/send/cta', method: 'POST',
+      body: {
+        to: destino,
+        body: texto,
+        button: { text: campanha.linkTexto || 'Saiba mais', url: campanha.linkUrl },
+      },
+    });
+  }
+  if (campanha.tipo === 'botoes' && (campanha.botoes || []).length) {
+    return chamarDatafy({
+      token, path: '/messages/send/buttons', method: 'POST',
+      body: {
+        to: destino, body: texto,
+        buttons: campanha.botoes.map((b, i) => ({ id: 'btn_' + i, title: String(b).slice(0, 20) })),
+      },
+    });
+  }
+  return chamarDatafy({
+    token, path: '/messages/send/text', method: 'POST',
+    body: { to: destino, text: texto },
+  });
+}
+
+// Processa a fila de uma campanha, respeitando o limite diário
+async function processarCampanha(campanhaId, limiteNesteCiclo = 40) {
+  const ref = db.collection('campanhas').doc(campanhaId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error('Campanha não encontrada.');
+  const c = { id: snap.id, ...snap.data() };
+  if (c.status === 'concluida' || c.status === 'pausada') return { enviados: 0, motivo: c.status };
+
+  const numero = await obterNumeroDatafy({ numeroId: c.numeroId, finalidade: c.finalidade || 'comercial' });
+
+  // Quem ainda não recebeu
+  const fila = (c.destinatarios || []).filter(d => !d.enviadoEm && !d.erro);
+  if (!fila.length) {
+    await ref.set({ status: 'concluida', concluidaEm: new Date().toISOString() }, { merge: true });
+    return { enviados: 0, motivo: 'fila vazia' };
+  }
+
+  // Limite diário da campanha
+  const hoje = new Date().toISOString().slice(0, 10);
+  const enviadosHoje = (c.destinatarios || [])
+    .filter(d => d.enviadoEm && d.enviadoEm.startsWith(hoje)).length;
+  const limiteDia = Number(c.limiteDiario) || 200;
+  const podeHoje = Math.max(limiteDia - enviadosHoje, 0);
+  if (podeHoje === 0) return { enviados: 0, motivo: 'limite diário atingido' };
+
+  const lote = fila.slice(0, Math.min(limiteNesteCiclo, podeHoje));
+  const atualizados = [...(c.destinatarios || [])];
+  let ok = 0, falhas = 0;
+
+  for (const alvo of lote) {
+    const idx = atualizados.findIndex(d => d.leadId === alvo.leadId);
+    try {
+      const r = await enviarDaCampanha(c, alvo, numero.token);
+      if (r.ok) {
+        atualizados[idx] = {
+          ...alvo,
+          enviadoEm: new Date().toISOString(),
+          messageId: r.data?.messages?.[0]?.id || '',
+        };
+        ok++;
+      } else {
+        atualizados[idx] = { ...alvo, erro: (r.data?.error?.message || 'falha').slice(0, 200) };
+        falhas++;
+      }
+    } catch (e) {
+      atualizados[idx] = { ...alvo, erro: String(e.message).slice(0, 200) };
+      falhas++;
+    }
+    // Intervalo entre envios: disparo em rajada derruba a qualidade do número
+    await new Promise(r => setTimeout(r, (Number(c.intervaloSegundos) || 3) * 1000));
+  }
+
+  const restante = atualizados.filter(d => !d.enviadoEm && !d.erro).length;
+  await ref.set({
+    destinatarios: atualizados,
+    enviados: atualizados.filter(d => d.enviadoEm).length,
+    falhas: atualizados.filter(d => d.erro).length,
+    status: restante === 0 ? 'concluida' : 'enviando',
+    ultimoEnvioEm: new Date().toISOString(),
+    ...(restante === 0 ? { concluidaEm: new Date().toISOString() } : {}),
+  }, { merge: true });
+
+  return { enviados: ok, falhas, restante };
+}
+
+exports.campanhaDisparar = functions.runWith({ timeoutSeconds: 540 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { campanhaId, limite } = req.body || {};
+      if (!campanhaId) throw new Error('Informe a campanha.');
+      const r = await processarCampanha(campanhaId, Number(limite) || 40);
+      res.status(200).json({ ok: true, ...r });
+    } catch (err) {
+      console.error('[campanha] disparo:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// Continua as campanhas em andamento e inicia as agendadas
+exports.campanhasAgendadas = functions.runWith({ timeoutSeconds: 540 })
+  .pubsub.schedule('every 15 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const snap = await db.collection('campanhas').get();
+      const agora = Date.now();
+      for (const d of snap.docs) {
+        const c = { id: d.id, ...d.data() };
+        if (c.status === 'enviando') {
+          await processarCampanha(c.id, 40);
+          continue;
+        }
+        if (c.status === 'agendada' && c.agendadaPara) {
+          const quando = new Date(c.agendadaPara).getTime();
+          if (!isNaN(quando) && quando <= agora) {
+            await d.ref.set({ status: 'enviando', iniciadaEm: new Date().toISOString() }, { merge: true });
+            await processarCampanha(c.id, 40);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[campanhas agendadas] erro:', err.message);
+    }
+    return null;
+  });
+
+// ─── ATENDIMENTO POR IA ──────────────────────────────────────────────────────
+// Recebe as respostas pelo webhook da Datafy e responde com a OpenAI.
+// A autonomia é configurável em config/atendimento_ia.
+// URL a cadastrar no painel da Datafy:
+//   https://us-central1-secullum-crm.cloudfunctions.net/datafyWebhook
+
+const NIVEIS_AUTONOMIA = {
+  basico: {
+    pode: 'Responder apenas dúvidas gerais sobre o que é o sistema de ponto, como funciona o registro por facial, quais equipamentos existem e prazos de instalação.',
+    naoPode: 'NUNCA informar preços, valores, descontos, condições de pagamento ou prazos de contrato. NUNCA prometer nada. Nesses casos, diga que um consultor vai passar as informações e encerre o assunto.',
+  },
+  comercial: {
+    pode: 'Responder dúvidas sobre o sistema, equipamentos, e informar os preços da tabela quando perguntarem. Pode explicar planos e formas de pagamento.',
+    naoPode: 'NUNCA conceder desconto, prazo especial ou condição fora da tabela. Não fechar contrato nem confirmar pedido — isso é sempre com um consultor.',
+  },
+  completo: {
+    pode: 'Conduzir a conversa comercial: tirar dúvidas, informar preços, explicar planos, sugerir a melhor solução pelo porte da empresa e propor um horário de apresentação.',
+    naoPode: 'NUNCA conceder desconto fora da tabela nem confirmar fechamento de contrato sem um consultor.',
+  },
+};
+
+async function configAtendimento() {
+  const snap = await db.collection('config').doc('atendimento_ia').get();
+  const d = snap.exists ? snap.data() : {};
+  return {
+    ativo: d.ativo === true,
+    autonomia: d.autonomia || 'basico',
+    personalidade: d.personalidade || '',
+    tabelaPrecos: d.tabelaPrecos || '',
+    horarioInicio: d.horarioInicio || '08:00',
+    horarioFim: d.horarioFim || '18:00',
+    foraHorario: d.foraHorario || 'Recebemos sua mensagem! Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos assim que possível 😊',
+    palavrasEscalar: d.palavrasEscalar || ['reclamação', 'processo', 'advogado', 'cancelar contrato', 'procon'],
+    avisarResponsavel: d.avisarResponsavel !== false,
+    responsavelId: d.responsavelId || '',
+    maxMensagens: Number(d.maxMensagens) || 12,
+  };
+}
+
+function dentroDoHorario(cfg) {
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const dia = agora.getDay();
+  if (dia === 0 || dia === 6) return false;
+  const hm = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+  return hm >= cfg.horarioInicio && hm <= cfg.horarioFim;
+}
+
+async function responderComIA({ lead, mensagem, historico, cfg }) {
+  if (!OPENAI_KEY) return null;
+  const nivel = NIVEIS_AUTONOMIA[cfg.autonomia] || NIVEIS_AUTONOMIA.basico;
+
+  const sistema = [
+    'Você atende pelo WhatsApp da Guion Informática e Relógio de Ponto, revenda Secullum de sistemas de controle de ponto, em Ibaiti/PR.',
+    '',
+    'COMO FALAR',
+    '- Escreva como uma pessoa do atendimento escreveria: direto, cordial, sem formalidade excessiva.',
+    '- Acompanhe o jeito do cliente: se ele escreve curto, responda curto; se é mais formal, acompanhe.',
+    '- No máximo 4 linhas por mensagem. Uma pergunta por vez.',
+    '- Emoji com moderação, no máximo um por mensagem.',
+    '- Nunca diga que é uma inteligência artificial, um robô ou um atendimento automático.',
+    '- Não repita o nome da pessoa a toda hora.',
+    '',
+    'O QUE VOCÊ PODE FAZER',
+    nivel.pode,
+    '',
+    'O QUE VOCÊ NÃO PODE FAZER',
+    nivel.naoPode,
+    '- Nunca invente informação. Sem certeza, diga que vai confirmar e passar em seguida.',
+    '',
+    cfg.tabelaPrecos ? 'TABELA DE PREÇOS\n' + cfg.tabelaPrecos : '',
+    cfg.personalidade ? '\nORIENTAÇÕES DA EMPRESA\n' + cfg.personalidade : '',
+    '',
+    'SOBRE ESTE CONTATO',
+    `Nome: ${lead.nome || 'não informado'}`,
+    lead.funcionarios ? `Porte informado: ${lead.funcionarios}` : '',
+    lead.solucao ? `Interesse: ${lead.solucao}` : '',
+    lead.sistema_ponto ? `Já usa sistema de ponto: ${lead.sistema_ponto}` : '',
+    lead.apresData ? `Tem apresentação marcada para ${lead.apresData} ${lead.apresHora || ''}` : '',
+    '',
+    'Se perceber que o assunto precisa de uma pessoa (reclamação, negociação, algo fora do seu alcance), diga que vai chamar um consultor e responda apenas com: [ESCALAR]',
+  ].filter(Boolean).join('\n');
+
+  const mensagens = [
+    { role: 'system', content: sistema },
+    ...(historico || []).slice(-cfg.maxMensagens).map(m => ({
+      role: m.de === 'cliente' ? 'user' : 'assistant',
+      content: m.texto || '',
+    })),
+    { role: 'user', content: mensagem },
+  ];
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini', max_tokens: 350, temperature: 0.8,
+        presence_penalty: 0.3, messages: mensagens,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { console.error('[atendimento] OpenAI:', data?.error?.message); return null; }
+    return (data.choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    console.error('[atendimento] erro IA:', e.message);
+    return null;
+  }
+}
+
+exports.datafyWebhook = functions.https.onRequest(async (req, res) => {
+  // Verificação do webhook
+  if (req.method === 'GET') {
+    const challenge = req.query['hub.challenge'];
+    if (challenge) { res.status(200).send(challenge); return; }
+    res.status(200).send('ok'); return;
+  }
+  // Responde rápido para a Datafy não reenviar
+  res.status(200).send('OK');
+
+  try {
+    const body = req.body || {};
+    const entradas = body.entry || (body.messages ? [{ changes: [{ value: body }] }] : []);
+
+    for (const entry of entradas) {
+      for (const change of (entry.changes || [])) {
+        const v = change.value || {};
+        const msgs = v.messages || [];
+        if (!msgs.length) continue;
+
+        for (const m of msgs) {
+          const de = String(m.from || '').replace(/\D/g, '');
+          const texto = m.text?.body
+            || m.button?.text
+            || m.interactive?.button_reply?.title
+            || m.interactive?.list_reply?.title
+            || '';
+          if (!de) continue;
+
+          // Localiza o lead pelo telefone
+          const leadsSnap = await db.collection('leads').get();
+          let lead = null;
+          leadsSnap.forEach(d => {
+            const l = d.data();
+            const tel = String(l.telefone || '').replace(/\D/g, '');
+            if (!tel) return;
+            const a = tel.slice(-8), b = de.slice(-8);
+            if (a && a === b) lead = { id: d.id, ...l };
+          });
+
+          const agora = new Date().toISOString();
+          const registro = { de: 'cliente', texto, data: agora, messageId: m.id || '' };
+
+          if (!lead) {
+            // Contato desconhecido — vira lead novo para não se perder
+            const id = 'lead_wa_' + Date.now();
+            await db.collection('leads').doc(id).set({
+              nome: (v.contacts?.[0]?.profile?.name || 'CONTATO WHATSAPP').toUpperCase(),
+              telefone: de, origem: 'WhatsApp', status: 'novo',
+              criadoEm: agora, atualizadoEm: agora,
+              conversa: [registro], historico: [],
+            });
+            console.log('[atendimento] lead novo criado a partir do WhatsApp:', de);
+            continue;
+          }
+
+          const conversa = [...(lead.conversa || []), registro];
+          await db.collection('leads').doc(lead.id).set({
+            conversa,
+            ultimaMensagemEm: agora,
+            aguardandoResposta: true,
+            primeiroContatoEm: lead.primeiroContatoEm || agora,
+            atualizadoEm: agora,
+          }, { merge: true });
+
+          const cfg = await configAtendimento();
+          if (!cfg.ativo) continue;
+          if (lead.atendimentoHumano) continue; // alguém assumiu a conversa
+
+          // Fora do horário: aviso único por dia
+          if (!dentroDoHorario(cfg)) {
+            const hoje = agora.slice(0, 10);
+            if (lead.avisoForaHorarioEm?.startsWith(hoje)) continue;
+            const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+            await chamarDatafy({
+              token: numero.token, path: '/messages/send/text',
+              method: 'POST', body: { to: de, text: cfg.foraHorario },
+            });
+            await db.collection('leads').doc(lead.id).set({
+              avisoForaHorarioEm: agora,
+              conversa: [...conversa, { de: 'sistema', texto: cfg.foraHorario, data: agora }],
+            }, { merge: true });
+            continue;
+          }
+
+          // Palavras que exigem uma pessoa
+          const precisaHumano = (cfg.palavrasEscalar || [])
+            .some(p => texto.toLowerCase().includes(String(p).toLowerCase()));
+
+          let resposta = null;
+          if (!precisaHumano) {
+            resposta = await responderComIA({ lead, mensagem: texto, historico: conversa, cfg });
+          }
+
+          if (precisaHumano || !resposta || resposta.includes('[ESCALAR]')) {
+            await db.collection('leads').doc(lead.id).set({
+              atendimentoHumano: true, escaladoEm: agora,
+              motivoEscalada: precisaHumano ? 'Palavra-chave sensível' : 'IA pediu apoio humano',
+            }, { merge: true });
+
+            if (cfg.avisarResponsavel) {
+              try {
+                const usnap = await db.collection('usuarios').get();
+                let resp = null;
+                usnap.forEach(d => {
+                  const u = { id: d.id, ...d.data() };
+                  if (cfg.responsavelId && u.id === cfg.responsavelId && u.celular) resp = u;
+                });
+                if (resp) {
+                  const numero = await obterNumeroDatafy({ finalidade: 'interno' });
+                  const aviso = `🙋 *Atendimento precisa de você*\n\n*${lead.nome || de}*\n${lead.telefone || de}\n\n_"${texto.slice(0, 180)}"_`;
+                  await chamarDatafy({
+                    token: numero.token, path: '/messages/send/text',
+                    method: 'POST', body: { to: normalizarNumero(resp.celular), text: aviso },
+                  });
+                }
+              } catch (e) { console.error('[atendimento] aviso interno:', e.message); }
+            }
+            continue;
+          }
+
+          // Envia a resposta da IA
+          const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+          await chamarDatafy({
+            token: numero.token, path: '/messages/send/typing',
+            method: 'POST', body: { to: de },
+          }).catch(() => {});
+          const r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: de, text: resposta },
+          });
+          await db.collection('leads').doc(lead.id).set({
+            conversa: [...conversa, { de: 'ia', texto: resposta, data: new Date().toISOString() }],
+            aguardandoResposta: false,
+          }, { merge: true });
+          console.log(`[atendimento] "${lead.nome}": ${r.ok ? 'respondido' : 'falha ao responder'}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[atendimento] erro:', err.message, err.stack);
+  }
+});
+
+// Envio manual pela tela de conversas
+exports.conversaEnviar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { leadId, texto, usuario } = req.body || {};
+    if (!leadId || !texto) throw new Error('Informe o lead e o texto.');
+    const snap = await db.collection('leads').doc(leadId).get();
+    if (!snap.exists) throw new Error('Lead não encontrado.');
+    const lead = snap.data();
+    const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+    const r = await chamarDatafy({
+      token: numero.token, path: '/messages/send/text',
+      method: 'POST', body: { to: normalizarNumero(lead.telefone), text: texto },
+    });
+    if (!r.ok) throw new Error(r.data?.error?.message || 'Falha ao enviar');
+    await db.collection('leads').doc(leadId).set({
+      conversa: [...(lead.conversa || []), { de: 'humano', texto, data: new Date().toISOString(), usuario: usuario || '—' }],
+      atendimentoHumano: true, aguardandoResposta: false,
+      atualizadoEm: new Date().toISOString(),
+    }, { merge: true });
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});

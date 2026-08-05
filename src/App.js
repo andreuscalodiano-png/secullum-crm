@@ -85,6 +85,7 @@ const NAV_ITEMS_BASE=[
   {id:'solicitacoes',  icon:'ti-message-circle',    label:'Solicitações',   perfis:['admin','financeiro','colaborador']},
   {id:'orcamentos',    icon:'ti-file-invoice',       label:'Orçamentos',     perfis:['admin','financeiro','colaborador']},
   {id:'leads',         icon:'ti-target',             label:'Leads',          perfis:['admin','colaborador']},
+  {id:'anuncios',      icon:'ti-speakerphone',       label:'Anúncios',       perfis:['admin']},
 ];
 // Config sempre fixo no final, só admin
 const NAV_CONFIG={id:'config',icon:'ti-settings',label:'Configurações',perfis:['admin']};
@@ -10862,6 +10863,956 @@ async function registrarEventoLead(lead,evento,detalhe){
   }catch(e){console.error('[lead] erro ao registrar evento:',e);}
 }
 
+// ─── ANÚNCIOS: campanhas e atendimento por WhatsApp ──────────────────────────
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// A Meta só permite TEXTO LIVRE para quem respondeu nas últimas 24h. Para
+// iniciar conversa é obrigatório TEMPLATE APROVADO. Envio em massa sem
+// cuidado derruba a qualidade do número e pode suspender a conta.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ModalCuidadosEnvio({total,onConfirmar,onCancelar}){
+  const [lidos,setLidos]=useState({});
+  const ITENS=[
+    {id:'consent',txt:'Estes contatos pediram informação para a Guion — não é lista comprada nem contato aleatório.'},
+    {id:'template',txt:'Entendo que quem não respondeu nas últimas 24h só recebe template aprovado pela Meta.'},
+    {id:'limite',txt:'Sei que o disparo respeita um limite diário e que exagerar derruba a qualidade do número.'},
+    {id:'optout',txt:'A mensagem deixa claro como a pessoa pede para não receber mais.'},
+    {id:'risco',txt:'Entendo que denúncias de spam podem suspender o número da empresa.'},
+  ];
+  const todos=ITENS.every(i=>lidos[i.id]);
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'22px 24px',maxWidth:560,width:'100%',maxHeight:'90vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:11,marginBottom:14,paddingBottom:12,borderBottom:'1px solid #e8eaed'}}>
+          <div style={{width:38,height:38,borderRadius:10,background:'#fee2e2',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18}}>⚠️</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Antes de disparar</div>
+            <div style={{fontSize:11,color:'#95a5a6'}}>{total} destinatário(s) nesta campanha</div>
+          </div>
+        </div>
+        <div style={{fontSize:12,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+          Envio em massa no WhatsApp tem regras da Meta e consequências reais. Confirme cada ponto:
+        </div>
+        {ITENS.map(i=>(
+          <label key={i.id} style={{display:'flex',gap:10,alignItems:'flex-start',padding:'10px 12px',borderRadius:8,marginBottom:6,cursor:'pointer',
+            background:lidos[i.id]?'#f0fff4':'#f8f9fa',border:`1px solid ${lidos[i.id]?'#9ae6b4':'#e8eaed'}`}}>
+            <input type="checkbox" checked={!!lidos[i.id]} onChange={()=>setLidos(l=>({...l,[i.id]:!l[i.id]}))} style={{width:16,height:16,marginTop:1,cursor:'pointer',flexShrink:0}}/>
+            <span style={{fontSize:12,color:'#4a4a4a',lineHeight:1.5}}>{i.txt}</span>
+          </label>
+        ))}
+        <div style={{display:'flex',gap:10,marginTop:16}}>
+          <button onClick={onCancelar} style={{flex:1,padding:'11px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d',fontWeight:600}}>Cancelar</button>
+          <button onClick={onConfirmar} disabled={!todos}
+            style={{flex:2,padding:'11px',borderRadius:7,border:'none',background:todos?'#c2185b':'#dde1e7',color:'#fff',fontWeight:700,cursor:todos?'pointer':'default',fontSize:13}}>
+            {todos?'🚀 Iniciar disparo':'Marque todos os pontos'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnunciosView({leads,usuarios,perfil}){
+  const [aba,setAba]=useState('campanhas');
+  const abas=[
+    {id:'campanhas',  l:'📢 Campanhas',  cor:'#c2185b'},
+    {id:'templates',  l:'📄 Templates',  cor:'#3498db'},
+    {id:'conversas',  l:'💬 Conversas',  cor:'#25D366'},
+    {id:'ia',         l:'🤖 Atendimento IA', cor:'#8e44ad'},
+  ];
+  if(perfil!=='admin')return(
+    <div style={{background:'#fff',borderRadius:10,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+      <div style={{fontSize:36,marginBottom:10}}>🔒</div>
+      <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>Acesso restrito</div>
+      <div style={{fontSize:12,color:'#7f8c8d'}}>Disparos em massa são liberados apenas para quem tem acesso total ao sistema.</div>
+    </div>
+  );
+  return(
+    <div>
+      <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
+        {abas.map(a=>(
+          <button key={a.id} onClick={()=>setAba(a.id)}
+            style={{padding:'9px 18px',borderRadius:8,border:'none',background:aba===a.id?a.cor:'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:500}}>
+            {a.l}
+          </button>
+        ))}
+      </div>
+      {aba==='campanhas'&&<AbaCampanhas leads={leads}/>}
+      {aba==='templates'&&<AbaTemplates/>}
+      {aba==='conversas'&&<AbaConversas leads={leads}/>}
+      {aba==='ia'&&<AbaAtendimentoIA usuarios={usuarios}/>}
+    </div>
+  );
+}
+
+function AbaTemplates(){
+  const [lista,setLista]=useState([]);
+  const [carregando,setCarregando]=useState(false);
+  const [erro,setErro]=useState('');
+  const [criando,setCriando]=useState(false);
+  const [f,setF]=useState({nome:'',categoria:'MARKETING',corpo:'',rodape:'',botaoTexto:'',botaoUrl:''});
+  const [salvando,setSalvando]=useState(false);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  async function carregar(){
+    setCarregando(true);setErro('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/datafyTemplates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'listar'})});
+      const d=await r.json();
+      if(d.error)setErro(d.error);
+      else setLista(d.data||d||[]);
+    }catch(e){setErro('Erro ao carregar: '+e.message);}
+    setCarregando(false);
+  }
+  useEffect(()=>{carregar();},[]);
+
+  async function criar(){
+    if(!f.nome.trim()||!f.corpo.trim()){alert('Preencha o nome e o corpo da mensagem.');return;}
+    const nome=f.nome.trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
+    const componentes=[{type:'BODY',text:f.corpo}];
+    if(f.rodape.trim())componentes.push({type:'FOOTER',text:f.rodape.trim()});
+    if(f.botaoTexto.trim()&&f.botaoUrl.trim()){
+      componentes.push({type:'BUTTONS',buttons:[{type:'URL',text:f.botaoTexto.trim(),url:f.botaoUrl.trim()}]});
+    }
+    setSalvando(true);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/datafyTemplates`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({acao:'criar',usuario:auth.currentUser?.email,
+          template:{name:nome,language:'pt_BR',category:f.categoria,components:componentes}}),
+      });
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else{
+        alert('✅ Template enviado para aprovação da Meta.\n\nA análise costuma levar de alguns minutos a 2 dias. Você acompanha o status aqui na lista.');
+        setCriando(false);setF({nome:'',categoria:'MARKETING',corpo:'',rodape:'',botaoTexto:'',botaoUrl:''});
+        setTimeout(carregar,1500);
+      }
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function remover(nome){
+    if(!window.confirm(`Remover o template "${nome}"?`))return;
+    await fetch(`${FUNCTIONS_URL}/datafyTemplates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'remover',nome})});
+    carregar();
+  }
+
+  const COR_ST={APPROVED:'#27ae60',PENDING:'#f5a623',REJECTED:'#e74c3c',PAUSED:'#7f8c8d'};
+  const LBL_ST={APPROVED:'Aprovado',PENDING:'Em análise',REJECTED:'Recusado',PAUSED:'Pausado'};
+
+  return(
+    <div>
+      <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 14px',marginBottom:14,fontSize:11,color:'#2b6cb0',lineHeight:1.7}}>
+        <strong>Por que templates?</strong> A Meta só deixa enviar texto livre para quem respondeu nas últimas 24 horas.
+        Para começar uma conversa — que é o caso de uma campanha — é obrigatório usar um template aprovado por ela.
+        Use as variáveis numeradas para os campos que mudam por pessoa.
+      </div>
+
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+        <button onClick={carregar} disabled={carregando}
+          style={{padding:'7px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+          {carregando?'Carregando...':'🔄 Atualizar lista'}
+        </button>
+        <button onClick={()=>setCriando(c=>!c)}
+          style={{padding:'7px 16px',borderRadius:7,border:'none',background:'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {criando?'Cancelar':'+ Novo template'}
+        </button>
+      </div>
+
+      {erro&&<div style={{background:'#fee2e2',color:'#991b1b',borderRadius:7,padding:'10px 12px',fontSize:12,marginBottom:12}}>⚠ {erro}</div>}
+
+      {criando&&(
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',border:'1px dashed #dde1e7',marginBottom:14}}>
+          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
+            <div>
+              <label style={lbl}>Nome (sem espaços, minúsculo)</label>
+              <input style={fi} value={f.nome} onChange={e=>setF(x=>({...x,nome:e.target.value}))} placeholder="oferta_facial_agosto"/>
+            </div>
+            <div>
+              <label style={lbl}>Categoria</label>
+              <select style={fi} value={f.categoria} onChange={e=>setF(x=>({...x,categoria:e.target.value}))}>
+                <option value="MARKETING">Marketing — ofertas</option>
+                <option value="UTILITY">Utilidade — avisos</option>
+              </select>
+            </div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Corpo da mensagem</label>
+            <textarea style={{...fi,minHeight:100,resize:'vertical',lineHeight:1.6}} value={f.corpo} onChange={e=>setF(x=>({...x,corpo:e.target.value}))}
+              placeholder={'Olá {{1}}! 👋\n\nEstamos com condição especial no relógio de ponto facial este mês.\n\nQuer que eu te mande os detalhes?'}/>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Use {'{{1}}'} para o nome, {'{{2}}'} para o segundo campo, e assim por diante.</div>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Rodapé (opcional)</label>
+            <input style={fi} value={f.rodape} onChange={e=>setF(x=>({...x,rodape:e.target.value}))} placeholder="Responda SAIR para não receber mais"/>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginBottom:12}}>
+            <div>
+              <label style={lbl}>Botão (opcional)</label>
+              <input style={fi} value={f.botaoTexto} onChange={e=>setF(x=>({...x,botaoTexto:e.target.value}))} placeholder="Ver oferta" maxLength={20}/>
+            </div>
+            <div>
+              <label style={lbl}>Link do botão</label>
+              <input style={fi} value={f.botaoUrl} onChange={e=>setF(x=>({...x,botaoUrl:e.target.value}))} placeholder="https://guionstore.com.br/oferta"/>
+            </div>
+          </div>
+
+          {f.corpo&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Prévia</div>
+              <div style={{background:'#dcf8c6',borderRadius:'10px 10px 10px 2px',padding:'10px 13px',maxWidth:340,fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5}}>
+                {f.corpo.split('{{1}}').join('João').split('{{2}}').join('10 funcionários')}
+                {f.rodape&&<div style={{fontSize:10,color:'#7f8c8d',marginTop:6}}>{f.rodape}</div>}
+                {f.botaoTexto&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid rgba(0,0,0,.08)',textAlign:'center',color:'#2b6cb0',fontWeight:600,fontSize:12}}>🔗 {f.botaoTexto}</div>}
+              </div>
+            </div>
+          )}
+
+          <button onClick={criar} disabled={salvando}
+            style={{padding:'9px 20px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {salvando?'Enviando...':'📤 Enviar para aprovação'}
+          </button>
+        </div>
+      )}
+
+      {lista.length===0&&!carregando&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'30px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)',fontSize:12,color:'#7f8c8d'}}>
+          Nenhum template ainda. Crie o primeiro para poder disparar campanhas.
+        </div>
+      )}
+      {lista.map((t,i)=>{
+        const st=(t.status||'PENDING').toUpperCase();
+        const corpo=(t.components||[]).find(c=>c.type==='BODY')?.text||'';
+        return(
+          <div key={i} style={{background:'#fff',borderRadius:8,padding:'12px 14px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',borderLeft:`4px solid ${COR_ST[st]||'#95a5a6'}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+              <span style={{fontWeight:700,fontSize:13,color:'#2c3e50',flex:1,minWidth:120}}>{t.name}</span>
+              <span style={{fontSize:9,background:(COR_ST[st]||'#95a5a6')+'18',color:COR_ST[st]||'#95a5a6',padding:'2px 9px',borderRadius:10,fontWeight:700,textTransform:'uppercase'}}>
+                {LBL_ST[st]||st}
+              </span>
+              <span style={{fontSize:10,color:'#95a5a6'}}>{t.category||''}</span>
+              <button onClick={()=>remover(t.name)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+            </div>
+            {corpo&&<div style={{fontSize:11,color:'#7f8c8d',whiteSpace:'pre-wrap',lineHeight:1.5,paddingLeft:2}}>{corpo.slice(0,180)}{corpo.length>180?'...':''}</div>}
+            {st==='REJECTED'&&t.rejected_reason&&<div style={{fontSize:11,color:'#e74c3c',marginTop:5}}>Motivo: {t.rejected_reason}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AbaCampanhas({leads}){
+  const [campanhas,setCampanhas]=useState([]);
+  const [criando,setCriando]=useState(false);
+  const [selecionada,setSelecionada]=useState(null);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'campanhas'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setCampanhas(arr.sort((a,b)=>new Date(b.criadaEm||0)-new Date(a.criadaEm||0)));
+    });
+    return()=>unsub();
+  },[]);
+
+  const COR={rascunho:'#95a5a6',agendada:'#3498db',enviando:'#f5a623',concluida:'#27ae60',pausada:'#e67e22'};
+  const LBL={rascunho:'Rascunho',agendada:'Agendada',enviando:'Enviando',concluida:'Concluída',pausada:'Pausada'};
+
+  async function alternarPausa(c){
+    await setDoc(doc(db,'campanhas',c.id),{status:c.status==='pausada'?'enviando':'pausada'},{merge:true});
+  }
+  async function remover(c){
+    if(!window.confirm(`Remover a campanha "${c.nome}"?`))return;
+    await deleteDoc(doc(db,'campanhas',c.id));
+  }
+
+  if(criando)return <NovaCampanha leads={leads} onFechar={()=>setCriando(false)}/>;
+  if(selecionada)return <DetalheCampanha campanha={campanhas.find(c=>c.id===selecionada.id)||selecionada} onFechar={()=>setSelecionada(null)}/>;
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
+        <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,flex:1,minWidth:200}}>
+          Ofertas para os leads, com controle de limite diário e intervalo entre mensagens.
+        </div>
+        <button onClick={()=>setCriando(true)}
+          style={{padding:'8px 18px',borderRadius:7,border:'none',background:'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          + Nova campanha
+        </button>
+      </div>
+
+      {campanhas.length===0&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'34px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:34,marginBottom:10}}>📢</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>Nenhuma campanha ainda</div>
+          <div style={{fontSize:12,color:'#7f8c8d'}}>Crie uma campanha para enviar ofertas aos seus leads.</div>
+        </div>
+      )}
+
+      {campanhas.map(c=>{
+        const total=(c.destinatarios||[]).length;
+        const env=(c.destinatarios||[]).filter(d=>d.enviadoEm).length;
+        const pct=total?Math.round((env/total)*100):0;
+        return(
+          <div key={c.id} style={{background:'#fff',borderRadius:8,padding:'13px 15px',marginBottom:8,boxShadow:'0 1px 4px rgba(0,0,0,.06)',borderLeft:`4px solid ${COR[c.status]||'#95a5a6'}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:8}}>
+              <div style={{flex:1,minWidth:150,cursor:'pointer'}} onClick={()=>setSelecionada(c)}>
+                <div style={{fontWeight:700,fontSize:13,color:'#2c3e50'}}>{c.nome}</div>
+                <div style={{fontSize:11,color:'#95a5a6'}}>
+                  {total} destinatário(s) · {c.tipo==='template'?`template ${c.template}`:c.tipo}
+                  {c.agendadaPara&&c.status==='agendada'?` · agendada para ${new Date(c.agendadaPara).toLocaleString('pt-BR')}`:''}
+                </div>
+              </div>
+              <span style={{fontSize:9,background:(COR[c.status]||'#95a5a6')+'18',color:COR[c.status]||'#95a5a6',padding:'2px 10px',borderRadius:10,fontWeight:700,textTransform:'uppercase'}}>
+                {LBL[c.status]||c.status}
+              </span>
+              {(c.status==='enviando'||c.status==='pausada')&&(
+                <button onClick={()=>alternarPausa(c)} style={{padding:'5px 11px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,fontWeight:600,color:'#4a4a4a'}}>
+                  {c.status==='pausada'?'▶ Retomar':'⏸ Pausar'}
+                </button>
+              )}
+              <button onClick={()=>setSelecionada(c)} style={{padding:'5px 11px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,fontWeight:600,color:'#3498db'}}>Ver</button>
+              <button onClick={()=>remover(c)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16}}>×</button>
+            </div>
+            {total>0&&(
+              <div>
+                <div style={{height:6,borderRadius:3,background:'#f0f2f5',overflow:'hidden',marginBottom:4}}>
+                  <div style={{height:'100%',width:pct+'%',background:COR[c.status]||'#95a5a6',borderRadius:3,transition:'width .5s'}}/>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#95a5a6'}}>
+                  <span>{env} de {total} enviados</span>
+                  {c.falhas>0&&<span style={{color:'#e74c3c'}}>{c.falhas} falha(s)</span>}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetalheCampanha({campanha,onFechar}){
+  const [enviando,setEnviando]=useState(false);
+  const c=campanha||{};
+  const dest=c.destinatarios||[];
+  const enviados=dest.filter(d=>d.enviadoEm);
+  const falhas=dest.filter(d=>d.erro);
+  const pendentes=dest.filter(d=>!d.enviadoEm&&!d.erro);
+
+  async function continuar(){
+    setEnviando(true);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/campanhaDisparar`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campanhaId:c.id,limite:40})});
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else alert(`✅ ${d.enviados} enviada(s) neste lote.`+(d.restante?`\n\nFaltam ${d.restante}. O sistema continua sozinho a cada 15 minutos.`:'\n\nCampanha concluída!'));
+    }catch(e){alert('Erro: '+e.message);}
+    setEnviando(false);
+  }
+
+  return(
+    <div>
+      <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,padding:0}}>← Voltar</button>
+      <div style={{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:16,color:'#2c3e50',marginBottom:4}}>{c.nome}</div>
+        <div style={{fontSize:11,color:'#95a5a6',marginBottom:14}}>
+          {c.tipo==='template'?`Template: ${c.template}`:`Tipo: ${c.tipo}`} · criada em {c.criadaEm?new Date(c.criadaEm).toLocaleString('pt-BR'):'—'} por {c.criadaPor||'—'}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:10,marginBottom:14}}>
+          {[
+            ['Total',dest.length,'#3498db'],
+            ['Enviados',enviados.length,'#27ae60'],
+            ['Pendentes',pendentes.length,'#f5a623'],
+            ['Falhas',falhas.length,falhas.length?'#e74c3c':'#95a5a6'],
+          ].map(([l,v,cor])=>(
+            <div key={l} style={{background:'#f8f9fa',borderRadius:8,padding:'11px 13px',borderTop:`3px solid ${cor}`}}>
+              <div style={{fontSize:9,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>{l}</div>
+              <div style={{fontSize:20,fontWeight:700,color:cor}}>{v}</div>
+            </div>
+          ))}
+        </div>
+        {pendentes.length>0&&c.status!=='pausada'&&(
+          <button onClick={continuar} disabled={enviando}
+            style={{padding:'9px 20px',borderRadius:7,border:'none',background:enviando?'#dde1e7':'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {enviando?'Enviando...':`▶ Enviar próximo lote (${Math.min(40,pendentes.length)})`}
+          </button>
+        )}
+      </div>
+
+      <div style={{background:'#fff',borderRadius:10,padding:'16px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase',marginBottom:10}}>Destinatários</div>
+        <div style={{maxHeight:340,overflowY:'auto'}}>
+          {dest.map((d,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 10px',borderBottom:i<dest.length-1?'1px solid #f5f6fa':'none',fontSize:12}}>
+              <span style={{flexShrink:0}}>{d.enviadoEm?'✅':d.erro?'❌':'⏳'}</span>
+              <span style={{flex:1,color:'#2c3e50',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.nome}</span>
+              <span style={{fontSize:10,color:'#95a5a6'}}>{d.telefone}</span>
+              {d.enviadoEm&&<span style={{fontSize:10,color:'#27ae60'}}>{new Date(d.enviadoEm).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>}
+              {d.erro&&<span style={{fontSize:10,color:'#e74c3c',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={d.erro}>{d.erro}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NovaCampanha({leads,onFechar}){
+  const [c,setC]=useState({
+    nome:'',tipo:'template',template:'',variaveis:['{{primeiro_nome}}'],
+    texto:'',midia:'',linkTexto:'',linkUrl:'',botoes:[],
+    filtroStatus:'todos',filtroOrigem:'todas',filtroPorte:'todos',somenteComTelefone:true,
+    limiteDiario:200,intervaloSegundos:4,quando:'agora',agendadaPara:'',finalidade:'comercial',
+  });
+  const [templates,setTemplates]=useState([]);
+  const [mostrarCuidados,setMostrarCuidados]=useState(false);
+  const [salvando,setSalvando]=useState(false);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>setC(x=>({...x,[k]:v}));
+
+  useEffect(()=>{
+    fetch(`${FUNCTIONS_URL}/datafyTemplates`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'listar'})})
+      .then(r=>r.json()).then(d=>{
+        const lista=(d.data||d||[]).filter(t=>(t.status||'').toUpperCase()==='APPROVED');
+        setTemplates(lista);
+      }).catch(()=>{});
+  },[]);
+
+  const alvos=(leads||[]).filter(l=>{
+    if(c.somenteComTelefone&&!l.telefone)return false;
+    if(l.optout)return false;
+    if(c.filtroStatus!=='todos'&&l.status!==c.filtroStatus)return false;
+    if(c.filtroOrigem!=='todas'&&(l.origem||'')!==c.filtroOrigem)return false;
+    if(c.filtroPorte!=='todos'&&!(l.funcionarios||'').includes(c.filtroPorte))return false;
+    return true;
+  });
+
+  const origens=[...new Set((leads||[]).map(l=>l.origem).filter(Boolean))];
+  const portes=[...new Set((leads||[]).map(l=>l.funcionarios).filter(Boolean))];
+
+  async function criar(){
+    setSalvando(true);
+    try{
+      const id='camp_'+Date.now();
+      await setDoc(doc(db,'campanhas',id),{
+        ...c,id,
+        destinatarios:alvos.map(l=>({
+          leadId:l.id,nome:l.nome||'',telefone:l.telefone||'',
+          email:l.email||'',solucao:l.solucao||'',funcionarios:l.funcionarios||'',campanha:l.campanha||'',
+        })),
+        status:c.quando==='agora'?'enviando':'agendada',
+        enviados:0,falhas:0,
+        criadaEm:new Date().toISOString(),
+        criadaPor:auth.currentUser?.email||'—',
+      });
+      if(c.quando==='agora'){
+        fetch(`${FUNCTIONS_URL}/campanhaDisparar`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campanhaId:id,limite:40})}).catch(()=>{});
+      }
+      onFechar();
+    }catch(e){alert('Erro ao criar: '+e.message);setSalvando(false);}
+  }
+
+  function validar(){
+    if(!c.nome.trim()){alert('Dê um nome à campanha.');return false;}
+    if(c.tipo==='template'&&!c.template){alert('Escolha um template aprovado.');return false;}
+    if(c.tipo!=='template'&&!c.texto.trim()){alert('Escreva a mensagem.');return false;}
+    if(c.tipo==='imagem'&&!c.midia.trim()){alert('Informe o link da imagem.');return false;}
+    if(c.tipo==='cta'&&!c.linkUrl.trim()){alert('Informe o link do botão.');return false;}
+    if(!alvos.length){alert('Nenhum lead atende aos filtros escolhidos.');return false;}
+    if(c.quando==='agendar'&&!c.agendadaPara){alert('Escolha a data e a hora.');return false;}
+    return true;
+  }
+
+  return(
+    <div>
+      <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,padding:0}}>← Voltar às campanhas</button>
+
+      {mostrarCuidados&&(
+        <ModalCuidadosEnvio total={alvos.length}
+          onCancelar={()=>setMostrarCuidados(false)}
+          onConfirmar={()=>{setMostrarCuidados(false);criar();}}/>
+      )}
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Nome da campanha</label>
+        <input style={fi} value={c.nome} onChange={e=>up('nome',e.target.value)} placeholder="Ex: Oferta facial — agosto"/>
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #c2185b'}}>
+        <div style={{fontSize:10,color:'#c2185b',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · O que enviar</div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+          {[
+            {id:'template',l:'📄 Template',d:'Inicia conversa'},
+            {id:'texto',l:'💬 Texto',d:'Só quem respondeu'},
+            {id:'imagem',l:'🖼️ Imagem',d:'Só quem respondeu'},
+            {id:'cta',l:'🔗 Link',d:'Só quem respondeu'},
+            {id:'botoes',l:'🔘 Botões',d:'Só quem respondeu'},
+          ].map(t=>(
+            <button key={t.id} onClick={()=>up('tipo',t.id)}
+              style={{padding:'7px 13px',borderRadius:7,cursor:'pointer',fontSize:11,textAlign:'left',
+                border:`1px solid ${c.tipo===t.id?'#c2185b':'#dde1e7'}`,
+                background:c.tipo===t.id?'#c2185b':'#fff',color:c.tipo===t.id?'#fff':'#4a4a4a'}}>
+              <div style={{fontWeight:700}}>{t.l}</div>
+              <div style={{fontSize:9,opacity:.8}}>{t.d}</div>
+            </button>
+          ))}
+        </div>
+
+        {c.tipo!=='template'&&(
+          <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:6,padding:'8px 11px',fontSize:11,color:'#b45309',marginBottom:10,lineHeight:1.5}}>
+            ⚠ Só chega em quem te respondeu nas últimas 24 horas. Para os demais, use template.
+          </div>
+        )}
+
+        {c.tipo==='template'?(
+          <div>
+            <label style={lbl}>Template aprovado</label>
+            <select style={fi} value={c.template} onChange={e=>up('template',e.target.value)}>
+              <option value="">— Selecione —</option>
+              {templates.map(t=><option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            {templates.length===0&&<div style={{fontSize:11,color:'#e67e22',marginTop:5}}>Nenhum template aprovado ainda. Crie um na aba Templates.</div>}
+            {c.template&&(
+              <div style={{marginTop:10}}>
+                <label style={lbl}>Variáveis do template</label>
+                {(c.variaveis||[]).map((v,i)=>(
+                  <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:5}}>
+                    <span style={{fontSize:11,color:'#95a5a6',minWidth:34}}>#{i+1}</span>
+                    <input style={{...fi,flex:1}} value={v} onChange={e=>up('variaveis',c.variaveis.map((x,j)=>j===i?e.target.value:x))}/>
+                    <button onClick={()=>up('variaveis',c.variaveis.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+                  </div>
+                ))}
+                <button onClick={()=>up('variaveis',[...(c.variaveis||[]),''])}
+                  style={{padding:'4px 11px',borderRadius:5,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>+ Variável</button>
+                <div style={{fontSize:10,color:'#95a5a6',marginTop:6}}>
+                  Disponíveis: primeiro_nome · nome · solucao · funcionarios · campanha
+                </div>
+              </div>
+            )}
+          </div>
+        ):(
+          <div>
+            <label style={lbl}>Mensagem</label>
+            <textarea style={{...fi,minHeight:90,resize:'vertical',lineHeight:1.6}} value={c.texto} onChange={e=>up('texto',e.target.value)}
+              placeholder={'Oi! 😊\n\nEstamos com condição especial este mês...'}/>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:4}}>Variáveis disponíveis: primeiro_nome · nome · solucao · funcionarios</div>
+
+            {c.tipo==='imagem'&&(
+              <div style={{marginTop:10}}>
+                <label style={lbl}>Link da imagem (URL pública)</label>
+                <input style={fi} value={c.midia} onChange={e=>up('midia',e.target.value)} placeholder="https://.../oferta.jpg"/>
+              </div>
+            )}
+            {c.tipo==='cta'&&(
+              <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:10,marginTop:10}}>
+                <div><label style={lbl}>Texto do botão</label><input style={fi} value={c.linkTexto} onChange={e=>up('linkTexto',e.target.value)} placeholder="Ver oferta" maxLength={20}/></div>
+                <div><label style={lbl}>Link</label><input style={fi} value={c.linkUrl} onChange={e=>up('linkUrl',e.target.value)} placeholder="https://..."/></div>
+              </div>
+            )}
+            {c.tipo==='botoes'&&(
+              <div style={{marginTop:10}}>
+                <label style={lbl}>Botões de resposta (até 3)</label>
+                {(c.botoes||[]).map((b,i)=>(
+                  <div key={i} style={{display:'flex',gap:6,marginBottom:5}}>
+                    <input style={{...fi,flex:1}} value={b} maxLength={20} onChange={e=>up('botoes',c.botoes.map((x,j)=>j===i?e.target.value:x))} placeholder="Quero saber mais"/>
+                    <button onClick={()=>up('botoes',c.botoes.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+                  </div>
+                ))}
+                {(c.botoes||[]).length<3&&(
+                  <button onClick={()=>up('botoes',[...(c.botoes||[]),''])}
+                    style={{padding:'4px 11px',borderRadius:5,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>+ Botão</button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #3498db'}}>
+        <div style={{fontSize:10,color:'#3498db',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>2 · Para quem</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <label style={lbl}>Status do lead</label>
+            <select style={fi} value={c.filtroStatus} onChange={e=>up('filtroStatus',e.target.value)}>
+              <option value="todos">Todos</option>
+              {STATUS_LEAD.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Origem</label>
+            <select style={fi} value={c.filtroOrigem} onChange={e=>up('filtroOrigem',e.target.value)}>
+              <option value="todas">Todas</option>
+              {origens.map(o=><option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Porte</label>
+            <select style={fi} value={c.filtroPorte} onChange={e=>up('filtroPorte',e.target.value)}>
+              <option value="todos">Todos</option>
+              {portes.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{background:alvos.length?'#f0fff4':'#fff8ee',border:`1px solid ${alvos.length?'#9ae6b4':'#fde68a'}`,borderRadius:7,padding:'10px 13px',fontSize:12,color:alvos.length?'#276749':'#b45309',fontWeight:600}}>
+          {alvos.length?`${alvos.length} lead(s) receberão esta campanha`:'Nenhum lead atende aos filtros'}
+          <span style={{fontSize:10,fontWeight:400,display:'block',marginTop:2,opacity:.8}}>
+            Quem pediu para não receber fica sempre de fora.
+          </span>
+        </div>
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:14,borderLeft:'3px solid #f5a623'}}>
+        <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>3 · Quando e como</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <label style={lbl}>Disparo</label>
+            <select style={fi} value={c.quando} onChange={e=>up('quando',e.target.value)}>
+              <option value="agora">Começar agora</option>
+              <option value="agendar">Agendar</option>
+            </select>
+          </div>
+          {c.quando==='agendar'&&(
+            <div>
+              <label style={lbl}>Data e hora</label>
+              <input style={fi} type="datetime-local" value={c.agendadaPara} onChange={e=>up('agendadaPara',e.target.value)}/>
+            </div>
+          )}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+          <div>
+            <label style={lbl}>Limite por dia</label>
+            <input style={fi} type="number" min="1" max="1000" value={c.limiteDiario} onChange={e=>up('limiteDiario',e.target.value)}/>
+          </div>
+          <div>
+            <label style={lbl}>Intervalo (segundos)</label>
+            <input style={fi} type="number" min="1" max="60" value={c.intervaloSegundos} onChange={e=>up('intervaloSegundos',e.target.value)}/>
+          </div>
+          <div>
+            <label style={lbl}>Enviar pelo número</label>
+            <select style={fi} value={c.finalidade} onChange={e=>up('finalidade',e.target.value)}>
+              {FINALIDADES_WA.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:8,lineHeight:1.6}}>
+          Números novos começam com limite de 250 conversas por dia. Intervalo curto demais entre mensagens
+          é o que mais derruba a qualidade — 4 segundos é um ritmo seguro.
+        </div>
+      </div>
+
+      <div style={{display:'flex',gap:8}}>
+        <button onClick={()=>{if(validar())setMostrarCuidados(true);}} disabled={salvando}
+          style={{padding:'11px 24px',borderRadius:8,border:'none',background:salvando?'#dde1e7':'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          {salvando?'Criando...':c.quando==='agora'?'🚀 Revisar e disparar':'📅 Revisar e agendar'}
+        </button>
+        <button onClick={onFechar} style={{padding:'11px 18px',borderRadius:8,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d'}}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+function AbaConversas({leads}){
+  const [sel,setSel]=useState(null);
+  const [texto,setTexto]=useState('');
+  const [enviando,setEnviando]=useState(false);
+  const fimRef=useRef(null);
+
+  const comConversa=(leads||[])
+    .filter(l=>(l.conversa||[]).length)
+    .sort((a,b)=>new Date(b.ultimaMensagemEm||b.atualizadoEm||0)-new Date(a.ultimaMensagemEm||a.atualizadoEm||0));
+
+  const lead=sel?(leads||[]).find(l=>l.id===sel.id)||sel:null;
+
+  useEffect(()=>{fimRef.current?.scrollIntoView({behavior:'smooth'});},[lead?.conversa?.length]);
+
+  async function enviar(){
+    if(!texto.trim()||!lead)return;
+    setEnviando(true);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/conversaEnviar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({leadId:lead.id,texto:texto.trim(),usuario:auth.currentUser?.email}),
+      });
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else setTexto('');
+    }catch(e){alert('Erro: '+e.message);}
+    setEnviando(false);
+  }
+
+  async function devolverParaIA(){
+    await setDoc(doc(db,'leads',lead.id),{atendimentoHumano:false},{merge:true});
+  }
+
+  if(lead)return(
+    <div>
+      <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:12,padding:0}}>← Todas as conversas</button>
+
+      <div style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden'}}>
+        <div style={{padding:'12px 18px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{width:34,height:34,borderRadius:'50%',background:'#25D36618',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0}}>💬</div>
+          <div style={{flex:1,minWidth:130}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',textTransform:'uppercase'}}>{lead.nome}</div>
+            <div style={{fontSize:11,color:'#95a5a6'}}>{lead.telefone}</div>
+          </div>
+          {lead.atendimentoHumano
+            ?<>
+              <span style={{fontSize:9,background:'#fff8ee',color:'#b45309',border:'1px solid #fde68a',padding:'2px 9px',borderRadius:10,fontWeight:700}}>ATENDIMENTO HUMANO</span>
+              <button onClick={devolverParaIA} style={{padding:'5px 12px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#8e44ad',fontWeight:600}}>🤖 Devolver para a IA</button>
+            </>
+            :<span style={{fontSize:9,background:'#faf5ff',color:'#8e44ad',border:'1px solid #e9d5ff',padding:'2px 9px',borderRadius:10,fontWeight:700}}>✨ IA ATENDENDO</span>}
+        </div>
+
+        <div style={{padding:'16px 18px',maxHeight:'52vh',overflowY:'auto',background:'#f5f6fa'}}>
+          {(lead.conversa||[]).map((m,i)=>{
+            const meu=m.de!=='cliente';
+            const cor=m.de==='cliente'?'#fff':m.de==='ia'?'#e9d5ff':m.de==='sistema'?'#f0f0f0':'#dcf8c6';
+            return(
+              <div key={i} style={{display:'flex',justifyContent:meu?'flex-end':'flex-start',marginBottom:8}}>
+                <div style={{maxWidth:'76%',background:cor,borderRadius:meu?'10px 10px 2px 10px':'10px 10px 10px 2px',padding:'8px 12px',boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+                  <div style={{fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5}}>{m.texto}</div>
+                  <div style={{fontSize:9,color:'#95a5a6',marginTop:3,textAlign:'right'}}>
+                    {m.de==='ia'?'✨ IA · ':m.de==='humano'?(m.usuario?m.usuario.split('@')[0]+' · ':''):''}
+                    {m.data?new Date(m.data).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):''}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={fimRef}/>
+        </div>
+
+        <div style={{padding:'12px 18px',borderTop:'1px solid #e8eaed',display:'flex',gap:8,alignItems:'flex-end'}}>
+          <textarea value={texto} onChange={e=>setTexto(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}}}
+            placeholder="Escreva sua resposta... (Enter envia)"
+            style={{flex:1,padding:'9px 12px',borderRadius:8,border:'1px solid #dde1e7',fontSize:13,minHeight:42,maxHeight:110,resize:'vertical',fontFamily:'inherit'}}/>
+          <BotaoMic onTranscricao={t=>setTexto(p=>(p?p+' ':'')+t)}/>
+          <button onClick={enviar} disabled={enviando||!texto.trim()}
+            style={{padding:'10px 18px',borderRadius:8,border:'none',background:enviando?'#dde1e7':'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,flexShrink:0}}>
+            {enviando?'...':'Enviar'}
+          </button>
+        </div>
+        <div style={{padding:'0 18px 12px',fontSize:10,color:'#95a5a6'}}>
+          Ao responder por aqui, o atendimento passa para você e a IA para de responder este contato.
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div>
+      {comConversa.length===0&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'34px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:34,marginBottom:10}}>💬</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>Nenhuma conversa ainda</div>
+          <div style={{fontSize:12,color:'#7f8c8d',lineHeight:1.6}}>
+            As respostas dos leads aparecem aqui.<br/>
+            Cadastre o webhook no painel da Datafy para começar a receber.
+          </div>
+        </div>
+      )}
+      {comConversa.map(l=>{
+        const ult=(l.conversa||[])[l.conversa.length-1]||{};
+        return(
+          <div key={l.id} onClick={()=>setSel(l)}
+            style={{background:'#fff',borderRadius:8,padding:'12px 15px',marginBottom:8,cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.06)',
+              borderLeft:`4px solid ${l.atendimentoHumano?'#f5a623':'#8e44ad'}`,display:'flex',alignItems:'center',gap:12}}>
+            <div style={{width:36,height:36,borderRadius:'50%',background:'#25D36618',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,flexShrink:0}}>
+              {(l.nome||'?')[0].toUpperCase()}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                <span style={{fontWeight:700,fontSize:13,color:'#2c3e50',textTransform:'uppercase'}}>{l.nome}</span>
+                {l.aguardandoResposta&&<span style={{fontSize:9,background:'#fee2e2',color:'#991b1b',padding:'1px 7px',borderRadius:10,fontWeight:700}}>AGUARDANDO</span>}
+                {l.atendimentoHumano&&<span style={{fontSize:9,background:'#fff8ee',color:'#b45309',padding:'1px 7px',borderRadius:10,fontWeight:700}}>HUMANO</span>}
+              </div>
+              <div style={{fontSize:11,color:'#95a5a6',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginTop:2}}>
+                {ult.de==='cliente'?'':'você: '}{(ult.texto||'').slice(0,70)}
+              </div>
+            </div>
+            <div style={{textAlign:'right',flexShrink:0,fontSize:10,color:'#aaa'}}>
+              {l.ultimaMensagemEm?new Date(l.ultimaMensagemEm).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):''}
+              <div style={{marginTop:2}}>{(l.conversa||[]).length} msg</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const AUTONOMIAS_IA=[
+  {id:'basico',   emoji:'🛡️', label:'Só dúvidas básicas', cor:'#27ae60',
+   desc:'Explica o sistema, equipamentos e prazos. Nunca fala preço — encaminha para um consultor.'},
+  {id:'comercial',emoji:'💼', label:'Pode falar de preços', cor:'#f5a623',
+   desc:'Tudo do nível anterior, mais os valores da tabela e explicação dos planos. Não concede desconto.'},
+  {id:'completo', emoji:'🚀', label:'Conduz a venda',      cor:'#e74c3c',
+   desc:'Conduz a conversa comercial, sugere a melhor solução e propõe horário de apresentação.'},
+];
+
+function AbaAtendimentoIA({usuarios}){
+  const [c,setC]=useState({
+    ativo:false,autonomia:'basico',personalidade:'',tabelaPrecos:'',
+    horarioInicio:'08:00',horarioFim:'18:00',
+    foraHorario:'Recebemos sua mensagem! Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos assim que possível 😊',
+    palavrasEscalar:['reclamação','processo','advogado','cancelar contrato','procon'],
+    avisarResponsavel:true,responsavelId:'',maxMensagens:12,
+  });
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [novaPalavra,setNovaPalavra]=useState('');
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setC(x=>({...x,[k]:v}));setSalvo(false);};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','atendimento_ia'),d=>{
+      if(d.exists())setC(x=>({...x,...d.data()}));
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','atendimento_ia'),{...c,atualizadoEm:new Date().toISOString(),atualizadoPor:auth.currentUser?.email||'—'},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  const elegiveis=(usuarios||[]).filter(u=>u.id&&u.celular&&u.status!=='revogado');
+  const nivel=AUTONOMIAS_IA.find(a=>a.id===c.autonomia)||AUTONOMIAS_IA[0];
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{background:c.ativo?'linear-gradient(135deg,#6b21a8,#8e44ad)':'#f8f9fa',borderRadius:10,padding:'16px 20px',marginBottom:12,
+        display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',border:c.ativo?'none':'1px solid #e8eaed'}}>
+        <div style={{width:38,height:38,borderRadius:10,background:c.ativo?'rgba(255,255,255,.15)':'#e9d5ff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0}}>🤖</div>
+        <div style={{flex:1,minWidth:170}}>
+          <div style={{fontWeight:700,fontSize:14,color:c.ativo?'#fff':'#2c3e50'}}>Atendimento automático</div>
+          <div style={{fontSize:11,color:c.ativo?'rgba(255,255,255,.7)':'#95a5a6'}}>
+            {c.ativo?'A IA responde as mensagens que chegam no WhatsApp':'Desligado — as mensagens ficam só registradas'}
+          </div>
+        </div>
+        <div onClick={()=>up('ativo',!c.ativo)}
+          style={{width:52,height:28,borderRadius:14,background:c.ativo?'#52c41a':'#dde1e7',cursor:'pointer',position:'relative',flexShrink:0,transition:'background .2s'}}>
+          <div style={{position:'absolute',top:3,left:c.ativo?27:3,width:22,height:22,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 4px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+        </div>
+      </div>
+
+      <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 14px',marginBottom:12,fontSize:11,color:'#2b6cb0',lineHeight:1.7}}>
+        <strong>Para receber as mensagens</strong>, cadastre este endereço no painel da Datafy, na configuração do número:<br/>
+        <code style={{background:'#fff',padding:'3px 8px',borderRadius:5,display:'inline-block',marginTop:5,userSelect:'all',fontSize:11}}>
+          {FUNCTIONS_URL}/datafyWebhook
+        </code>
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:`3px solid ${nivel.cor}`}}>
+        <div style={{fontSize:10,color:nivel.cor,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Até onde a IA pode ir</div>
+        <div style={{display:'flex',flexDirection:'column',gap:7}}>
+          {AUTONOMIAS_IA.map(a=>(
+            <button key={a.id} onClick={()=>up('autonomia',a.id)}
+              style={{textAlign:'left',padding:'11px 14px',borderRadius:8,cursor:'pointer',
+                border:`1.5px solid ${c.autonomia===a.id?a.cor:'#dde1e7'}`,
+                background:c.autonomia===a.id?a.cor+'12':'#fff'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+                <span style={{fontSize:15}}>{a.emoji}</span>
+                <span style={{fontWeight:700,fontSize:13,color:c.autonomia===a.id?a.cor:'#2c3e50'}}>{a.label}</span>
+              </div>
+              <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.5,paddingLeft:24}}>{a.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {c.autonomia!=='basico'&&(
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Tabela de preços que a IA pode informar</label>
+          <textarea style={{...fi,minHeight:100,resize:'vertical',fontFamily:'monospace',fontSize:12,lineHeight:1.6}}
+            value={c.tabelaPrecos} onChange={e=>up('tabelaPrecos',e.target.value)}
+            placeholder={'Licença mensal Ponto Web:\n- Até 10 funcionários: R$ 89,90\n- Até 15: R$ 99,90\n- Até 20: R$ 129,90\n\nRelógio facial EVO 40: R$ 1.150,00'}/>
+          <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>A IA só usa o que está escrito aqui. Fora disso, ela encaminha para um consultor.</div>
+        </div>
+      )}
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Orientações da empresa (opcional)</label>
+        <textarea style={{...fi,minHeight:80,resize:'vertical',lineHeight:1.6}}
+          value={c.personalidade} onChange={e=>up('personalidade',e.target.value)}
+          placeholder="Ex: Sempre mencionar que a implantação e o suporte são inclusos. Não temos fidelidade contratual."/>
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #3498db'}}>
+        <div style={{fontSize:10,color:'#3498db',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Horário de atendimento</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label style={lbl}>Das</label><input style={fi} type="time" value={c.horarioInicio} onChange={e=>up('horarioInicio',e.target.value)}/></div>
+          <div><label style={lbl}>Até</label><input style={fi} type="time" value={c.horarioFim} onChange={e=>up('horarioFim',e.target.value)}/></div>
+        </div>
+        <label style={lbl}>Resposta fora do horário</label>
+        <textarea style={{...fi,minHeight:60,resize:'vertical'}} value={c.foraHorario} onChange={e=>up('foraHorario',e.target.value)}/>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:4}}>Enviada uma vez por dia, para não incomodar. Fins de semana entram como fora do horário.</div>
+      </div>
+
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:14,borderLeft:'3px solid #e74c3c'}}>
+        <div style={{fontSize:10,color:'#e74c3c',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Quando chamar uma pessoa</div>
+        <label style={lbl}>Palavras que passam direto para atendimento humano</label>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
+          {(c.palavrasEscalar||[]).map((p,i)=>(
+            <span key={i} style={{fontSize:11,background:'#fee2e2',color:'#991b1b',padding:'3px 10px',borderRadius:12,fontWeight:600,display:'flex',alignItems:'center',gap:5}}>
+              {p}
+              <button onClick={()=>up('palavrasEscalar',c.palavrasEscalar.filter((_,j)=>j!==i))}
+                style={{background:'none',border:'none',cursor:'pointer',color:'#991b1b',fontSize:13,padding:0,lineHeight:1}}>×</button>
+            </span>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:8,marginBottom:10}}>
+          <input style={{...fi,flex:1}} value={novaPalavra} onChange={e=>setNovaPalavra(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'&&novaPalavra.trim()){up('palavrasEscalar',[...(c.palavrasEscalar||[]),novaPalavra.trim()]);setNovaPalavra('');}}}
+            placeholder="Digite e pressione Enter"/>
+          <button onClick={()=>{if(novaPalavra.trim()){up('palavrasEscalar',[...(c.palavrasEscalar||[]),novaPalavra.trim()]);setNovaPalavra('');}}}
+            style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#4a4a4a',fontWeight:600}}>+ Add</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div>
+            <label style={lbl}>Avisar quem no WhatsApp</label>
+            <select style={fi} value={c.responsavelId} onChange={e=>up('responsavelId',e.target.value)}>
+              <option value="">— Ninguém —</option>
+              {elegiveis.map(u=><option key={u.id} value={u.id}>{(u.nome||u.email||'').toUpperCase()}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Contexto da conversa</label>
+            <select style={fi} value={c.maxMensagens} onChange={e=>up('maxMensagens',e.target.value)}>
+              {[6,12,20,30].map(n=><option key={n} value={n}>Últimas {n} mensagens</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:8,lineHeight:1.6}}>
+          Quanto mais mensagens de contexto, melhor a IA acompanha o jeito de falar da pessoa e o que já foi combinado.
+        </div>
+      </div>
+
+      <button onClick={salvar} disabled={salvando}
+        style={{padding:'11px 24px',borderRadius:8,border:'none',background:salvo?'#27ae60':salvando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+        {salvo?'✓ Salvo!':salvando?'Salvando...':'💾 Salvar configuração'}
+      </button>
+    </div>
+  );
+}
+
 // ─── LEADS — Meta Ads / Facebook ─────────────────────────────────────────────
 const STATUS_LEAD=[
   {id:'novo',        label:'Novo',           color:'#3498db'},
@@ -12210,7 +13161,7 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','leads':'#e84393','config':'#95a5a6'};
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','leads':'#e84393','anuncios':'#c2185b','config':'#95a5a6'};
             const svgIcons={
               // Dashboard: monitor com gráfico
               dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
@@ -12232,6 +13183,7 @@ export default function App(){
               solicitacoes:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>,
               orcamentos:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
               leads:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
+              anuncios:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>,
               // Configurações: engrenagem
               config:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
             };
@@ -12534,6 +13486,9 @@ export default function App(){
           />}
 
           {/* SOLICITAÇÕES */}
+          {/* ANÚNCIOS */}
+          {!clienteSel&&page==='anuncios'&&<AnunciosView leads={leads} usuarios={usuarios} perfil={perfil}/>}
+
           {/* LEADS */}
           {!clienteSel&&page==='leads'&&<LeadsView
             leads={leads}
