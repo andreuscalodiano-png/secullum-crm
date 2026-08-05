@@ -2122,6 +2122,28 @@ function normalizarNumero(tel) {
 }
 
 // Envia uma mensagem da campanha para um destinatário
+// A Datafy/Meta devolve erro em formatos diferentes conforme o caso. Antes o
+// código só olhava r.data.error.message e, quando não achava, gravava a string
+// "falha" — que não diz nada a quem está olhando a tela. Agora tenta todos os
+// formatos conhecidos e, em último caso, guarda o corpo cru da resposta.
+function msgErroDatafy(r) {
+  const d = r && r.data;
+  const bruto =
+    d?.error?.message ||
+    d?.error?.error_user_msg ||
+    d?.error_description ||
+    d?.message ||
+    (Array.isArray(d?.errors) ? d.errors.map(e => e.message || e).join(' | ') : '') ||
+    (typeof d === 'string' ? d : '') ||
+    d?.raw ||
+    '';
+  const status = r?.status ? `HTTP ${r.status}` : '';
+  const codigo = d?.error?.code ? ` [${d.error.code}]` : '';
+  if (bruto) return `${status}${codigo}: ${bruto}`.replace(/^: /, '');
+  const cru = (() => { try { return JSON.stringify(d); } catch (_) { return String(d); } })();
+  return `${status || 'falha'} — resposta: ${String(cru).slice(0, 160)}`;
+}
+
 async function enviarDaCampanha(campanha, lead, token) {
   const destino = normalizarNumero(lead.telefone);
   if (!destino) throw new Error('sem telefone');
@@ -2188,17 +2210,18 @@ async function enviarDaCampanha(campanha, lead, token) {
 }
 
 // Processa a fila de uma campanha, respeitando o limite diário
-async function processarCampanha(campanhaId, limiteNesteCiclo = 40) {
+async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalhas = false) {
   const ref = db.collection('campanhas').doc(campanhaId);
   const snap = await ref.get();
   if (!snap.exists) throw new Error('Campanha não encontrada.');
   const c = { id: snap.id, ...snap.data() };
-  if (c.status === 'concluida' || c.status === 'pausada') return { enviados: 0, motivo: c.status };
+  if (!reenviarFalhas && (c.status === 'concluida' || c.status === 'pausada')) return { enviados: 0, motivo: c.status };
 
   const numero = await obterNumeroDatafy({ numeroId: c.numeroId, finalidade: c.finalidade || 'comercial' });
 
-  // Quem ainda não recebeu
-  const fila = (c.destinatarios || []).filter(d => !d.enviadoEm && !d.erro);
+  // Quem ainda não recebeu. Com reenviarFalhas, quem falhou volta para a fila —
+  // sem isso um erro passageiro travava o destinatário para sempre.
+  const fila = (c.destinatarios || []).filter(d => !d.enviadoEm && (reenviarFalhas || !d.erro));
   if (!fila.length) {
     await ref.set({ status: 'concluida', concluidaEm: new Date().toISOString() }, { merge: true });
     return { enviados: 0, motivo: 'fila vazia' };
@@ -2218,6 +2241,7 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40) {
 
   for (const alvo of lote) {
     const idx = atualizados.findIndex(d => d.leadId === alvo.leadId);
+    if (idx >= 0 && atualizados[idx].erro) { delete atualizados[idx].erro; delete atualizados[idx].erroEm; }
     try {
       const r = await enviarDaCampanha(c, alvo, numero.token);
       if (r.ok) {
@@ -2228,7 +2252,9 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40) {
         };
         ok++;
       } else {
-        atualizados[idx] = { ...alvo, erro: (r.data?.error?.message || 'falha').slice(0, 200) };
+        const detalhe = msgErroDatafy(r);
+        atualizados[idx] = { ...alvo, erro: detalhe.slice(0, 200), erroEm: new Date().toISOString() };
+        console.error(`[campanha] ${alvo.nome || alvo.telefone}: ${detalhe}`);
         falhas++;
       }
     } catch (e) {
@@ -2257,9 +2283,9 @@ exports.campanhaDisparar = functions.runWith({ timeoutSeconds: 540 })
     setCors(req, res);
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
     try {
-      const { campanhaId, limite } = req.body || {};
+      const { campanhaId, limite, reenviarFalhas } = req.body || {};
       if (!campanhaId) throw new Error('Informe a campanha.');
-      const r = await processarCampanha(campanhaId, Number(limite) || 40);
+      const r = await processarCampanha(campanhaId, Number(limite) || 40, reenviarFalhas === true);
       res.status(200).json({ ok: true, ...r });
     } catch (err) {
       console.error('[campanha] disparo:', err.message);

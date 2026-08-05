@@ -11463,10 +11463,10 @@ function DetalheCampanha({campanha,onFechar}){
   const falhas=dest.filter(d=>d.erro);
   const pendentes=dest.filter(d=>!d.enviadoEm&&!d.erro);
 
-  async function continuar(){
+  async function continuar(reenviarFalhas){
     setEnviando(true);
     try{
-      const r=await fetch(`${FUNCTIONS_URL}/campanhaDisparar`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campanhaId:c.id,limite:40})});
+      const r=await fetch(`${FUNCTIONS_URL}/campanhaDisparar`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({campanhaId:c.id,limite:40,reenviarFalhas:!!reenviarFalhas})});
       const d=await r.json();
       if(d.error)alert('❌ '+d.error);
       else alert(`✅ ${d.enviados} enviada(s) neste lote.`+(d.restante?`\n\nFaltam ${d.restante}. O sistema continua sozinho a cada 15 minutos.`:'\n\nCampanha concluída!'));
@@ -11495,12 +11495,24 @@ function DetalheCampanha({campanha,onFechar}){
             </div>
           ))}
         </div>
-        {pendentes.length>0&&c.status!=='pausada'&&(
-          <button onClick={continuar} disabled={enviando}
-            style={{padding:'9px 20px',borderRadius:7,border:'none',background:enviando?'#dde1e7':'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
-            {enviando?'Enviando...':`▶ Enviar próximo lote (${Math.min(40,pendentes.length)})`}
-          </button>
-        )}
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          {pendentes.length>0&&c.status!=='pausada'&&(
+            <button onClick={()=>continuar(false)} disabled={enviando}
+              style={{padding:'9px 20px',borderRadius:7,border:'none',background:enviando?'#dde1e7':'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {enviando?'Enviando...':`▶ Enviar próximo lote (${Math.min(40,pendentes.length)})`}
+            </button>
+          )}
+          {/* Falha antes ficava travada para sempre; agora dá para tentar de novo */}
+          {(c.destinatarios||[]).some(d=>d.erro)&&c.status!=='pausada'&&(
+            <button onClick={()=>{
+                if(!window.confirm('Tentar enviar de novo para quem falhou?\n\nSe o motivo da falha continuar o mesmo, vai falhar de novo — confira a mensagem de erro na lista abaixo antes.'))return;
+                continuar(true);
+              }} disabled={enviando}
+              style={{padding:'9px 18px',borderRadius:7,border:'1px solid #e74c3c',background:'#fff',color:'#e74c3c',fontWeight:700,cursor:enviando?'default':'pointer',fontSize:12}}>
+              ↻ Tentar as falhas ({(c.destinatarios||[]).filter(d=>d.erro).length})
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={{background:'#fff',borderRadius:10,padding:'16px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'}}>
@@ -11847,6 +11859,26 @@ function NovaCampanha({leads,onFechar}){
             Quem pediu para não receber fica sempre de fora.
           </span>
         </div>
+
+        {/* Conferência da janela de 24h antes de disparar, não depois de falhar */}
+        {c.tipo!=='template'&&alvos.length>0&&(()=>{
+          const abertos=alvos.filter(l=>l.ultimaMensagemEm&&(Date.now()-new Date(l.ultimaMensagemEm).getTime())<86400000);
+          const fora=alvos.length-abertos.length;
+          if(fora===0)return(
+            <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'9px 12px',marginTop:8,fontSize:11,color:'#276749',lineHeight:1.6}}>
+              ✓ Todos os {alvos.length} responderam nas últimas 24h — a mensagem livre chega em todos.
+            </div>
+          );
+          return(
+            <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 13px',marginTop:8,fontSize:11,color:'#c53030',lineHeight:1.7}}>
+              <strong>⚠ {fora} de {alvos.length} não vão receber.</strong> Mensagem livre (texto, imagem, link ou botões)
+              só chega em quem te respondeu nas últimas 24 horas — o resto a Meta bloqueia e a campanha marca como falha.
+              {abertos.length===0
+                ?<div style={{marginTop:4}}>Nenhum lead desta seleção está na janela. Do jeito que está, <strong>a campanha inteira vai falhar</strong>. Troque para <strong>📄 Template</strong>.</div>
+                :<div style={{marginTop:4}}>Só {abertos.length} está(ão) na janela. Para falar com os outros, use <strong>📄 Template</strong>.</div>}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:14,borderLeft:'3px solid #f5a623'}}>
