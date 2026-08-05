@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, updateDoc, deleteField
+  collection, doc, setDoc, getDocs, onSnapshot, deleteDoc, updateDoc, deleteField, addDoc
 } from "firebase/firestore";
 import {
   createUserWithEmailAndPassword,
@@ -10919,6 +10919,7 @@ function AnunciosView({leads,usuarios,perfil}){
     {id:'templates',  l:'📄 Templates',  cor:'#3498db'},
     {id:'conversas',  l:'💬 Conversas',  cor:'#25D366'},
     {id:'ia',         l:'🤖 Atendimento IA', cor:'#8e44ad'},
+    {id:'treino',     l:'🎓 Treinar a IA',   cor:'#6b21a8'},
   ];
   if(perfil!=='admin')return(
     <div style={{background:'#fff',borderRadius:10,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
@@ -10941,6 +10942,7 @@ function AnunciosView({leads,usuarios,perfil}){
       {aba==='templates'&&<AbaTemplates/>}
       {aba==='conversas'&&<AbaConversas leads={leads}/>}
       {aba==='ia'&&<AbaAtendimentoIA usuarios={usuarios}/>}
+      {aba==='treino'&&<AbaTreino/>}
     </div>
   );
 }
@@ -10952,9 +10954,39 @@ function AbaTemplates(){
   const [criando,setCriando]=useState(false);
   const [f,setF]=useState({nome:'',categoria:'MARKETING',corpo:'',rodape:'',botaoTexto:'',botaoUrl:''});
   const [salvando,setSalvando]=useState(false);
+  const [sugestoes,setSugestoes]=useState([]);
+  const [gerando,setGerando]=useState(false);
+  const [objetivo,setObjetivo]=useState('');
+  const refCorpo=useRef(null);
 
   const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  // Insere a variável na posição do cursor
+  function inserirVar(n){
+    const campo=refCorpo.current;
+    const t=f.corpo||'';
+    const marca='{{'+n+'}}';
+    if(!campo){setF(x=>({...x,corpo:t+marca}));return;}
+    const i=campo.selectionStart??t.length, j=campo.selectionEnd??t.length;
+    const novo=t.slice(0,i)+marca+t.slice(j);
+    setF(x=>({...x,corpo:novo}));
+    setTimeout(()=>{campo.focus();campo.selectionStart=campo.selectionEnd=i+marca.length;},0);
+  }
+
+  async function pedirIA(acao){
+    setGerando(true);setSugestoes([]);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/iaSugerirTemplate`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({acao,rascunho:f.corpo,objetivo,quantidade:acao==='melhorar'?1:3}),
+      });
+      const d=await r.json();
+      if(d.error)alert('❌ '+d.error);
+      else setSugestoes(d.versoes||[]);
+    }catch(e){alert('Erro: '+e.message);}
+    setGerando(false);
+  }
 
   async function carregar(){
     setCarregando(true);setErro('');
@@ -11040,10 +11072,77 @@ function AbaTemplates(){
             </div>
           </div>
           <div style={{marginBottom:10}}>
+            {/* Ajuda da IA */}
+            <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:8,padding:'11px 13px',marginBottom:10}}>
+              <div style={{fontSize:10,color:'#6b21a8',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>✨ Escrever com ajuda da IA</div>
+              <input style={{...fi,marginBottom:8,fontSize:12}} value={objetivo} onChange={e=>setObjetivo(e.target.value)}
+                placeholder="O que você quer com esta mensagem? Ex: oferecer o facial com desconto para quem ainda usa papel"/>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+                <button onClick={()=>pedirIA('sugerir')} disabled={gerando}
+                  style={{padding:'7px 15px',borderRadius:7,border:'none',background:gerando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                  {gerando?'Escrevendo...':'✨ Sugerir 3 versões'}
+                </button>
+                {f.corpo.trim()&&(
+                  <button onClick={()=>pedirIA('melhorar')} disabled={gerando}
+                    style={{padding:'7px 15px',borderRadius:7,border:'1px solid #e9d5ff',background:'#fff',cursor:'pointer',fontSize:12,color:'#6b21a8',fontWeight:600}}>
+                    🪄 Melhorar o que escrevi
+                  </button>
+                )}
+              </div>
+              <div style={{fontSize:10,color:'#95a5a6',marginTop:6,lineHeight:1.5}}>
+                A IA conhece o negócio e as regras da Meta — ela evita termos que fazem a Meta recusar o template.
+              </div>
+            </div>
+
+            {sugestoes.length>0&&(
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:10,color:'#95a5a6',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Escolha uma versão</div>
+                {sugestoes.map((sg,i)=>(
+                  <div key={i} style={{background:'#fff',border:'1px solid #e9d5ff',borderRadius:8,padding:'11px 13px',marginBottom:6}}>
+                    <div style={{fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.55,marginBottom:8}}>{sg}</div>
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                      <button onClick={()=>{setF(x=>({...x,corpo:sg}));setSugestoes([]);}}
+                        style={{padding:'4px 13px',borderRadius:6,border:'none',background:'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+                        Usar esta
+                      </button>
+                      <span style={{fontSize:10,color:'#95a5a6',alignSelf:'center'}}>{sg.length} caracteres</span>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={()=>setSugestoes([])} style={{background:'none',border:'none',cursor:'pointer',fontSize:11,color:'#95a5a6',padding:0}}>Descartar sugestões</button>
+              </div>
+            )}
+
             <label style={lbl}>Corpo da mensagem</label>
-            <textarea style={{...fi,minHeight:100,resize:'vertical',lineHeight:1.6}} value={f.corpo} onChange={e=>setF(x=>({...x,corpo:e.target.value}))}
+            <textarea ref={refCorpo} style={{...fi,minHeight:110,resize:'vertical',lineHeight:1.6}} value={f.corpo} onChange={e=>setF(x=>({...x,corpo:e.target.value}))}
               placeholder={'Olá {{1}}! 👋\n\nEstamos com condição especial no relógio de ponto facial este mês.\n\nQuer que eu te mande os detalhes?'}/>
-            <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Use {'{{1}}'} para o nome, {'{{2}}'} para o segundo campo, e assim por diante.</div>
+
+            {/* Campos que podem ser usados */}
+            <div style={{marginTop:8,background:'#f8f9fa',borderRadius:7,padding:'10px 12px'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>
+                Dados do lead que entram na mensagem
+              </div>
+              <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:7}}>
+                {[
+                  {n:1,l:'Primeiro nome',ex:'João'},
+                  {n:2,l:'Nome completo',ex:'João da Silva'},
+                  {n:3,l:'Nº de funcionários',ex:'De 6 a 10'},
+                  {n:4,l:'Solução buscada',ex:'Relógio facial'},
+                  {n:5,l:'Campanha de origem',ex:'Leads Brasil'},
+                ].map(v=>(
+                  <button key={v.n} onClick={()=>inserirVar(v.n)} title={`Exemplo: ${v.ex}`}
+                    style={{padding:'4px 10px',borderRadius:12,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#4a4a4a'}}>
+                    <strong style={{color:'#8e44ad',fontFamily:'monospace'}}>{'{{'+v.n+'}}'}</strong> {v.l}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.6}}>
+                Clique para inserir onde o cursor estiver. A ordem é sua — o que importa é o número.
+                Ao criar a campanha você escolhe qual dado vai em cada posição.<br/>
+                <strong>O primeiro nome é o recomendado</strong>: o cliente costuma preencher o nome completo no formulário,
+                e chamar de "João da Silva" soa artificial.
+              </div>
+            </div>
           </div>
           <div style={{marginBottom:10}}>
             <label style={lbl}>Rodapé (opcional)</label>
@@ -11378,23 +11477,62 @@ function NovaCampanha({leads,onFechar}){
               {templates.map(t=><option key={t.name} value={t.name}>{t.name}</option>)}
             </select>
             {templates.length===0&&<div style={{fontSize:11,color:'#e67e22',marginTop:5}}>Nenhum template aprovado ainda. Crie um na aba Templates.</div>}
-            {c.template&&(
-              <div style={{marginTop:10}}>
-                <label style={lbl}>Variáveis do template</label>
-                {(c.variaveis||[]).map((v,i)=>(
-                  <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:5}}>
-                    <span style={{fontSize:11,color:'#95a5a6',minWidth:34}}>#{i+1}</span>
-                    <input style={{...fi,flex:1}} value={v} onChange={e=>up('variaveis',c.variaveis.map((x,j)=>j===i?e.target.value:x))}/>
-                    <button onClick={()=>up('variaveis',c.variaveis.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
-                  </div>
-                ))}
-                <button onClick={()=>up('variaveis',[...(c.variaveis||[]),''])}
-                  style={{padding:'4px 11px',borderRadius:5,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>+ Variável</button>
-                <div style={{fontSize:10,color:'#95a5a6',marginTop:6}}>
-                  Disponíveis: primeiro_nome · nome · solucao · funcionarios · campanha
+            {c.template&&(()=>{
+              const CAMPOS=[
+                {v:'{{primeiro_nome}}',l:'Primeiro nome',ex:'João'},
+                {v:'{{nome}}',         l:'Nome completo',ex:'João da Silva'},
+                {v:'{{funcionarios}}', l:'Nº de funcionários',ex:'De 6 a 10 funcionários'},
+                {v:'{{solucao}}',      l:'Solução buscada',ex:'Relógio de ponto fixo'},
+                {v:'{{campanha}}',     l:'Campanha de origem',ex:'LEADS - ANDREUS'},
+                {v:'{{telefone}}',     l:'Telefone',ex:'(43) 99999-8888'},
+              ];
+              const exemploDe=val=>{
+                const c2=CAMPOS.find(x=>x.v===val);
+                return c2?c2.ex:(val||'—');
+              };
+              const primeiro=(alvos[0]||{});
+              const realDe=val=>{
+                if(!primeiro.nome)return exemploDe(val);
+                const mapa={
+                  '{{primeiro_nome}}':(primeiro.nome||'').split(' ')[0],
+                  '{{nome}}':primeiro.nome||'',
+                  '{{funcionarios}}':primeiro.funcionarios||'',
+                  '{{solucao}}':primeiro.solucao||'',
+                  '{{campanha}}':primeiro.campanha||'',
+                  '{{telefone}}':primeiro.telefone||'',
+                };
+                return mapa[val]??exemploDe(val);
+              };
+              return(
+                <div style={{marginTop:12}}>
+                  <label style={lbl}>O que entra em cada posição do template</label>
+                  {(c.variaveis||[]).map((v,i)=>(
+                    <div key={i} style={{display:'flex',gap:8,alignItems:'center',marginBottom:6,flexWrap:'wrap'}}>
+                      <span style={{fontSize:11,fontWeight:700,color:'#8e44ad',fontFamily:'monospace',minWidth:38}}>{'{{'+(i+1)+'}}'}</span>
+                      <select style={{...fi,flex:1,minWidth:150}} value={CAMPOS.some(x=>x.v===v)?v:'__livre'}
+                        onChange={e=>up('variaveis',c.variaveis.map((x,j)=>j===i?(e.target.value==='__livre'?'':e.target.value):x))}>
+                        {CAMPOS.map(cp=><option key={cp.v} value={cp.v}>{cp.l}</option>)}
+                        <option value="__livre">Texto fixo...</option>
+                      </select>
+                      {!CAMPOS.some(x=>x.v===v)&&(
+                        <input style={{...fi,flex:1,minWidth:120}} value={v} onChange={e=>up('variaveis',c.variaveis.map((x,j)=>j===i?e.target.value:x))} placeholder="Digite o texto"/>
+                      )}
+                      <span style={{fontSize:10,color:'#95a5a6',minWidth:90}}>→ {realDe(v)}</span>
+                      <button onClick={()=>up('variaveis',c.variaveis.filter((_,j)=>j!==i))} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>up('variaveis',[...(c.variaveis||[]),'{{primeiro_nome}}'])}
+                    style={{padding:'5px 12px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+                    + Posição
+                  </button>
+                  {primeiro.nome&&(
+                    <div style={{fontSize:10,color:'#276749',background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:6,padding:'7px 10px',marginTop:8,lineHeight:1.5}}>
+                      Prévia com um lead real da seleção: <strong>{primeiro.nome}</strong>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         ):(
           <div>
@@ -11664,6 +11802,7 @@ function AbaAtendimentoIA({usuarios}){
     foraHorario:'Recebemos sua mensagem! Nosso atendimento é de segunda a sexta, das 8h às 18h. Retornamos assim que possível 😊',
     palavrasEscalar:['reclamação','processo','advogado','cancelar contrato','procon'],
     avisarResponsavel:true,responsavelId:'',maxMensagens:12,
+    numeroTeste:'',modoTreino:true,
   });
   const [carregando,setCarregando]=useState(true);
   const [salvando,setSalvando]=useState(false);
@@ -11755,6 +11894,31 @@ function AbaAtendimentoIA({usuarios}){
           placeholder="Ex: Sempre mencionar que a implantação e o suporte são inclusos. Não temos fidelidade contratual."/>
       </div>
 
+      {/* Número de teste */}
+      <div style={{background:'#faf5ff',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #6b21a8'}}>
+        <div style={{fontSize:10,color:'#6b21a8',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>🧪 Número para testar e ensinar</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:10,alignItems:'end',marginBottom:10}}>
+          <div>
+            <label style={lbl}>Seu celular</label>
+            <input style={fi} value={c.numeroTeste||''} onChange={e=>up('numeroTeste',mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/>
+          </div>
+          <div onClick={()=>up('modoTreino',c.modoTreino===false)}
+            title={c.modoTreino!==false?'Modo treino ligado':'Modo treino desligado'}
+            style={{width:44,height:24,borderRadius:12,background:c.modoTreino!==false?'#6b21a8':'#dde1e7',cursor:'pointer',position:'relative',flexShrink:0,marginBottom:6}}>
+            <div style={{position:'absolute',top:3,left:c.modoTreino!==false?23:3,width:18,height:18,borderRadius:'50%',background:'#fff',boxShadow:'0 1px 3px rgba(0,0,0,.3)',transition:'left .2s'}}/>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:'#6b21a8',lineHeight:1.7,background:'#fff',borderRadius:6,padding:'10px 12px'}}>
+          Mensagens vindas deste número <strong>não viram lead</strong> — servem para você conversar com a IA e ensiná-la.
+          No WhatsApp, use:<br/>
+          <code style={{background:'#faf5ff',padding:'1px 6px',borderRadius:4,fontSize:11}}>/aprender</code> pergunta <strong>|</strong> resposta certa<br/>
+          <code style={{background:'#faf5ff',padding:'1px 6px',borderRadius:4,fontSize:11}}>/base</code> — ver o que ela já aprendeu ·
+          <code style={{background:'#faf5ff',padding:'1px 6px',borderRadius:4,fontSize:11,marginLeft:4}}>/esquecer</code> trecho ·
+          <code style={{background:'#faf5ff',padding:'1px 6px',borderRadius:4,fontSize:11,marginLeft:4}}>/ajuda</code><br/>
+          <span style={{fontSize:10,opacity:.85}}>Qualquer outro texto é tratado como se fosse um cliente falando. Também dá para treinar pela aba <strong>🎓 Treinar a IA</strong>.</span>
+        </div>
+      </div>
+
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #3498db'}}>
         <div style={{fontSize:10,color:'#3498db',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Horário de atendimento</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -11809,6 +11973,227 @@ function AbaAtendimentoIA({usuarios}){
         style={{padding:'11px 24px',borderRadius:8,border:'none',background:salvo?'#27ae60':salvando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
         {salvo?'✓ Salvo!':salvando?'Salvando...':'💾 Salvar configuração'}
       </button>
+    </div>
+  );
+}
+
+// ─── ABA: TREINAR A IA ───────────────────────────────────────────────────────
+// Não treina o modelo — acumula respostas validadas que entram no contexto
+// de toda conversa. Na prática, a IA passa a responder do jeito da casa.
+function AbaTreino(){
+  const [msgs,setMsgs]=useState([]);
+  const [texto,setTexto]=useState('');
+  const [pensando,setPensando]=useState(false);
+  const [base,setBase]=useState([]);
+  const [ensinando,setEnsinando]=useState(null);
+  const [correcao,setCorrecao]=useState('');
+  const [novoItem,setNovoItem]=useState({pergunta:'',resposta:''});
+  const [verBase,setVerBase]=useState(false);
+  const [exemplo,setExemplo]=useState({nome:'CLIENTE TESTE',funcionarios:'De 6 a 10 funcionários',solucao:''});
+  const fimRef=useRef(null);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'base_conhecimento'),snap=>{
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setBase(arr.sort((a,b)=>new Date(b.criadoEm||0)-new Date(a.criadoEm||0)));
+    });
+    return()=>unsub();
+  },[]);
+  useEffect(()=>{fimRef.current?.scrollIntoView({behavior:'smooth'});},[msgs.length]);
+
+  async function enviar(){
+    if(!texto.trim()||pensando)return;
+    const pergunta=texto.trim();
+    setMsgs(m=>[...m,{de:'cliente',texto:pergunta}]);
+    setTexto('');setPensando(true);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/iaSimular`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({mensagem:pergunta,historico:msgs,leadExemplo:exemplo}),
+      });
+      const d=await r.json();
+      if(d.error)setMsgs(m=>[...m,{de:'erro',texto:d.error}]);
+      else setMsgs(m=>[...m,{de:'ia',texto:d.resposta,escalou:d.escalou,pergunta}]);
+    }catch(e){setMsgs(m=>[...m,{de:'erro',texto:e.message}]);}
+    setPensando(false);
+  }
+
+  async function salvarCorrecao(){
+    if(!correcao.trim()||ensinando===null)return;
+    const m=msgs[ensinando];
+    await addDoc(collection(db,'base_conhecimento'),{
+      pergunta:m.pergunta||'',resposta:correcao.trim(),ativo:true,prioridade:2,
+      origem:'Correção no simulador',criadoEm:new Date().toISOString(),
+      criadoPor:auth.currentUser?.email||'—',
+    });
+    setMsgs(x=>x.map((y,i)=>i===ensinando?{...y,texto:correcao.trim(),corrigida:true}:y));
+    setEnsinando(null);setCorrecao('');
+  }
+
+  async function aprovar(i){
+    const m=msgs[i];
+    if(!m.pergunta)return;
+    await addDoc(collection(db,'base_conhecimento'),{
+      pergunta:m.pergunta,resposta:m.texto,ativo:true,prioridade:1,
+      origem:'Aprovada no simulador',criadoEm:new Date().toISOString(),
+      criadoPor:auth.currentUser?.email||'—',
+    });
+    setMsgs(x=>x.map((y,j)=>j===i?{...y,aprovada:true}:y));
+  }
+
+  async function addManual(){
+    if(!novoItem.pergunta.trim()||!novoItem.resposta.trim())return;
+    await addDoc(collection(db,'base_conhecimento'),{
+      pergunta:novoItem.pergunta.trim(),resposta:novoItem.resposta.trim(),
+      ativo:true,prioridade:2,origem:'Cadastro manual',
+      criadoEm:new Date().toISOString(),criadoPor:auth.currentUser?.email||'—',
+    });
+    setNovoItem({pergunta:'',resposta:''});
+  }
+
+  async function removerBase(id){
+    if(!window.confirm('Remover este item da base?'))return;
+    await deleteDoc(doc(db,'base_conhecimento',id));
+  }
+
+  return(
+    <div>
+      <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:8,padding:'12px 14px',marginBottom:12,fontSize:11,color:'#6b21a8',lineHeight:1.7}}>
+        <strong>Como funciona:</strong> escreva como um cliente escreveria. A IA responde do mesmo jeito que responderia
+        no WhatsApp. Se a resposta ficou boa, clique em <strong>👍 Usar como referência</strong>. Se não ficou,
+        clique em <strong>✏️ Corrigir</strong> e escreva do jeito certo — ela passa a responder assim daqui pra frente.
+      </div>
+
+      {/* Perfil do cliente simulado */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+        <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Perfil do cliente simulado</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+          <div><label style={lbl}>Nome</label><input style={fi} value={exemplo.nome} onChange={e=>setExemplo(x=>({...x,nome:e.target.value}))}/></div>
+          <div><label style={lbl}>Porte</label><input style={fi} value={exemplo.funcionarios} onChange={e=>setExemplo(x=>({...x,funcionarios:e.target.value}))} placeholder="De 6 a 10 funcionários"/></div>
+          <div><label style={lbl}>Interesse</label><input style={fi} value={exemplo.solucao} onChange={e=>setExemplo(x=>({...x,solucao:e.target.value}))} placeholder="Relógio facial"/></div>
+        </div>
+      </div>
+
+      {/* Conversa */}
+      <div style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden',marginBottom:12}}>
+        <div style={{padding:'16px 18px',minHeight:180,maxHeight:'42vh',overflowY:'auto',background:'#f5f6fa'}}>
+          {msgs.length===0&&(
+            <div style={{textAlign:'center',color:'#95a5a6',fontSize:12,padding:'28px 10px',lineHeight:1.7}}>
+              Comece escrevendo uma dúvida como um cliente faria.<br/>
+              <span style={{fontSize:11}}>Ex: "bom dia, queria saber o valor do relógio de ponto"</span>
+            </div>
+          )}
+          {msgs.map((m,i)=>{
+            const meu=m.de!=='cliente';
+            return(
+              <div key={i} style={{marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:meu?'flex-end':'flex-start'}}>
+                  <div style={{maxWidth:'78%',background:m.de==='cliente'?'#fff':m.de==='erro'?'#fee2e2':'#e9d5ff',
+                    borderRadius:meu?'10px 10px 2px 10px':'10px 10px 10px 2px',padding:'9px 13px',boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+                    <div style={{fontSize:12,color:m.de==='erro'?'#991b1b':'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5}}>{m.texto}</div>
+                    {m.escalou&&<div style={{fontSize:10,color:'#e67e22',marginTop:4}}>↗ Passaria para um consultor</div>}
+                    {m.corrigida&&<div style={{fontSize:10,color:'#27ae60',marginTop:4}}>✓ Corrigida e salva</div>}
+                    {m.aprovada&&<div style={{fontSize:10,color:'#27ae60',marginTop:4}}>👍 Salva como referência</div>}
+                  </div>
+                </div>
+                {m.de==='ia'&&!m.aprovada&&!m.corrigida&&(
+                  <div style={{display:'flex',gap:6,justifyContent:'flex-end',marginTop:5}}>
+                    <button onClick={()=>aprovar(i)}
+                      style={{padding:'4px 12px',borderRadius:6,border:'1px solid #9ae6b4',background:'#f0fff4',cursor:'pointer',fontSize:11,color:'#276749',fontWeight:600}}>
+                      👍 Usar como referência
+                    </button>
+                    <button onClick={()=>{setEnsinando(i);setCorrecao(m.texto);}}
+                      style={{padding:'4px 12px',borderRadius:6,border:'1px solid #fde68a',background:'#fff8ee',cursor:'pointer',fontSize:11,color:'#b45309',fontWeight:600}}>
+                      ✏️ Corrigir
+                    </button>
+                  </div>
+                )}
+                {ensinando===i&&(
+                  <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'11px 13px',marginTop:6}}>
+                    <div style={{fontSize:10,color:'#b45309',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Como ela deveria ter respondido</div>
+                    <textarea style={{...fi,minHeight:70,resize:'vertical',lineHeight:1.5}} value={correcao} onChange={e=>setCorrecao(e.target.value)} autoFocus/>
+                    <div style={{display:'flex',gap:6,marginTop:8}}>
+                      <button onClick={salvarCorrecao}
+                        style={{padding:'6px 15px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+                        💾 Ensinar
+                      </button>
+                      <button onClick={()=>{setEnsinando(null);setCorrecao('');}}
+                        style={{padding:'6px 12px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d'}}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {pensando&&(
+            <div style={{display:'flex',justifyContent:'flex-end'}}>
+              <div style={{background:'#e9d5ff',borderRadius:'10px 10px 2px 10px',padding:'9px 14px',fontSize:12,color:'#6b21a8'}}>digitando...</div>
+            </div>
+          )}
+          <div ref={fimRef}/>
+        </div>
+        <div style={{padding:'12px 16px',borderTop:'1px solid #e8eaed',display:'flex',gap:8,alignItems:'flex-end'}}>
+          <textarea value={texto} onChange={e=>setTexto(e.target.value)}
+            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}}}
+            placeholder="Escreva como um cliente escreveria..."
+            style={{flex:1,padding:'9px 12px',borderRadius:8,border:'1px solid #dde1e7',fontSize:13,minHeight:40,maxHeight:100,resize:'vertical',fontFamily:'inherit'}}/>
+          <BotaoMic onTranscricao={t=>setTexto(p=>(p?p+' ':'')+t)}/>
+          <button onClick={enviar} disabled={pensando||!texto.trim()}
+            style={{padding:'10px 18px',borderRadius:8,border:'none',background:pensando?'#dde1e7':'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13,flexShrink:0}}>
+            {pensando?'...':'Enviar'}
+          </button>
+        </div>
+        {msgs.length>0&&(
+          <div style={{padding:'0 16px 12px'}}>
+            <button onClick={()=>setMsgs([])} style={{background:'none',border:'none',cursor:'pointer',fontSize:11,color:'#95a5a6',padding:0}}>Limpar conversa</button>
+          </div>
+        )}
+      </div>
+
+      {/* Base de conhecimento */}
+      <div style={{background:'#fff',borderRadius:10,padding:'16px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>📚 Base de conhecimento</div>
+            <div style={{fontSize:11,color:'#95a5a6'}}>{base.length} resposta(s) validada(s) — entram em toda conversa</div>
+          </div>
+          <button onClick={()=>setVerBase(v=>!v)}
+            style={{padding:'6px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#4a4a4a'}}>
+            {verBase?'Ocultar':'Ver e editar'}
+          </button>
+        </div>
+
+        {verBase&&(
+          <div>
+            <div style={{background:'#f8f9fa',borderRadius:8,padding:'12px',marginBottom:12,border:'1px dashed #dde1e7'}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',marginBottom:8}}>Adicionar direto</div>
+              <input style={{...fi,marginBottom:6}} value={novoItem.pergunta} onChange={e=>setNovoItem(x=>({...x,pergunta:e.target.value}))} placeholder="O que o cliente pergunta"/>
+              <textarea style={{...fi,minHeight:60,resize:'vertical',marginBottom:8}} value={novoItem.resposta} onChange={e=>setNovoItem(x=>({...x,resposta:e.target.value}))} placeholder="Como responder"/>
+              <button onClick={addManual} disabled={!novoItem.pergunta.trim()||!novoItem.resposta.trim()}
+                style={{padding:'7px 16px',borderRadius:6,border:'none',background:'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>+ Adicionar</button>
+            </div>
+
+            {base.length===0&&<div style={{fontSize:12,color:'#95a5a6',textAlign:'center',padding:'16px'}}>A base ainda está vazia.</div>}
+            <div style={{maxHeight:320,overflowY:'auto'}}>
+              {base.map(b=>(
+                <div key={b.id} style={{background:'#f8f9fa',borderRadius:8,padding:'10px 13px',marginBottom:6,borderLeft:'3px solid #8e44ad'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'flex-start'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:700,color:'#2c3e50',marginBottom:3}}>{b.pergunta}</div>
+                      <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.5,whiteSpace:'pre-wrap'}}>{b.resposta}</div>
+                      <div style={{fontSize:9,color:'#bbb',marginTop:4}}>{b.origem}{b.criadoEm?' · '+new Date(b.criadoEm).toLocaleDateString('pt-BR'):''}</div>
+                    </div>
+                    <button onClick={()=>removerBase(b.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15,flexShrink:0}}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

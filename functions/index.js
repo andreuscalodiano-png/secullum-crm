@@ -2089,10 +2089,27 @@ const NIVEIS_AUTONOMIA = {
   },
 };
 
+// Conhecimento acumulado nas correções — entra no prompt de toda conversa
+async function baseConhecimento() {
+  try {
+    const snap = await db.collection('base_conhecimento').get();
+    const itens = [];
+    snap.forEach(d => { const x = d.data(); if (x.ativo !== false) itens.push(x); });
+    if (!itens.length) return '';
+    return itens
+      .sort((a, b) => (b.prioridade || 0) - (a.prioridade || 0))
+      .slice(0, 60)
+      .map(i => `P: ${i.pergunta}\nR: ${i.resposta}`)
+      .join('\n\n');
+  } catch (e) { return ''; }
+}
+
 async function configAtendimento() {
   const snap = await db.collection('config').doc('atendimento_ia').get();
   const d = snap.exists ? snap.data() : {};
   return {
+    numeroTeste: String(d.numeroTeste || '').replace(/\D/g, ''),
+    modoTreino: d.modoTreino !== false,
     ativo: d.ativo === true,
     autonomia: d.autonomia || 'basico',
     personalidade: d.personalidade || '',
@@ -2115,9 +2132,10 @@ function dentroDoHorario(cfg) {
   return hm >= cfg.horarioInicio && hm <= cfg.horarioFim;
 }
 
-async function responderComIA({ lead, mensagem, historico, cfg }) {
+async function responderComIA({ lead, mensagem, historico, cfg, conhecimento }) {
   if (!OPENAI_KEY) return null;
   const nivel = NIVEIS_AUTONOMIA[cfg.autonomia] || NIVEIS_AUTONOMIA.basico;
+  const base = conhecimento !== undefined ? conhecimento : await baseConhecimento();
 
   const sistema = [
     'Você atende pelo WhatsApp da Guion Informática e Relógio de Ponto, revenda Secullum de sistemas de controle de ponto, em Ibaiti/PR.',
@@ -2139,6 +2157,7 @@ async function responderComIA({ lead, mensagem, historico, cfg }) {
     '',
     cfg.tabelaPrecos ? 'TABELA DE PREÇOS\n' + cfg.tabelaPrecos : '',
     cfg.personalidade ? '\nORIENTAÇÕES DA EMPRESA\n' + cfg.personalidade : '',
+    base ? '\nRESPOSTAS JÁ VALIDADAS PELA EQUIPE\nUse estas como referência de conteúdo e de tom. Adapte as palavras à conversa, não copie literalmente.\n\n' + base : '',
     '',
     'SOBRE ESTE CONTATO',
     `Nome: ${lead.nome || 'não informado'}`,
@@ -2206,6 +2225,86 @@ exports.datafyWebhook = functions.https.onRequest(async (req, res) => {
             || '';
           if (!de) continue;
 
+          const cfgPre = await configAtendimento();
+
+          // ── MODO TREINO ────────────────────────────────────────────────────
+          // Mensagens do número de teste não viram lead. Servem para ensinar:
+          //   /aprender pergunta | resposta   → grava na base de conhecimento
+          //   /esquecer <trecho>              → remove o que casar
+          //   /base                           → lista o que já foi ensinado
+          //   qualquer outro texto            → conversa normal com a IA
+          if (cfgPre.numeroTeste && cfgPre.modoTreino && de.endsWith(cfgPre.numeroTeste.slice(-8))) {
+            const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+            const responder = async txt => chamarDatafy({
+              token: numero.token, path: '/messages/send/text',
+              method: 'POST', body: { to: de, text: txt },
+            });
+            const t = texto.trim();
+
+            if (t.toLowerCase().startsWith('/aprender')) {
+              const corpo = t.slice(9).trim();
+              const [perg, resp] = corpo.split('|').map(x => (x || '').trim());
+              if (!perg || !resp) {
+                await responder('Use assim:\n\n*/aprender* pergunta do cliente *|* como responder\n\nExemplo:\n/aprender tem fidelidade? | Não temos fidelidade. O cliente pode cancelar quando quiser, sem multa.');
+              } else {
+                await db.collection('base_conhecimento').add({
+                  pergunta: perg, resposta: resp, ativo: true, prioridade: 1,
+                  origem: 'WhatsApp (treino)', criadoEm: new Date().toISOString(),
+                });
+                await responder(`✅ Aprendido!\n\n*Quando perguntarem:* ${perg}\n*Vou responder assim:* ${resp}`);
+              }
+              continue;
+            }
+
+            if (t.toLowerCase().startsWith('/esquecer')) {
+              const alvo = t.slice(9).trim().toLowerCase();
+              if (!alvo) { await responder('Diga o que devo esquecer. Ex: /esquecer fidelidade'); continue; }
+              const snapB = await db.collection('base_conhecimento').get();
+              let n = 0;
+              for (const d2 of snapB.docs) {
+                const x = d2.data();
+                if (`${x.pergunta} ${x.resposta}`.toLowerCase().includes(alvo)) { await d2.ref.delete(); n++; }
+              }
+              await responder(n ? `🗑️ ${n} item(ns) removido(s) da base.` : 'Não encontrei nada com esse trecho.');
+              continue;
+            }
+
+            if (t.toLowerCase() === '/base') {
+              const snapB = await db.collection('base_conhecimento').get();
+              const itens = [];
+              snapB.forEach(d2 => itens.push(d2.data()));
+              if (!itens.length) { await responder('A base ainda está vazia. Use /aprender para ensinar.'); continue; }
+              const lista = itens.slice(0, 15).map((x, i) => `${i + 1}. ${x.pergunta}`).join('\n');
+              await responder(`📚 *Base de conhecimento* (${itens.length} item(ns))\n\n${lista}${itens.length > 15 ? '\n\n_...e outros_' : ''}`);
+              continue;
+            }
+
+            if (t.toLowerCase() === '/ajuda') {
+              await responder('🧪 *Modo treino*\n\nEscreva como um cliente escreveria e eu respondo. Se a resposta não ficou boa, me ensine:\n\n*/aprender* pergunta *|* resposta certa\n*/esquecer* trecho\n*/base* — ver o que já aprendi\n\nTudo que você ensinar vale para as conversas com clientes de verdade.');
+              continue;
+            }
+
+            // Conversa de teste — a IA responde como responderia a um cliente
+            const leadFake = { nome: 'CLIENTE TESTE', funcionarios: '', solucao: '' };
+            const histSnap = await db.collection('config').doc('treino_historico').get();
+            const hist = histSnap.exists ? (histSnap.data().mensagens || []) : [];
+            const conhec = await baseConhecimento();
+            const respIA = await responderComIA({
+              lead: leadFake, mensagem: t, historico: hist, cfg: cfgPre, conhecimento: conhec,
+            });
+            const saida = respIA && !respIA.includes('[ESCALAR]')
+              ? respIA
+              : 'Neste ponto eu passaria a conversa para um consultor.';
+            await responder(saida);
+            await db.collection('config').doc('treino_historico').set({
+              mensagens: [...hist, { de: 'cliente', texto: t, data: new Date().toISOString() },
+                                   { de: 'ia', texto: saida, data: new Date().toISOString() }].slice(-40),
+              atualizadoEm: new Date().toISOString(),
+            }, { merge: true });
+            console.log('[treino] respondido ao número de teste');
+            continue;
+          }
+
           // Localiza o lead pelo telefone
           const leadsSnap = await db.collection('leads').get();
           let lead = null;
@@ -2242,7 +2341,7 @@ exports.datafyWebhook = functions.https.onRequest(async (req, res) => {
             atualizadoEm: agora,
           }, { merge: true });
 
-          const cfg = await configAtendimento();
+          const cfg = cfgPre;
           if (!cfg.ativo) continue;
           if (lead.atendimentoHumano) continue; // alguém assumiu a conversa
 
@@ -2344,6 +2443,118 @@ exports.conversaEnviar = functions.https.onRequest(async (req, res) => {
     }, { merge: true });
     res.status(200).json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Simulador do CRM — conversa com a IA sem envolver o WhatsApp
+exports.iaSimular = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { mensagem, historico = [], leadExemplo = {} } = req.body || {};
+    if (!mensagem) throw new Error('Escreva a mensagem do cliente.');
+    const cfg = await configAtendimento();
+    const conhecimento = await baseConhecimento();
+    const lead = {
+      nome: leadExemplo.nome || 'CLIENTE TESTE',
+      funcionarios: leadExemplo.funcionarios || '',
+      solucao: leadExemplo.solucao || '',
+      sistema_ponto: leadExemplo.sistema_ponto || '',
+    };
+    const resposta = await responderComIA({ lead, mensagem, historico, cfg, conhecimento });
+    res.status(200).json({
+      ok: true,
+      resposta: resposta || 'Não consegui gerar a resposta. Verifique a chave da OpenAI.',
+      escalou: !!(resposta && resposta.includes('[ESCALAR]')),
+      itensNaBase: conhecimento ? conhecimento.split('\n\n').length : 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sugestão de texto para templates de campanha
+exports.iaSugerirTemplate = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { rascunho = '', objetivo = '', publico = '', quantidade = 3, acao = 'sugerir' } = req.body || {};
+    if (!OPENAI_KEY) throw new Error('Chave da OpenAI não configurada.');
+
+    const REGRAS_META = [
+      'REGRAS OBRIGATÓRIAS DA META (o template é recusado se descumprir):',
+      '- Nada de promessa exagerada, urgência falsa ou "última chance".',
+      '- Não usar CAIXA ALTA em frases inteiras nem excesso de pontuação.',
+      '- Não pedir dados sensíveis (CPF, cartão, senha).',
+      '- Máximo 1024 caracteres. Ideal entre 250 e 500.',
+      '- As variáveis são numeradas: {{1}}, {{2}}, {{3}}. Nunca começar nem terminar o texto com variável.',
+      '- Sempre deixar claro quem está falando (a empresa).',
+    ].join('\n');
+
+    const CONTEXTO = [
+      'A empresa é a Guion Informática e Relógio de Ponto, revenda Secullum de sistemas de controle de ponto,',
+      'em Ibaiti/PR. Vende licença mensal do Ponto Web, relógios de ponto facial e biométrico, e ponto por',
+      'celular/tablet. O público são empresas pequenas e médias que precisam registrar a jornada dos funcionários',
+      'conforme a lei. As dores comuns: folha de ponto em papel, erro no cálculo de horas extras, funcionário',
+      'marcando ponto pelo colega, e medo de processo trabalhista.',
+    ].join(' ');
+
+    const sistema = [
+      'Você escreve mensagens de primeiro contato por WhatsApp para campanhas de venda.',
+      '',
+      CONTEXTO,
+      '',
+      'COMO ESCREVER',
+      '- Comece cumprimentando com a variável {{1}}, que será o PRIMEIRO NOME da pessoa.',
+      '- Escreva como uma pessoa escreveria, não como um anúncio. Nada de "aproveite já" ou "imperdível".',
+      '- Vá direto ao ponto: em 3 ou 4 linhas curtas a pessoa precisa entender o que é e o que fazer.',
+      '- Termine com uma pergunta simples, fácil de responder com uma palavra.',
+      '- No máximo 2 emojis na mensagem inteira.',
+      '- Português do Brasil, tratamento por você.',
+      '',
+      REGRAS_META,
+      '',
+      'Responda APENAS com o texto da mensagem. Sem aspas, sem título, sem comentário.',
+      quantidade > 1 ? 'Se pedirem mais de uma versão, separe cada uma com a linha ---' : '',
+    ].filter(Boolean).join('\n');
+
+    let pedido;
+    if (acao === 'melhorar') {
+      pedido = [
+        'Melhore a mensagem abaixo mantendo a ideia original.',
+        'Ajuste o que estiver fora das regras da Meta, deixe mais natural e mais fácil de responder.',
+        '',
+        'MENSAGEM ATUAL:',
+        rascunho,
+        publico ? `\nPÚBLICO: ${publico}` : '',
+      ].filter(Boolean).join('\n');
+    } else {
+      pedido = [
+        `Escreva ${quantidade} versões diferentes de mensagem para esta campanha.`,
+        objetivo ? `OBJETIVO: ${objetivo}` : 'OBJETIVO: apresentar a solução e despertar interesse.',
+        publico ? `PÚBLICO: ${publico}` : '',
+        rascunho ? `\nO que já foi escrito (use como ponto de partida):\n${rascunho}` : '',
+        '',
+        'Cada versão deve ter um ângulo diferente: uma mais direta, uma focada na dor, uma focada no benefício.',
+      ].filter(Boolean).join('\n');
+    }
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini', max_tokens: 900, temperature: 0.9, presence_penalty: 0.4,
+        messages: [{ role: 'system', content: sistema }, { role: 'user', content: pedido }],
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data?.error?.message || 'Erro na OpenAI');
+    const bruto = (data.choices?.[0]?.message?.content || '').trim();
+    const versoes = bruto.split(/\n-{3,}\n/).map(t => t.trim()).filter(Boolean);
+    res.status(200).json({ ok: true, versoes: versoes.length ? versoes : [bruto] });
+  } catch (err) {
+    console.error('[iaSugerirTemplate]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
