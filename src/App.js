@@ -6713,7 +6713,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {abaConfig==='fluxo'&&<>
       {/* Kanban de Implantação */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
-        <div style={sec}><ConfigKanban/></div>
+        <><div style={sec}><ConfigKanban/></div>
+        <div style={sec}><ConfigEtapasLead/></div></>
       )}
 
       {/* Horário de Funcionamento — agenda de instalações */}
@@ -12824,6 +12825,334 @@ function AbaTreino(){
 }
 
 // ─── LEADS — Meta Ads / Facebook ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// ETAPAS DO FUNIL DE LEADS
+//
+// Ficam em config_etapas_lead, editáveis em Configurações. Enquanto ninguém
+// mexer, valem as cinco de sempre — e como os ids são os mesmos que já estão
+// gravados nos leads, nada precisa ser migrado.
+//
+// O campo continua sendo lead.status: só a lista de etapas virou configurável.
+// ═══════════════════════════════════════════════════════════════════════════
+const ETAPAS_LEAD_DEFAULT=[
+  {id:'novo',        label:'Novo',        color:'#3498db',ordem:0,padrao:true, ativo:true},
+  {id:'contatado',   label:'Contatado',   color:'#f5a623',ordem:1,padrao:false,ativo:true},
+  {id:'qualificado', label:'Qualificado', color:'#9b59b6',ordem:2,padrao:false,ativo:true},
+  {id:'convertido',  label:'Convertido',  color:'#27ae60',ordem:3,padrao:false,ativo:true},
+  {id:'perdido',     label:'Perdido',     color:'#e74c3c',ordem:4,padrao:false,ativo:true},
+];
+
+function useEtapasLead(){
+  const [etapas,setEtapas]=useState(ETAPAS_LEAD_DEFAULT);
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'config_etapas_lead'),snap=>{
+      if(snap.empty){setEtapas(ETAPAS_LEAD_DEFAULT);return;}
+      const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));
+      setEtapas(arr.sort((a,b)=>(a.ordem||0)-(b.ordem||0)));
+    });
+    return()=>unsub();
+  },[]);
+  return etapas;
+}
+// A primeira etapa é a porta de entrada: sair dela exige responsável
+function etapaEntrada(etapas){
+  return (etapas||[]).find(e=>e.padrao)||(etapas||[])[0]||ETAPAS_LEAD_DEFAULT[0];
+}
+
+// ─── CONFIG: ETAPAS DO FUNIL DE LEADS ────────────────────────────────────────
+function ConfigEtapasLead(){
+  const [etapas,setEtapas]=useState([]);
+  const [carregando,setCarregando]=useState(true);
+  const [saved,setSaved]=useState(false);
+  const [dragId,setDragId]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const [nova,setNova]=useState({label:'',color:'#3498db'});
+  const [adicionando,setAdicionando]=useState(false);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,'config_etapas_lead'),snap=>{
+      if(snap.empty)setEtapas(ETAPAS_LEAD_DEFAULT.map(e=>({...e})));
+      else{const arr=[];snap.forEach(d=>arr.push({...d.data(),id:d.id}));setEtapas(arr.sort((a,b)=>(a.ordem||0)-(b.ordem||0)));}
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvarTudo(){
+    await Promise.all(etapas.map((e,i)=>setDoc(doc(db,'config_etapas_lead',e.id),{...e,ordem:i},{merge:true})));
+    setSaved(true);setTimeout(()=>setSaved(false),2500);
+  }
+  async function adicionar(){
+    if(!nova.label.trim())return;
+    const id='etapa_lead_'+Date.now();
+    await setDoc(doc(db,'config_etapas_lead',id),{
+      id,label:nova.label.trim(),color:nova.color,ordem:etapas.length,padrao:false,ativo:true,
+    });
+    // Primeira gravação: persiste também as padrão, senão elas somem da lista
+    if(etapas.length&&!etapas.some(e=>e.criadoEm)){
+      await Promise.all(ETAPAS_LEAD_DEFAULT.map((e,i)=>
+        setDoc(doc(db,'config_etapas_lead',e.id),{...e,ordem:i,criadoEm:new Date().toISOString()},{merge:true})));
+    }
+    setNova({label:'',color:'#3498db'});setAdicionando(false);
+  }
+  async function remover(e){
+    if(!window.confirm(`Remover a etapa "${e.label}"?\n\nOs leads que estiverem nela continuam existindo, mas ficam sem etapa até você movê-los.`))return;
+    await deleteDoc(doc(db,'config_etapas_lead',e.id));
+  }
+  function up(id,k,v){setEtapas(es=>es.map(e=>e.id===id?{...e,[k]:v}:e));setSaved(false);}
+  function setPadrao(id){setEtapas(es=>es.map(e=>({...e,padrao:e.id===id})));setSaved(false);}
+  function onDrop(alvo){
+    if(!dragId||dragId===alvo)return;
+    const arr=[...etapas];
+    const de=arr.findIndex(e=>e.id===dragId),para=arr.findIndex(e=>e.id===alvo);
+    const [m]=arr.splice(de,1);arr.splice(para,0,m);
+    setEtapas(arr.map((e,i)=>({...e,ordem:i})));
+    setDragId(null);setDragOver(null);setSaved(false);
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  const fi={padding:'7px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#e84393',marginBottom:4,textTransform:'uppercase'}}>🎯 Etapas do funil de leads</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        Arraste para reordenar. <strong>Entrada</strong> = onde o lead cai ao chegar; para tirar o lead dessa etapa é obrigatório
+        definir um responsável. Desmarcar <strong>Ativa</strong> esconde a coluna sem apagar o histórico.
+      </div>
+
+      {etapas.map((e,idx)=>(
+        <div key={e.id} draggable onDragStart={()=>setDragId(e.id)} onDragOver={ev=>{ev.preventDefault();setDragOver(e.id);}}
+          onDrop={()=>onDrop(e.id)} onDragEnd={()=>{setDragId(null);setDragOver(null);}}
+          style={{display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:7,marginBottom:6,cursor:'grab',
+            background:dragOver===e.id?'#fdf2f8':(e.ativo!==false?'#f8f9fa':'#f0f0f0'),
+            border:dragOver===e.id?'1.5px dashed #e84393':'1.5px solid #e8eaed',
+            opacity:e.ativo!==false?1:.55,transition:'all .15s'}}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#aaa"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>
+          <div style={{width:20,height:20,borderRadius:'50%',background:'#e8eaed',display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,color:'#7f8c8d',flexShrink:0}}>{idx+1}</div>
+          <input type="color" value={e.color||'#3498db'} onChange={ev=>up(e.id,'color',ev.target.value)}
+            style={{width:28,height:28,borderRadius:5,border:'1px solid #dde1e7',cursor:'pointer',padding:2,flexShrink:0}}/>
+          <input style={{...fi,flex:1}} value={e.label||''} onChange={ev=>up(e.id,'label',ev.target.value)}/>
+          <button onClick={()=>setPadrao(e.id)} title="Etapa de entrada dos leads novos"
+            style={{padding:'4px 10px',borderRadius:5,border:'none',cursor:'pointer',fontSize:10,fontWeight:700,
+              background:e.padrao?'#e84393':'#ecf0f1',color:e.padrao?'#fff':'#95a5a6',flexShrink:0}}>
+            {e.padrao?'✓ Entrada':'Entrada'}
+          </button>
+          <button onClick={()=>up(e.id,'ativo',e.ativo===false)} title="Mostrar ou esconder a coluna"
+            style={{padding:'4px 10px',borderRadius:5,border:'none',cursor:'pointer',fontSize:10,fontWeight:700,
+              background:e.ativo!==false?'#27ae60':'#ecf0f1',color:e.ativo!==false?'#fff':'#95a5a6',flexShrink:0}}>
+            {e.ativo!==false?'Ativa':'Oculta'}
+          </button>
+          <button onClick={()=>remover(e)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,flexShrink:0}}>×</button>
+        </div>
+      ))}
+
+      {adicionando?(
+        <div style={{display:'flex',gap:8,alignItems:'center',marginTop:8,padding:'9px 12px',borderRadius:7,background:'#fff',border:'1.5px dashed #e84393'}}>
+          <input type="color" value={nova.color} onChange={e=>setNova(x=>({...x,color:e.target.value}))}
+            style={{width:28,height:28,borderRadius:5,border:'1px solid #dde1e7',cursor:'pointer',padding:2,flexShrink:0}}/>
+          <input autoFocus style={{...fi,flex:1}} value={nova.label} placeholder="Ex: Orçamento enviado"
+            onChange={e=>setNova(x=>({...x,label:e.target.value}))}
+            onKeyDown={e=>{if(e.key==='Enter')adicionar();if(e.key==='Escape')setAdicionando(false);}}/>
+          <button onClick={adicionar} style={{padding:'6px 14px',borderRadius:6,border:'none',background:'#e84393',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>Adicionar</button>
+          <button onClick={()=>setAdicionando(false)} style={{padding:'6px 10px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#95a5a6'}}>Cancelar</button>
+        </div>
+      ):(
+        <button onClick={()=>setAdicionando(true)} style={{padding:'7px 16px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d',fontWeight:600,marginTop:8}}>
+          ＋ Nova etapa
+        </button>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,marginTop:14}}>
+        <button onClick={salvarTudo} style={{padding:'8px 20px',borderRadius:7,border:'none',background:saved?'#27ae60':'#e84393',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {saved?'✓ Salvo!':'Salvar etapas'}
+        </button>
+        <span style={{fontSize:10,color:'#95a5a6'}}>Nome, cor, ordem e entrada só valem depois de salvar.</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── MODAL: QUEM VAI ATENDER ─────────────────────────────────────────────────
+// Aparece quando um lead sai da etapa de entrada sem responsável definido.
+function ModalAssumirLead({lead,etapa,usuarios,sugerido,onConfirmar,onCancelar}){
+  const [uid,setUid]=useState(sugerido||'');
+  const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={onCancelar}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:'#fff',borderRadius:12,padding:'22px 24px',maxWidth:420,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.3)'}}>
+        <div style={{fontWeight:700,fontSize:15,color:'#2c3e50',marginBottom:4}}>Quem vai atender este lead?</div>
+        <div style={{fontSize:12,color:'#7f8c8d',lineHeight:1.6,marginBottom:14}}>
+          <strong style={{color:'#2c3e50'}}>{(lead.nome||'SEM NOME').toUpperCase()}</strong> está saindo de
+          {' '}<em>{etapa?.origemLabel||'Novo'}</em> para <em>{etapa?.label}</em>.
+          A partir daqui alguém precisa ficar como responsável, senão ninguém sabe quem está falando com o cliente.
+        </div>
+        <select autoFocus value={uid} onChange={e=>setUid(e.target.value)}
+          style={{padding:'9px 11px',borderRadius:7,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box',marginBottom:14}}>
+          <option value="">— Selecione o responsável —</option>
+          {elegiveis.map(u=><option key={u.id} value={u.id}>{u.nome||u.email}</option>)}
+        </select>
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onCancelar} style={{flex:1,padding:'10px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:13,color:'#7f8c8d',fontWeight:600}}>Cancelar</button>
+          <button onClick={()=>{if(!uid)return;onConfirmar(elegiveis.find(u=>u.id===uid));}} disabled={!uid}
+            style={{flex:2,padding:'10px',borderRadius:7,border:'none',background:uid?'#e84393':'#dde1e7',color:'#fff',fontWeight:700,cursor:uid?'pointer':'default',fontSize:13}}>
+            Assumir e mover
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SELO DO RESPONSÁVEL ─────────────────────────────────────────────────────
+// Sem responsável vira alerta vermelho: é o estado que precisa incomodar.
+function SeloResponsavel({lead,compacto}){
+  const nome=lead.responsavelNome||'';
+  if(!nome)return(
+    <span style={{display:'inline-flex',alignItems:'center',gap:4,background:'#fff5f5',color:'#c53030',
+      border:'1px solid #feb2b2',borderRadius:10,padding:compacto?'1px 7px':'2px 9px',fontSize:compacto?9:10,fontWeight:700,whiteSpace:'nowrap'}}>
+      ❗ Sem responsável
+    </span>
+  );
+  return(
+    <span title={`Responsável: ${nome}`}
+      style={{display:'inline-flex',alignItems:'center',gap:4,background:'#f0fff4',color:'#276749',
+        border:'1px solid #9ae6b4',borderRadius:10,padding:compacto?'1px 7px':'2px 9px',fontSize:compacto?9:10,fontWeight:700,whiteSpace:'nowrap',
+        maxWidth:150,overflow:'hidden',textOverflow:'ellipsis'}}>
+      👤 {nome.split(' ')[0]}
+    </span>
+  );
+}
+
+// ─── KANBAN DE LEADS ─────────────────────────────────────────────────────────
+function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
+  const [dragId,setDragId]=useState(null);
+  const [dragOver,setDragOver]=useState(null);
+  const [pedirResp,setPedirResp]=useState(null);
+
+  const visiveis=(etapas||[]).filter(e=>e.ativo!==false);
+  const entrada=etapaEntrada(etapas);
+  const eu=(usuarios||[]).find(u=>u.email===auth.currentUser?.email);
+
+  const filtrados=(leads||[]).filter(l=>{
+    if(!busca)return true;
+    const t=busca.toLowerCase();
+    return [l.nome,l.email,l.telefone,l.responsavelNome].some(x=>String(x||'').toLowerCase().includes(t));
+  });
+
+  async function mover(lead,etapa,resp){
+    const anterior=(etapas||[]).find(e=>e.id===lead.status);
+    const dados={status:etapa.id,atualizadoEm:new Date().toISOString()};
+    if(resp){
+      dados.responsavelId=resp.id;
+      dados.responsavelNome=resp.nome||resp.email;
+      dados.assumidoEm=new Date().toISOString();
+    }
+    await setDoc(doc(db,'leads',lead.id),dados,{merge:true});
+    await registrarEventoLead(lead,'status',`${anterior?.label||lead.status||'—'} → ${etapa.label}`);
+    if(resp)await registrarEventoLead(lead,'responsavel',`${resp.nome||resp.email} assumiu o atendimento`);
+  }
+
+  function aoSoltar(etapa){
+    const lead=filtrados.find(l=>l.id===dragId);
+    setDragId(null);setDragOver(null);
+    if(!lead||lead.status===etapa.id)return;
+    // Sair da porta de entrada exige responsável definido
+    if(etapa.id!==entrada.id&&!lead.responsavelId){
+      const origem=(etapas||[]).find(e=>e.id===lead.status);
+      setPedirResp({lead,etapa:{...etapa,origemLabel:origem?.label||'Novo'}});
+      return;
+    }
+    mover(lead,etapa);
+  }
+
+  return(
+    <div>
+      {pedirResp&&(
+        <ModalAssumirLead lead={pedirResp.lead} etapa={pedirResp.etapa} usuarios={usuarios} sugerido={eu?.id||''}
+          onCancelar={()=>setPedirResp(null)}
+          onConfirmar={async resp=>{await mover(pedirResp.lead,pedirResp.etapa,resp);setPedirResp(null);}}/>
+      )}
+
+      <div style={{display:'flex',gap:12,overflowX:'auto',paddingBottom:10,alignItems:'flex-start'}}>
+        {visiveis.map(etapa=>{
+          const daEtapa=filtrados.filter(l=>(l.status||entrada.id)===etapa.id);
+          const semResp=daEtapa.filter(l=>!l.responsavelId).length;
+          return(
+            <div key={etapa.id}
+              onDragOver={e=>{e.preventDefault();setDragOver(etapa.id);}}
+              onDragLeave={()=>setDragOver(o=>o===etapa.id?null:o)}
+              onDrop={()=>aoSoltar(etapa)}
+              style={{minWidth:260,maxWidth:260,flexShrink:0,background:dragOver===etapa.id?'#fdf2f8':'#f5f6fa',
+                borderRadius:10,padding:'10px',border:dragOver===etapa.id?`2px dashed ${etapa.color}`:'2px solid transparent',
+                transition:'all .15s'}}>
+
+              <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:10,paddingBottom:8,borderBottom:`2px solid ${etapa.color}`}}>
+                <span style={{width:9,height:9,borderRadius:'50%',background:etapa.color,flexShrink:0}}/>
+                <span style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{etapa.label}</span>
+                <span style={{background:etapa.color+'22',color:etapa.color,borderRadius:9,padding:'1px 8px',fontSize:10,fontWeight:700}}>{daEtapa.length}</span>
+              </div>
+
+              {semResp>0&&etapa.id===entrada.id&&(
+                <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:6,padding:'6px 9px',marginBottom:8,fontSize:10,color:'#c53030',fontWeight:600,lineHeight:1.5}}>
+                  ❗ {semResp} aguardando atendimento
+                </div>
+              )}
+
+              <div style={{display:'flex',flexDirection:'column',gap:7,minHeight:60}}>
+                {daEtapa.length===0&&(
+                  <div style={{fontSize:10,color:'#b2bec3',textAlign:'center',padding:'16px 0'}}>Arraste um lead para cá</div>
+                )}
+                {daEtapa.map(lead=>(
+                  <div key={lead.id} draggable
+                    onDragStart={()=>setDragId(lead.id)}
+                    onDragEnd={()=>{setDragId(null);setDragOver(null);}}
+                    onClick={()=>onAbrir&&onAbrir(lead)}
+                    style={{background:'#fff',borderRadius:8,padding:'10px 11px',cursor:'grab',
+                      boxShadow:dragId===lead.id?'0 4px 12px rgba(0,0,0,.2)':'0 1px 3px rgba(0,0,0,.08)',
+                      opacity:dragId===lead.id?.5:1,
+                      borderLeft:`3px solid ${lead.responsavelId?etapa.color:'#e74c3c'}`,transition:'box-shadow .15s'}}>
+
+                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',marginBottom:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textTransform:'uppercase'}}>
+                      {lead.nome||'SEM NOME'}
+                    </div>
+
+                    <div style={{fontSize:10,color:'#7f8c8d',lineHeight:1.6,marginBottom:6}}>
+                      {lead.telefone&&<div>📞 {lead.telefone}</div>}
+                      {lead.funcionarios&&<div>👥 {lead.funcionarios}</div>}
+                    </div>
+
+                    <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                      <SeloResponsavel lead={lead} compacto/>
+                      {lead.apresData&&(
+                        <span style={{fontSize:9,padding:'1px 7px',borderRadius:9,fontWeight:700,background:'#faf5ff',color:'#6b21a8',border:'1px solid #e9d5ff',whiteSpace:'nowrap'}}>
+                          📅 {new Date(lead.apresData+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}
+                        </span>
+                      )}
+                      <div style={{flex:1}}/>
+                      {lead.telefone&&(
+                        <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
+                          onClick={e=>{e.stopPropagation();registrarEventoLead(lead,'whatsapp','Contato via WhatsApp');}}
+                          title="Chamar no WhatsApp"
+                          style={{width:24,height:24,borderRadius:'50%',background:'#25D366',display:'flex',alignItems:'center',justifyContent:'center',textDecoration:'none',flexShrink:0}}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const STATUS_LEAD=[
   {id:'novo',        label:'Novo',           color:'#3498db'},
   {id:'contatado',   label:'Contatado',      color:'#f5a623'},
@@ -13390,6 +13719,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const [aba,setAba]=useState('lista');
   const [sincronizando,setSincronizando]=useState(false);
   const [ultimoSync,setUltimoSync]=useState(null);
+  const etapasLead=useEtapasLead();
+  const [pedirRespLista,setPedirRespLista]=useState(null);
 
   // Acompanha o log de sincronizacao para mostrar a ultima atualizacao
   useEffect(()=>{
@@ -13403,13 +13734,29 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   },[]);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
 
-  async function atualizarStatus(id,status){
+  // Mesma trava do Kanban: sair da etapa de entrada exige responsável.
+  // Sem isso bastava trocar o status por aqui para furar a regra.
+  async function atualizarStatus(id,status,resp){
     const lead=leads.find(l=>l.id===id)||sel;
-    const anterior=lead?.status||'novo';
-    await setDoc(doc(db,'leads',id),{status,atualizadoEm:new Date().toISOString()},{merge:true});
-    const rotulo=s=>STATUS_LEAD.find(x=>x.id===s)?.label||s;
+    const entrada=etapaEntrada(etapasLead);
+    if(status!==entrada.id&&!lead?.responsavelId&&!resp){
+      const destino=etapasLead.find(e=>e.id===status)||{id:status,label:status};
+      const origem=etapasLead.find(e=>e.id===(lead?.status||entrada.id));
+      setPedirRespLista({lead:{...lead,id},etapa:{...destino,origemLabel:origem?.label||entrada.label}});
+      return;
+    }
+    const anterior=lead?.status||entrada.id;
+    const dados={status,atualizadoEm:new Date().toISOString()};
+    if(resp){
+      dados.responsavelId=resp.id;
+      dados.responsavelNome=resp.nome||resp.email;
+      dados.assumidoEm=new Date().toISOString();
+    }
+    await setDoc(doc(db,'leads',id),dados,{merge:true});
+    const rotulo=s=>etapasLead.find(x=>x.id===s)?.label||s;
     await registrarEventoLead({...lead,id},'status',`${rotulo(anterior)} → ${rotulo(status)}`);
-    if(sel?.id===id)setSel(s=>({...s,status}));
+    if(resp)await registrarEventoLead({...lead,id},'responsavel',`${resp.nome||resp.email} assumiu o atendimento`);
+    if(sel?.id===id)setSel(s=>({...s,status,...(resp?{responsavelId:resp.id,responsavelNome:resp.nome||resp.email}:{})}));
   }
   async function salvarObs(lead){
     setSalvando(true);
@@ -13426,7 +13773,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   }
 
   const contadores={todos:leads.length};
-  STATUS_LEAD.forEach(s=>contadores[s.id]=leads.filter(l=>l.status===s.id).length);
+  etapasLead.forEach(s=>contadores[s.id]=leads.filter(l=>l.status===s.id).length);
 
   const leadsFiltrados=leads.filter(l=>{
     if(filtroStatus!=='todos'&&l.status!==filtroStatus)return false;
@@ -13450,9 +13797,14 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
               </div>
             </div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-              <select value={lead.status||'novo'} onChange={e=>atualizarStatus(lead.id,e.target.value)} style={{padding:'7px 10px',borderRadius:6,border:`1.5px solid ${COR_LEAD[lead.status||'novo']}`,fontWeight:700,color:COR_LEAD[lead.status||'novo'],background:'#fff',fontSize:12,cursor:'pointer'}}>
-                {STATUS_LEAD.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
+              {(()=>{
+                const corEt=(etapasLead.find(e=>e.id===lead.status)||etapaEntrada(etapasLead)).color||'#3498db';
+                return(
+                  <select value={lead.status||etapaEntrada(etapasLead).id} onChange={e=>atualizarStatus(lead.id,e.target.value)} style={{padding:'7px 10px',borderRadius:6,border:`1.5px solid ${corEt}`,fontWeight:700,color:corEt,background:'#fff',fontSize:12,cursor:'pointer'}}>
+                    {etapasLead.filter(s=>s.ativo!==false).map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+                  </select>
+                );
+              })()}
               <button onClick={()=>onConverterCliente(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>👤 Converter em Cliente</button>
               <button onClick={()=>onConverterOrcamento(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>📋 Gerar Orçamento</button>
               <button onClick={()=>excluir(lead.id)} style={{padding:'8px 10px',borderRadius:6,border:'none',background:'#fee2e2',color:'#e74c3c',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
@@ -13562,7 +13914,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {/* Abas + Ações */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
         <div style={{display:'flex',gap:6}}>
-          {[{id:'lista',l:'🎯 Leads'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
+          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
             <button key={a.id} onClick={()=>setAba(a.id)} style={{padding:'8px 16px',borderRadius:7,border:'none',background:aba===a.id?'#e84393':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>{a.l}</button>
           ))}
         </div>
@@ -13595,13 +13947,44 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {modalNovo&&<ModalNovoLead onFechar={()=>setModalNovo(false)}/>}
       {modalImport&&<ModalImportarLeads leadsExistentes={leads} onFechar={()=>setModalImport(false)}/>}
 
+      {/* Trocar a etapa pelo painel de detalhe também exige responsável */}
+      {pedirRespLista&&(
+        <ModalAssumirLead lead={pedirRespLista.lead} etapa={pedirRespLista.etapa} usuarios={usuarios}
+          sugerido={(usuarios||[]).find(u=>u.email===auth.currentUser?.email)?.id||''}
+          onCancelar={()=>setPedirRespLista(null)}
+          onConfirmar={async resp=>{
+            const {lead,etapa}=pedirRespLista;
+            setPedirRespLista(null);
+            await atualizarStatus(lead.id,etapa.id,resp);
+          }}/>
+      )}
+
       {aba==='campanhas'&&<PainelCampanhas leads={leads}/>}
+
+      {aba==='kanban'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:10}}>
+            <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,maxWidth:560}}>
+              Arraste os cards entre as colunas. Para tirar um lead de <strong>{etapaEntrada(etapasLead).label}</strong> é
+              obrigatório definir quem vai atender — assim ninguém fica sem dono.
+              As colunas são editáveis em Configurações › Etapas do funil de leads.
+            </div>
+            <div style={{position:'relative'}}>
+              <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar lead..."
+                style={{paddingLeft:12,paddingRight:8,height:32,borderRadius:7,border:'1.5px solid #e8eaed',background:'#f5f6fa',fontSize:12,width:200,outline:'none'}}/>
+            </div>
+          </div>
+          <KanbanLeads leads={leads} etapas={etapasLead} usuarios={usuarios} busca={busca}
+            onAbrir={l=>{setSel(l);setObsEdit('');}}/>
+        </div>
+      )}
 
       {aba==='lista'&&<>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
-          {[{id:'todos',label:`Todos (${leads.length})`},...STATUS_LEAD.map(s=>({id:s.id,label:`${s.label} (${contadores[s.id]||0})`}))].map(s=>(
-            <button key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{padding:'6px 14px',borderRadius:20,border:'none',background:filtroStatus===s.id?(COR_LEAD[s.id]||'#2c3e50'):'#ecf0f1',color:filtroStatus===s.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===s.id?700:400}}>{s.label}</button>
+          {[{id:'todos',label:`Todos (${leads.length})`,color:'#2c3e50'},
+            ...etapasLead.filter(e=>e.ativo!==false).map(s=>({id:s.id,label:`${s.label} (${contadores[s.id]||0})`,color:s.color}))].map(s=>(
+            <button key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{padding:'6px 14px',borderRadius:20,border:'none',background:filtroStatus===s.id?(s.color||'#2c3e50'):'#ecf0f1',color:filtroStatus===s.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===s.id?700:400}}>{s.label}</button>
           ))}
         </div>
         <div style={{position:'relative'}}>
@@ -13612,7 +13995,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
       {/* Cards resumo */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:16}}>
-        {STATUS_LEAD.map(s=>(
+        {etapasLead.filter(e=>e.ativo!==false).map(s=>(
           <div key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:'pointer',borderTop:`3px solid ${s.color}`}}>
             <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.label}</div>
             <div style={{fontSize:22,fontWeight:700,color:'#2c3e50'}}>{contadores[s.id]||0}</div>
@@ -13636,7 +14019,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       ):(
         <div style={{display:'flex',flexDirection:'column',gap:8}}>
           {leadsFiltrados.map(lead=>{
-            const st=STATUS_LEAD.find(s=>s.id===lead.status)||STATUS_LEAD[0];
+            const st=etapasLead.find(s=>s.id===lead.status)||etapaEntrada(etapasLead);
             return(
               <div key={lead.id} onClick={()=>{setSel(lead);setObsEdit('');}} style={{background:'#fff',borderRadius:8,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.06)',cursor:'pointer',display:'flex',alignItems:'center',gap:12,borderLeft:`4px solid ${st.color}`}}>
                 <div style={{width:38,height:38,borderRadius:'50%',background:st.color+'22',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,fontWeight:700,color:st.color,flexShrink:0}}>{(lead.nome||'?')[0].toUpperCase()}</div>
@@ -13659,10 +14042,11 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                       );
                     })()}
                   </div>
-                  <div style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:10,flexWrap:'wrap'}}>
+                  <div style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
                     {lead.email&&<span>✉️ {lead.email}</span>}
                     {lead.telefone&&<span>📞 {lead.telefone}</span>}
                     {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
+                    <SeloResponsavel lead={lead}/>
                   </div>
                 </div>
                 {/* WhatsApp direto do card */}
