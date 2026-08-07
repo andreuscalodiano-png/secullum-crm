@@ -260,6 +260,573 @@ const MODELOS_SEC16=[
   {id:'livre',  label:'Escrever do zero',           texto:''},
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRATO DE LICENÇA — geração a partir da ficha do cliente
+//
+// O texto NÃO fica no código: mora em config/contrato e é editado em
+// Configurações. Assim o jurídico muda uma cláusula sem precisar de deploy.
+//
+// Três partes configuráveis:
+//   licenciante  dados da Guion, que aparecem no cabeçalho e na assinatura
+//   objetoPlano  a Cláusula 1 muda conforme o plano fechado com o cliente
+//   modelo       o corpo do contrato, com {{variaveis}}
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LICENCIANTE_PADRAO={
+  razaoSocial:'Guion Informática Papelaria e Móveis Ltda',
+  endereco:'Rua Cel. Levino Ribeiro, nº 793 – Centro – Itapeva/SP',
+  cnpj:'07.334.645/0001-00',
+  representante:'Andreus Aparecido Calodiano Leite',
+  cpf:'333.714.648-14',
+  cidade:'Itapeva/SP',
+  foro:'Itapeva/SP',
+};
+
+// Cláusula 1 por plano. O {{funcionarios}} e o {{itens_contratados}} valem aqui também.
+const OBJETO_PADRAO={
+  Basic:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Básica de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
+
+1.2. Trata-se de um sistema de gestão de ponto para empresas com até {{funcionarios}} funcionários, que oferece:
+• Controle e gestão online em tempo real,
+• Marcação de ponto (online e off-line),
+• Espelho de ponto e relatórios legais.
+
+1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
+  Pro:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Profissional (PRO) de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
+
+1.2. Trata-se de um sistema de gestão de ponto completo para empresas com até {{funcionarios}} funcionários, que oferece:
+• Controle e gestão online em tempo real,
+• Controle de banco de horas,
+• Gestão de escalas,
+• Marcação de ponto (online e off-line),
+
+1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
+  Ultimate:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Profissional Ultimate de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
+
+1.2. Trata-se de um sistema de gestão de ponto completo para empresas com até {{funcionarios}} funcionários, que oferece:
+• Controle e gestão online em tempo real,
+• Controle de banco de horas,
+• Gestão de escalas,
+• Marcação de ponto (online e off-line),
+• Assinatura eletrônica do cartão ponto,
+• Envio de atestados pelo aplicativo.
+
+1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
+};
+
+const MODELO_CONTRATO_PADRAO=`CONTRATO DE LICENÇA DE USO DE SOFTWARE E PRESTAÇÃO DE SERVIÇOS
+
+Pelo presente instrumento particular, as partes abaixo identificadas:
+
+LICENCIANTE: {{licenciante_razao}}, com sede à {{licenciante_endereco}}, inscrita no CNPJ sob o nº {{licenciante_cnpj}}, neste ato representada por {{licenciante_representante}}, inscrito no CPF sob o nº {{licenciante_cpf}}, doravante denominada simplesmente LICENCIANTE.
+
+LICENCIADA: {{razao_social}}, com sede na {{endereco}}, nº {{numero}}, bairro {{bairro}} - {{cidade}}/{{uf}} – CEP {{cep}}, inscrita no CNPJ sob o nº {{cnpj}}, doravante denominada simplesmente LICENCIADA.
+
+CLÁUSULA 1 – OBJETO
+
+{{objeto}}
+
+{{itens_contratados}}
+
+CLÁUSULA 2 – PRAZO DE VIGÊNCIA
+
+2.1. O presente contrato entra em vigor na data de sua assinatura e terá validade por 12 (doze) meses, salvo manifestação expressa em sentido contrário por qualquer das partes, mediante aviso prévio, por escrito, com antecedência mínima de 30 (trinta) dias do término do período vigente.
+
+Parágrafo único: Havendo renovação contratual, os valores estabelecidos neste instrumento serão reajustados anualmente, com base na variação acumulada do Índice Nacional de Preços ao Consumidor – (IPCA), ou, na hipótese de extinção ou indisponibilidade deste, por outro índice oficial que o substitua.
+
+CLÁUSULA 3 – VALOR E CONDIÇÕES DE PAGAMENTO
+
+3.1. Pela licença de uso e serviços associados ao software {{nome_software}}, a LICENCIADA pagará à LICENCIANTE o valor mensal de {{valor_mensal}} ({{valor_mensal_extenso}}), referente à quantidade de {{funcionarios}} ({{funcionarios_extenso}}) funcionários, calculado à razão de {{valor_por_funcionario}} ({{valor_por_funcionario_extenso}}) por funcionário.
+
+3.2. O pagamento deverá ser efetuado todo dia {{dia_vencimento}} de cada mês, mediante emissão de boleto bancário ou outro meio previamente acordado entre as partes, durante a vigência deste contrato.
+
+3.3 Em caso de atraso no pagamento de quaisquer valores devidos em razão deste contrato, incidirá automaticamente, sem necessidade de aviso ou notificação prévia, multa moratória de 2% (dois por cento) sobre o valor em aberto, acrescida de juros de mora de 1% (um por cento) ao mês, calculados, além de correção monetária com base na variação do IPCA/IBGE, desde a data do vencimento até o efetivo pagamento.
+
+3.4 Persistindo o inadimplemento por mais de 15 (quinze) dias após o vencimento, a LICENCIANTE poderá encaminhar o título a protesto em cartório, bem como incluir o nome da LICENCIADA nos cadastros de inadimplentes junto aos órgãos de proteção ao crédito, como SPC, Serasa ou similares, sem prejuízo da adoção de demais medidas legais cabíveis para a cobrança dos valores devidos.
+
+3.5 Em caso de inadimplência superior a 10 (dez) dias corridos após o vencimento da fatura, a LICENCIANTE reserva-se o direito de suspender parcialmente ou totalmente o acesso ao sistema, plataforma ou serviços prestados, até a regularização dos débitos. O desbloqueio ocorrerá em até 2 (dois) dias úteis após a confirmação do pagamento.
+
+CLÁUSULA 4 – SUPORTE TÉCNICO E ATUALIZAÇÕES
+
+4.1. A LICENCIANTE se compromete a prestar suporte técnico remoto durante o horário comercial, de segunda a sexta-feira, das 08:00 às 18:00.
+
+4.2. Atualizações do sistema serão fornecidas sem custo adicional enquanto o contrato estiver vigente.
+
+CLÁUSULA 5 – OBRIGAÇÕES DAS PARTES
+
+5.1. DA LICENCIANTE:
+• Garantir o funcionamento do software conforme especificações técnicas.
+• Prestar suporte conforme a cláusula 4.
+
+5.2. DA LICENCIADA:
+• Utilizar o software apenas para fins lícitos e compatíveis com a legislação trabalhista.
+• Não reproduzir, copiar ou distribuir o software sem autorização da LICENCIANTE.
+
+CLÁUSULA 6 – CONFIDENCIALIDADE
+
+6.1. As partes se comprometem a manter sigilo sobre todas as informações técnicas, comerciais e operacionais a que tiverem acesso em razão deste contrato.
+
+6.2 As partes se comprometem a tratar os dados pessoais conforme a Lei n.º 13.709/2018 (LGPD).
+
+CLÁUSULA 7 – RESCISÃO
+
+7.1. O contrato poderá ser rescindido por qualquer das partes mediante notificação com 30 (trinta) dias de antecedência.
+
+7.2. O contrato será rescindido de pleno direito em caso de inadimplência.
+
+7.3 Caso a inadimplência persista por período superior a 90 (noventa) dias, a LICENCIANTE poderá proceder com o cancelamento definitivo da licença de uso do sistema, bem como com a exclusão irreversível de todos os dados, informações e conteúdos inseridos pela LICENCIADA, sem que isso resulte qualquer obrigação de indenização ou responsabilização por parte da LICENCIANTE. A LICENCIANTE reconhece que esta medida não configura infração contratual por parte da LICENCIADA, tratando-se de um direito decorrente do inadimplemento contratual.
+
+CLÁUSULA 8 – DISPOSIÇÕES FINAIS
+
+8.1. Este contrato não implica transferência de propriedade intelectual, apenas licença de uso do software.
+
+8.2. Fica eleito o foro da Comarca de {{foro}}, com renúncia de qualquer outro, por mais privilegiado que seja.
+
+E, por estarem justas e contratadas, firmam o presente instrumento em duas vias de igual teor.
+
+{{cidade_licenciante}}, {{data_extenso}}.`;
+
+// ─── Número por extenso (reais) ──────────────────────────────────────────────
+const _U=['','um','dois','três','quatro','cinco','seis','sete','oito','nove','dez','onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
+const _D=['','','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
+const _C=['','cento','duzentos','trezentos','quatrocentos','quinhentos','seiscentos','setecentos','oitocentos','novecentos'];
+function _ate999(n){
+  if(n===0)return '';
+  if(n===100)return 'cem';
+  const c=Math.floor(n/100),r=n%100;
+  const p=[];
+  if(c)p.push(_C[c]);
+  if(r){
+    if(r<20)p.push(_U[r]);
+    else{const d=Math.floor(r/10),u=r%10;p.push(u?`${_D[d]} e ${_U[u]}`:_D[d]);}
+  }
+  return p.join(' e ');
+}
+function numeroExtenso(n){
+  n=Math.floor(Math.abs(Number(n)||0));
+  if(n===0)return 'zero';
+  const mi=Math.floor(n/1000000),mil=Math.floor((n%1000000)/1000),res=n%1000;
+  const p=[];
+  if(mi)p.push(mi===1?'um milhão':`${_ate999(mi)} milhões`);
+  if(mil)p.push(mil===1?'mil':`${_ate999(mil)} mil`);
+  if(res)p.push(_ate999(res));
+  // Em português entra "e" antes do resto quando ele é menor que cem ou uma
+  // centena redonda: "dois mil e quinhentos", mas "mil cento e cinquenta".
+  const comE=res>0&&(mi||mil)&&(res<100||res%100===0);
+  if(comE){
+    const ultimo=p.pop();
+    return (p.join(' ')+' e '+ultimo).replace(/\s+/g,' ').trim();
+  }
+  return p.join(' ').replace(/\s+/g,' ').trim();
+}
+function reaisExtenso(v){
+  const n=Number(v)||0;
+  const i=Math.floor(n),c=Math.round((n-i)*100);
+  const partes=[];
+  if(i){
+    // Milhão/bilhão exato pede "de reais": "um milhão de reais"
+    const de=i>=1000000&&i%1000000===0?'de ':'';
+    partes.push(`${numeroExtenso(i)} ${de}${i===1?'real':'reais'}`);
+  }
+  if(c)partes.push(`${numeroExtenso(c)} ${c===1?'centavo':'centavos'}`);
+  if(!partes.length)return 'zero reais';
+  return partes.join(' e ');
+}
+function moedaBR(v){
+  return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function dataExtenso(d){
+  const dt=d?new Date(d):new Date();
+  const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  return `${dt.getDate()} de ${meses[dt.getMonth()]} de ${dt.getFullYear()}`;
+}
+
+function useContratoConfig(){
+  const [cfg,setCfg]=useState({
+    licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO,
+  });
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','contrato'),d=>{
+      if(!d.exists())return;
+      const x=d.data();
+      setCfg({
+        licenciante:{...LICENCIANTE_PADRAO,...(x.licenciante||{})},
+        objetoPlano:{...OBJETO_PADRAO,...(x.objetoPlano||{})},
+        modelo:x.modelo||MODELO_CONTRATO_PADRAO,
+      });
+    });
+    return()=>unsub();
+  },[]);
+  return cfg;
+}
+
+// Monta o texto final substituindo as variáveis pelos dados do cliente
+function montarContrato(cliente,cfg){
+  const c=cliente||{};
+  const L=cfg.licenciante||LICENCIANTE_PADRAO;
+  const plano=c.plano||'Pro';
+  const func=parseInt(c.func,10)||0;
+  const vS=Number(String(c.vS||0).toString().replace(',','.'))||0;
+  const porFunc=func>0?Math.round((vS/func)*100)/100:0;
+
+  const itens=(c.itens||[]).filter(i=>i&&i.nome);
+  const listaItens=itens.length
+    ? '1.4. Integram este contrato os seguintes itens contratados:\n'+
+      itens.map(i=>{
+        const qtd=parseInt(i.qtd,10)||1;
+        const v=Number(i.valor)||0;
+        return `• ${i.nome}${qtd>1?` (${qtd} unidades)`:''}${i.semCusto?' — sem custo':v?` — ${moedaBR(v*qtd)}`:''}`;
+      }).join('\n')
+    : '';
+
+  const nomeSoftware=({
+    Basic:'Gestão Básica de Ponto WEB',
+    Pro:'Gestão Profissional (PRO) de Ponto WEB',
+    Ultimate:'Gestão Profissional Ultimate de Ponto WEB',
+  })[plano]||`Ponto WEB ${plano}`;
+
+  const vars={
+    licenciante_razao:L.razaoSocial,licenciante_endereco:L.endereco,licenciante_cnpj:L.cnpj,
+    licenciante_representante:L.representante,licenciante_cpf:L.cpf,
+    cidade_licenciante:L.cidade,foro:L.foro,
+    razao_social:c.nome||c.empresa||'—',
+    endereco:c.rua||'—',numero:c.numero||'s/n',complemento:c.complemento||'',
+    bairro:c.bairro||'—',cidade:c.cidade||'—',uf:c.uf||'—',cep:c.cep||'—',
+    cnpj:c.cnpj||'—',contato:c.contato||'—',email:c.email||'—',telefone:c.tel||'—',
+    plano,nome_software:nomeSoftware,
+    funcionarios:String(func||'—'),funcionarios_extenso:func?numeroExtenso(func):'—',
+    valor_mensal:moedaBR(vS),valor_mensal_extenso:reaisExtenso(vS),
+    valor_por_funcionario:moedaBR(porFunc),valor_por_funcionario_extenso:reaisExtenso(porFunc),
+    valor_implantacao:moedaBR(c.vI),valor_equipamento:moedaBR(c.vE),
+    valor_total:moedaBR(c.total),
+    dia_vencimento:c.dtBoleto?String(new Date(c.dtBoleto+'T12:00:00').getDate()):'15',
+    data_extenso:dataExtenso(),
+    itens_contratados:listaItens,
+    objeto:'',
+  };
+  // O objeto é resolvido antes, porque ele mesmo usa variáveis
+  const objetoBruto=(cfg.objetoPlano||OBJETO_PADRAO)[plano]||OBJETO_PADRAO.Pro;
+  vars.objeto=objetoBruto.replace(/\{\{\s*(\w+)\s*\}\}/g,(m,k)=>vars[k]??m);
+
+  const texto=(cfg.modelo||MODELO_CONTRATO_PADRAO)
+    .replace(/\{\{\s*(\w+)\s*\}\}/g,(m,k)=>vars[k]??'')
+    .replace(/\n{3,}/g,'\n\n');
+
+  const faltando=Object.entries({
+    'Razão social':c.nome||c.empresa,CNPJ:c.cnpj,Endereço:c.rua,Número:c.numero,
+    Bairro:c.bairro,Cidade:c.cidade,UF:c.uf,CEP:c.cep,'Nº de funcionários':func,
+    'Valor mensal':vS,
+  }).filter(([,v])=>!v).map(([k])=>k);
+
+  return {texto,vars,faltando,plano};
+}
+
+// HTML do documento — mesma base para a prévia, a impressão e o Word
+function htmlContrato(texto,cliente,L,id){
+  const linhas=texto.split('\n');
+  const corpo=linhas.map(l=>{
+    const t=l.trim();
+    if(!t)return '<p class="vazio">&nbsp;</p>';
+    if(/^CONTRATO DE LICENÇA/i.test(t))return `<h1>${t}</h1>`;
+    if(/^CLÁUSULA\s/i.test(t))return `<h2>${t}</h2>`;
+    if(/^(LICENCIANTE|LICENCIADA):/i.test(t))
+      return `<p class="parte">${t.replace(/^(LICENCIANTE|LICENCIADA):/i,'<b>$1:</b>')}</p>`;
+    if(/^•/.test(t))return `<p class="item">${t}</p>`;
+    return `<p>${t}</p>`;
+  }).join('\n');
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"/>
+<title>Contrato — ${(cliente.nome||'cliente').replace(/[<>]/g,'')}</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm 20mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Times New Roman", Georgia, serif; font-size: 11.5pt; line-height: 1.55;
+         color: #111; margin: 0; padding: 0; text-align: justify; }
+  .folha { max-width: 170mm; margin: 0 auto; padding: 10mm 0; }
+  h1 { font-size: 13pt; text-align: center; text-transform: uppercase; letter-spacing: .5px;
+       margin: 0 0 18pt; padding-bottom: 8pt; border-bottom: 2px solid #111; }
+  h2 { font-size: 11.5pt; text-transform: uppercase; margin: 16pt 0 6pt; letter-spacing: .3px;
+       page-break-after: avoid; }
+  p { margin: 0 0 7pt; orphans: 3; widows: 3; }
+  p.vazio { margin: 0; height: 4pt; }
+  p.parte { margin-bottom: 9pt; }
+  p.item { margin: 0 0 3pt 14pt; text-align: left; }
+  .assinaturas { margin-top: 26pt; page-break-inside: avoid; }
+  .bloco { margin-bottom: 22pt; }
+  .bloco .rotulo { font-weight: bold; text-transform: uppercase; font-size: 10.5pt; margin-bottom: 2pt; }
+  .bloco .dado { font-size: 10.5pt; line-height: 1.4; }
+  .linha { margin-top: 26pt; border-top: 1px solid #111; width: 78mm; padding-top: 3pt;
+           font-size: 9.5pt; color: #444; }
+  .rodape { margin-top: 22pt; padding-top: 6pt; border-top: 1px solid #ccc;
+            font-size: 8pt; color: #777; text-align: center; }
+  @media print { .folha { padding: 0; } }
+</style></head>
+<body><div class="folha">
+${corpo}
+
+<div class="assinaturas">
+  <div class="bloco">
+    <div class="rotulo">Licenciante</div>
+    <div class="dado">${L.razaoSocial}<br/>CNPJ: ${L.cnpj}<br/>Representada por: ${L.representante}<br/>CPF: ${L.cpf}</div>
+    <div class="linha">Assinatura</div>
+  </div>
+  <div class="bloco">
+    <div class="rotulo">Licenciada</div>
+    <div class="dado">${cliente.nome||cliente.empresa||'—'}<br/>CNPJ: ${cliente.cnpj||'—'}${cliente.contato?`<br/>Representada por: ${cliente.contato}`:''}</div>
+    <div class="linha">Assinatura</div>
+  </div>
+</div>
+
+<div class="rodape">Documento ${id} · gerado em ${new Date().toLocaleString('pt-BR')}</div>
+</div></body></html>`;
+}
+
+// ─── MODAL: PRÉVIA E DOWNLOAD ────────────────────────────────────────────────
+function ModalContrato({cliente,onFechar,onRegistrado}){
+  const cfg=useContratoConfig();
+  const [salvando,setSalvando]=useState(false);
+  const [registrado,setRegistrado]=useState(false);
+
+  const {texto,faltando,plano}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
+  const idDoc=useMemo(()=>'CT-'+new Date().getFullYear()+'-'+String(cliente.id||'').slice(-6).toUpperCase(),[cliente.id]);
+  const html=useMemo(()=>htmlContrato(texto,cliente,cfg.licenciante,idDoc),[texto,cliente,cfg,idDoc]);
+  const arquivo=`Contrato_${String(cliente.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
+
+  async function registrar(formato){
+    if(registrado)return;
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'contratos',`${cliente.id}_${Date.now()}`),{
+        clienteId:cliente.id,clienteNome:cliente.nome||'',cnpj:cliente.cnpj||'',
+        plano,documento:idDoc,formato,
+        valorMensal:Number(cliente.vS)||0,funcionarios:parseInt(cliente.func,10)||0,
+        texto,                                   // congela o texto como foi enviado
+        geradoPor:auth.currentUser?.email||'—',
+        geradoEm:new Date().toISOString(),
+      });
+      await setDoc(doc(db,'clientes',cliente.id),{
+        contratoGeradoEm:new Date().toISOString(),
+        contratoDocumento:idDoc,
+      },{merge:true});
+      setRegistrado(true);
+      onRegistrado&&onRegistrado();
+    }catch(e){console.error('[contrato] registro:',e.message);}
+    setSalvando(false);
+  }
+
+  function baixarPDF(){
+    const w=window.open('','_blank','width=900,height=700');
+    if(!w){alert('O navegador bloqueou a janela. Libere os pop-ups para este site.');return;}
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(()=>{w.print();},400);
+    registrar('pdf');
+  }
+  function baixarWord(){
+    // HTML com cabeçalho do Word: abre no Word já editável, sem dependência
+    const doc0='﻿<html xmlns:o="urn:schemas-microsoft-com:office:office" '+
+      'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'+
+      html.replace(/^[\s\S]*?<head>/,'<head>');
+    const blob=new Blob([doc0],{type:'application/msword'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=arquivo+'.doc';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    registrar('word');
+  }
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={onFechar}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:'#fff',borderRadius:12,width:'100%',maxWidth:860,maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.35)'}}>
+
+        <div style={{padding:'16px 22px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Contrato de licença</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>
+              {cliente.nome} · plano {plano} · documento {idDoc}
+            </div>
+          </div>
+          <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',fontSize:20,color:'#95a5a6',lineHeight:1}}>×</button>
+        </div>
+
+        {faltando.length>0&&(
+          <div style={{margin:'12px 22px 0',background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 13px',fontSize:11,color:'#c53030',lineHeight:1.6}}>
+            <strong>⚠ Faltam dados no cadastro:</strong> {faltando.join(', ')}.<br/>
+            O contrato sai com traço nesses campos. Complete a ficha do cliente antes de enviar.
+          </div>
+        )}
+
+        <div style={{flex:1,overflowY:'auto',padding:'16px 22px',background:'#f5f6fa'}}>
+          <iframe title="Prévia do contrato" srcDoc={html}
+            style={{width:'100%',height:520,border:'1px solid #dde1e7',borderRadius:8,background:'#fff'}}/>
+        </div>
+
+        <div style={{padding:'14px 22px',borderTop:'1px solid #e8eaed',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          <button onClick={baixarPDF}
+            style={{padding:'10px 20px',borderRadius:7,border:'none',background:'#e74c3c',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            📄 Gerar PDF
+          </button>
+          <button onClick={baixarWord}
+            style={{padding:'10px 20px',borderRadius:7,border:'1px solid #2b6cb0',background:'#fff',color:'#2b6cb0',fontWeight:700,cursor:'pointer',fontSize:13}}>
+            📝 Baixar Word
+          </button>
+          <div style={{flex:1}}/>
+          {salvando&&<span style={{fontSize:11,color:'#7f8c8d'}}>Registrando...</span>}
+          {registrado&&<span style={{fontSize:11,color:'#27ae60',fontWeight:600}}>✓ Registrado no histórico</span>}
+        </div>
+        <div style={{padding:'0 22px 14px',fontSize:10,color:'#95a5a6',lineHeight:1.6}}>
+          No PDF, escolha <strong>Salvar como PDF</strong> na janela de impressão. O arquivo já sai no formato aceito
+          por ZapSign, Clicksign e D4Sign — os campos de assinatura ficam no fim, em bloco próprio.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFIG: TEXTO DO CONTRATO ───────────────────────────────────────────────
+function ConfigContrato(){
+  const [c,setC]=useState({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [aba,setAba]=useState('modelo');
+  const [planoSel,setPlanoSel]=useState('Pro');
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','contrato'),d=>{
+      if(d.exists()){
+        const x=d.data();
+        setC({
+          licenciante:{...LICENCIANTE_PADRAO,...(x.licenciante||{})},
+          objetoPlano:{...OBJETO_PADRAO,...(x.objetoPlano||{})},
+          modelo:x.modelo||MODELO_CONTRATO_PADRAO,
+        });
+      }
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','contrato'),{...c,atualizadoEm:new Date().toISOString(),atualizadoPor:auth.currentUser?.email||'—'},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+  function restaurar(){
+    if(!window.confirm('Voltar ao texto padrão? O que você editou será perdido.'))return;
+    setC({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  const VARS=[
+    ['razao_social','Razão social do cliente'],['cnpj','CNPJ'],['endereco','Rua'],['numero','Número'],
+    ['bairro','Bairro'],['cidade','Cidade'],['uf','UF'],['cep','CEP'],['contato','Contato'],
+    ['funcionarios','Nº de funcionários'],['funcionarios_extenso','Nº por extenso'],
+    ['plano','Plano'],['nome_software','Nome do software'],
+    ['valor_mensal','Valor mensal'],['valor_mensal_extenso','Valor mensal por extenso'],
+    ['valor_por_funcionario','Valor por funcionário'],['valor_por_funcionario_extenso','Por extenso'],
+    ['valor_implantacao','Implantação'],['valor_equipamento','Equipamento'],['valor_total','Total'],
+    ['dia_vencimento','Dia do vencimento'],['data_extenso','Data por extenso'],
+    ['objeto','Cláusula 1 do plano'],['itens_contratados','Itens contratados'],
+    ['licenciante_razao','Razão social da Guion'],['licenciante_cnpj','CNPJ da Guion'],
+    ['licenciante_representante','Representante'],['licenciante_cpf','CPF'],
+    ['cidade_licenciante','Cidade da Guion'],['foro','Foro'],
+  ];
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#8e44ad',marginBottom:4,textTransform:'uppercase'}}>📄 Texto do contrato</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        O contrato gerado na ficha do cliente usa este texto. Edite aqui e a mudança vale no próximo contrato,
+        sem precisar de deploy. Os contratos já emitidos guardam o texto da época e não mudam.
+      </div>
+
+      <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+        {[{id:'modelo',l:'Corpo do contrato'},{id:'objeto',l:'Cláusula 1 por plano'},{id:'empresa',l:'Dados da Guion'}].map(a=>(
+          <button key={a.id} onClick={()=>setAba(a.id)}
+            style={{padding:'7px 15px',borderRadius:7,border:'none',background:aba===a.id?'#8e44ad':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>
+            {a.l}
+          </button>
+        ))}
+      </div>
+
+      {aba==='modelo'&&(
+        <div>
+          <textarea value={c.modelo} onChange={e=>{setC(x=>({...x,modelo:e.target.value}));setSalvo(false);}}
+            style={{...fi,minHeight:420,resize:'vertical',fontFamily:'ui-monospace,Menlo,Consolas,monospace',fontSize:11,lineHeight:1.7}}/>
+          <div style={{marginTop:8,background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:7,padding:'10px 12px'}}>
+            <div style={{fontSize:10,color:'#6b21a8',fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Variáveis disponíveis</div>
+            <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+              {VARS.map(([v,d])=>(
+                <span key={v} title={d}
+                  style={{background:'#fff',border:'1px solid #e9d5ff',borderRadius:10,padding:'2px 8px',fontSize:10,color:'#6b21a8',fontFamily:'monospace'}}>
+                  {'{{'+v+'}}'}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aba==='objeto'&&(
+        <div>
+          <div style={{display:'flex',gap:6,marginBottom:8,flexWrap:'wrap'}}>
+            {Object.keys(c.objetoPlano).map(p=>(
+              <button key={p} onClick={()=>setPlanoSel(p)}
+                style={{padding:'5px 14px',borderRadius:6,border:`1px solid ${planoSel===p?'#8e44ad':'#dde1e7'}`,background:planoSel===p?'#faf5ff':'#fff',color:planoSel===p?'#6b21a8':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:700}}>
+                {p}
+              </button>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:'#95a5a6',marginBottom:6}}>
+            Este texto entra no lugar de <code>{'{{objeto}}'}</code> quando o cliente tem o plano {planoSel}.
+          </div>
+          <textarea value={c.objetoPlano[planoSel]||''}
+            onChange={e=>{const v=e.target.value;setC(x=>({...x,objetoPlano:{...x.objetoPlano,[planoSel]:v}}));setSalvo(false);}}
+            style={{...fi,minHeight:220,resize:'vertical',fontFamily:'ui-monospace,Menlo,Consolas,monospace',fontSize:11,lineHeight:1.7}}/>
+        </div>
+      )}
+
+      {aba==='empresa'&&(
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          {[['razaoSocial','Razão social'],['cnpj','CNPJ'],['endereco','Endereço completo'],
+            ['representante','Representante legal'],['cpf','CPF do representante'],
+            ['cidade','Cidade da assinatura'],['foro','Comarca do foro']].map(([k,l])=>(
+            <div key={k} style={k==='endereco'?{gridColumn:'1 / -1'}:{}}>
+              <label style={lbl}>{l}</label>
+              <input style={fi} value={c.licenciante[k]||''}
+                onChange={e=>{const v=e.target.value;setC(x=>({...x,licenciante:{...x.licenciante,[k]:v}}));setSalvo(false);}}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,marginTop:14,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'8px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':'#8e44ad',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Salvo!':'Salvar texto do contrato'}
+        </button>
+        <button onClick={restaurar}
+          style={{padding:'8px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>
+          Restaurar padrão
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PainelSecullum({cliente,perfil,onUpdate}){
   const [aberto,setAberto]=useState(false);
   const [dados,setDados]=useState(null);
@@ -4958,6 +5525,7 @@ function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
 
 function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcServicos,perfil,usuarios}){
   const [editMode,setEditMode]=useState(false);
+  const [modalContrato,setModalContrato]=useState(false);
   const [saved,setSaved]=useState(false);
   const [modalFaturamento,setModalFaturamento]=useState(false);
   const [modalAlteracao,setModalAlteracao]=useState(null); // null | 'valor' | 'cancelamento'
@@ -5110,12 +5678,26 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
                   <i className="ti ti-device-floppy"/> Salvar alterações
                 </button>
               </>
-            : <button onClick={()=>setEditMode(true)} style={{padding:'7px 16px',borderRadius:5,border:'none',background:C.blue,color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6}}>
-                <i className="ti ti-edit"/> Editar cliente
-              </button>
+            : <>
+                {/* Só faz sentido com o cliente já salvo: o contrato usa os dados gravados */}
+                <button onClick={()=>{
+                    if(!c.id){alert('Salve o cadastro do cliente antes de gerar o contrato.');return;}
+                    if(editMode){alert('Salve as alterações antes de gerar o contrato.');return;}
+                    setModalContrato(true);
+                  }}
+                  title="Gerar o contrato de licença com os dados deste cliente"
+                  style={{padding:'7px 16px',borderRadius:5,border:'none',background:'#8e44ad',color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6,boxShadow:'0 2px 8px rgba(142,68,173,.35)'}}>
+                  📄 Gerar contrato
+                </button>
+                <button onClick={()=>setEditMode(true)} style={{padding:'7px 16px',borderRadius:5,border:'none',background:C.blue,color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6}}>
+                  <i className="ti ti-edit"/> Editar cliente
+                </button>
+              </>
           }
         </div>
       </div>
+
+      {modalContrato&&<ModalContrato cliente={{...c,...f,id:c.id}} onFechar={()=>setModalContrato(false)}/>}
 
       {/* Resumo de valores (sempre visível) */}
       <div style={{...sec,borderTop:`3px solid ${C.blue}`}}>
@@ -6714,7 +7296,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* Kanban de Implantação */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <><div style={sec}><ConfigKanban/></div>
-        <div style={sec}><ConfigEtapasLead/></div></>
+        <div style={sec}><ConfigEtapasLead/></div>
+        <div style={sec}><ConfigContrato/></div></>
       )}
 
       {/* Horário de Funcionamento — agenda de instalações */}
@@ -13168,6 +13751,9 @@ function SeloResponsavel({lead,compacto}){
 // ─── KANBAN DE LEADS ─────────────────────────────────────────────────────────
 function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
   const [dragId,setDragId]=useState(null);
+  // Arrastar termina em clique em alguns navegadores; sem esta trava,
+  // soltar o card no destino abriria a ficha sem querer.
+  const arrastou=useRef(false);
   const [dragOver,setDragOver]=useState(null);
   const [pedirResp,setPedirResp]=useState(null);
 
@@ -13253,9 +13839,11 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
                     const conversa=(lead.conversa||[]).length;
                     return(
                       <div key={lead.id} draggable
-                        onDragStart={e=>{setDragId(lead.id);e.dataTransfer.effectAllowed='move';}}
-                        onDragEnd={()=>{setDragId(null);setDragOver(null);}}
-                        style={{background:'#fff',borderRadius:7,padding:'9px 10px',cursor:'grab',
+                        onDragStart={e=>{arrastou.current=true;setDragId(lead.id);e.dataTransfer.effectAllowed='move';}}
+                        onDragEnd={()=>{setDragId(null);setDragOver(null);setTimeout(()=>{arrastou.current=false;},60);}}
+                        onClick={()=>{if(arrastou.current)return;onAbrir&&onAbrir(lead);}}
+                        title="Clique para abrir a ficha do lead · arraste para mudar de etapa"
+                        style={{background:'#fff',borderRadius:7,padding:'9px 10px',cursor:'pointer',
                           boxShadow:dragId===lead.id?'0 4px 12px rgba(0,0,0,.2)':'0 1px 3px rgba(0,0,0,.08)',
                           opacity:dragId===lead.id?.5:1,
                           border:semDono?'1px solid #feb2b2':'1px solid #e8eaed',
@@ -13902,6 +14490,28 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   },[]);
   const fi={padding:'8px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:13,color:'#4a4a4a',background:'#fff',width:'100%',boxSizing:'border-box'};
 
+  // Atribui ou troca o responsável direto na ficha, sem precisar do Kanban
+  async function definirResponsavel(lead,uid){
+    const u=(usuarios||[]).find(x=>x.id===uid);
+    if(!uid){
+      await setDoc(doc(db,'leads',lead.id),{responsavelId:'',responsavelNome:'',atualizadoEm:new Date().toISOString()},{merge:true});
+      await registrarEventoLead(lead,'responsavel','Responsável removido');
+      if(sel?.id===lead.id)setSel(s=>({...s,responsavelId:'',responsavelNome:''}));
+      return;
+    }
+    if(!u)return;
+    const nome=u.nome||u.email;
+    await setDoc(doc(db,'leads',lead.id),{
+      responsavelId:u.id,responsavelNome:nome,
+      assumidoEm:new Date().toISOString(),atualizadoEm:new Date().toISOString(),
+    },{merge:true});
+    await registrarEventoLead(lead,'responsavel',
+      lead.responsavelNome&&lead.responsavelNome!==nome
+        ?`Atendimento transferido de ${lead.responsavelNome} para ${nome}`
+        :`${nome} assumiu o atendimento`);
+    if(sel?.id===lead.id)setSel(s=>({...s,responsavelId:u.id,responsavelNome:nome}));
+  }
+
   // Mesma trava do Kanban: sair da etapa de entrada exige responsável.
   // Sem isso bastava trocar o status por aqui para furar a regra.
   async function atualizarStatus(id,status,resp){
@@ -13965,6 +14575,25 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
               </div>
             </div>
             <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+              {/* Responsável — dá para atribuir aqui, sem depender de arrastar no Kanban */}
+              {(()=>{
+                const temDono=!!lead.responsavelId;
+                return(
+                  <div style={{display:'flex',alignItems:'center',gap:6,padding:'4px 8px',borderRadius:6,
+                    background:temDono?'#f0fff4':'#fff5f5',border:`1.5px solid ${temDono?'#9ae6b4':'#feb2b2'}`}}>
+                    <span style={{fontSize:13}}>{temDono?'🧑‍💼':'❗'}</span>
+                    <select value={lead.responsavelId||''} onChange={e=>definirResponsavel(lead,e.target.value)}
+                      title="Quem está atendendo este lead"
+                      style={{border:'none',background:'transparent',fontWeight:700,fontSize:12,cursor:'pointer',outline:'none',
+                        color:temDono?'#276749':'#c53030'}}>
+                      <option value="">Sem responsável</option>
+                      {(usuarios||[]).filter(u=>u.id&&u.status!=='revogado').map(u=>(
+                        <option key={u.id} value={u.id}>{u.nome||u.email}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
               {(()=>{
                 const corEt=(etapasLead.find(e=>e.id===lead.status)||etapaEntrada(etapasLead)).color||'#3498db';
                 return(
