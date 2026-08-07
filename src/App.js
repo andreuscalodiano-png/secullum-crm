@@ -14477,6 +14477,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const [ultimoSync,setUltimoSync]=useState(null);
   const etapasLead=useEtapasLead();
   const [pedirRespLista,setPedirRespLista]=useState(null);
+  const [filtroResp,setFiltroResp]=useState('todos');
 
   // Acompanha o log de sincronizacao para mostrar a ultima atualizacao
   useEffect(()=>{
@@ -14550,10 +14551,22 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
     setSel(null);
   }
 
-  const contadores={todos:leads.length};
-  etapasLead.forEach(s=>contadores[s.id]=leads.filter(l=>l.status===s.id).length);
+  // Filtro por responsável aplicado ANTES de tudo: vale para a lista, o Kanban
+  // e as campanhas, para as três abas mostrarem sempre o mesmo recorte.
+  const leadsDoResp=leads.filter(l=>{
+    if(filtroResp==='todos')return true;
+    if(filtroResp==='sem')return !l.responsavelId;
+    return l.responsavelId===filtroResp;
+  });
 
-  const leadsFiltrados=leads.filter(l=>{
+  const contadores={todos:leadsDoResp.length};
+  etapasLead.forEach(s=>contadores[s.id]=leadsDoResp.filter(l=>l.status===s.id).length);
+
+  // Quantos leads cada pessoa tem, para mostrar no seletor
+  const porResponsavel={};
+  leads.forEach(l=>{const k=l.responsavelId||'sem';porResponsavel[k]=(porResponsavel[k]||0)+1;});
+
+  const leadsFiltrados=leadsDoResp.filter(l=>{
     if(filtroStatus!=='todos'&&l.status!==filtroStatus)return false;
     if(busca){const b=busca.toLowerCase();return(l.nome||'').toLowerCase().includes(b)||(l.email||'').toLowerCase().includes(b)||(l.telefone||'').toLowerCase().includes(b);}
     return true;
@@ -14756,7 +14769,48 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
           }}/>
       )}
 
-      {aba==='campanhas'&&<PainelCampanhas leads={leads}/>}
+      {/* Filtro por responsável — vale para lista, Kanban e campanhas */}
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap',
+        background:filtroResp!=='todos'?'#faf5ff':'#f8f9fa',borderRadius:8,padding:'9px 12px',
+        border:`1px solid ${filtroResp!=='todos'?'#e9d5ff':'#e8eaed'}`}}>
+        <span style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>Responsável</span>
+        <select value={filtroResp} onChange={e=>setFiltroResp(e.target.value)}
+          style={{padding:'6px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',cursor:'pointer',fontWeight:filtroResp!=='todos'?700:400,minWidth:200}}>
+          <option value="todos">Todos os responsáveis ({leads.length})</option>
+          <option value="sem">❗ Sem responsável ({porResponsavel.sem||0})</option>
+          {(usuarios||[]).filter(u=>u.id&&u.status!=='revogado').map(u=>(
+            <option key={u.id} value={u.id}>{u.nome||u.email} ({porResponsavel[u.id]||0})</option>
+          ))}
+        </select>
+
+        {aba!=='lista'&&(
+          <>
+            <span style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginLeft:6}}>Etapa</span>
+            <select value={filtroStatus} onChange={e=>setFiltroStatus(e.target.value)}
+              style={{padding:'6px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',cursor:'pointer',fontWeight:filtroStatus!=='todos'?700:400}}>
+              <option value="todos">Todas as etapas</option>
+              {etapasLead.filter(e=>e.ativo!==false).map(s=>(
+                <option key={s.id} value={s.id}>{s.label} ({contadores[s.id]||0})</option>
+              ))}
+            </select>
+          </>
+        )}
+
+        <div style={{flex:1}}/>
+        <span style={{fontSize:11,color:'#7f8c8d'}}>
+          {filtroResp==='todos'&&filtroStatus==='todos'
+            ?`${leads.length} lead(s)`
+            :<strong style={{color:'#6b21a8'}}>{leadsDoResp.length} lead(s) neste recorte</strong>}
+        </span>
+        {(filtroResp!=='todos'||filtroStatus!=='todos')&&(
+          <button onClick={()=>{setFiltroResp('todos');setFiltroStatus('todos');}}
+            style={{padding:'4px 12px',borderRadius:6,border:'1px solid #e9d5ff',background:'#fff',cursor:'pointer',fontSize:11,color:'#6b21a8',fontWeight:700}}>
+            ✕ Limpar
+          </button>
+        )}
+      </div>
+
+      {aba==='campanhas'&&<PainelCampanhas leads={leadsDoResp}/>}
 
       {aba==='kanban'&&(
         <div>
@@ -14771,7 +14825,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                 style={{paddingLeft:12,paddingRight:8,height:32,borderRadius:7,border:'1.5px solid #e8eaed',background:'#f5f6fa',fontSize:12,width:200,outline:'none'}}/>
             </div>
           </div>
-          <KanbanLeads leads={leads} etapas={etapasLead} usuarios={usuarios} busca={busca}
+          <KanbanLeads leads={leadsDoResp} usuarios={usuarios} busca={busca}
+            etapas={filtroStatus==='todos'?etapasLead:etapasLead.filter(e=>e.id===filtroStatus)}
             onAbrir={l=>{setSel(l);setObsEdit('');}}/>
         </div>
       )}
@@ -14779,7 +14834,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {aba==='lista'&&<>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
         <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
-          {[{id:'todos',label:`Todos (${leads.length})`,color:'#2c3e50'},
+          {[{id:'todos',label:`Todos (${leadsDoResp.length})`,color:'#2c3e50'},
             ...etapasLead.filter(e=>e.ativo!==false).map(s=>({id:s.id,label:`${s.label} (${contadores[s.id]||0})`,color:s.color}))].map(s=>(
             <button key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{padding:'6px 14px',borderRadius:20,border:'none',background:filtroStatus===s.id?(s.color||'#2c3e50'):'#ecf0f1',color:filtroStatus===s.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:11,fontWeight:filtroStatus===s.id?700:400}}>{s.label}</button>
           ))}
