@@ -191,6 +191,158 @@ function waLead(tel){
   const limpo=n.startsWith('0')?n.slice(1):n;
   return '55'+limpo;
 }
+// ─── TELEFONE PARA COPIAR ────────────────────────────────────────────────────
+// Devolve o número SEM o código do país, pronto para colar no WhatsApp.
+// Cuidado: 55 também é o DDD de Santa Maria/RS. Por isso só tiro os dois
+// primeiros dígitos quando o total tem 12 ou 13 — tamanho de número com país.
+// Assim +5515998417866 vira 15998417866, e 55998417866 (DDD 55) fica intacto.
+function telSemPais(tel){
+  const n=String(tel||'').replace(/\D/g,'');
+  if(!n)return '';
+  if((n.length===12||n.length===13)&&n.startsWith('55'))return n.slice(2);
+  return n;
+}
+
+// Copia com fallback: navigator.clipboard exige HTTPS e nem todo navegador tem
+async function copiar(texto){
+  try{
+    if(navigator.clipboard&&window.isSecureContext){
+      await navigator.clipboard.writeText(texto);
+      return true;
+    }
+  }catch(_){}
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=texto;
+    ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }catch(_){return false;}
+}
+
+// Botão discreto de copiar, com confirmação no próprio botão
+function BotaoCopiar({valor,titulo,rotulo,compacto}){
+  const [ok,setOk]=useState(false);
+  if(!valor)return null;
+  return(
+    <button onClick={async e=>{
+        e.stopPropagation();e.preventDefault();
+        if(await copiar(valor)){setOk(true);setTimeout(()=>setOk(false),1600);}
+        else alert('Não consegui copiar. Copie manualmente:\n\n'+valor);
+      }}
+      title={titulo||'Copiar'}
+      style={{border:'none',background:ok?'#d4edda':'transparent',color:ok?'#276749':'#95a5a6',
+        cursor:'pointer',fontSize:compacto?10:11,padding:compacto?'1px 5px':'2px 7px',borderRadius:5,
+        display:'inline-flex',alignItems:'center',gap:3,fontWeight:600,verticalAlign:'middle',
+        transition:'background .15s'}}>
+      {ok?'✓ copiado':(rotulo||'⧉')}
+    </button>
+  );
+}
+
+// ─── SUGESTÃO DE PRIMEIRA MENSAGEM ───────────────────────────────────────────
+// Monta a abertura da conversa com o que o lead informou no anúncio. Três
+// versões que se alternam, para dois vendedores não mandarem a frase idêntica
+// no mesmo dia — o cliente percebe quando é texto de robô.
+function saudacaoHora(){
+  const h=new Date().getHours();
+  return h<12?'bom dia':h<18?'boa tarde':'boa noite';
+}
+function frasePorte(f){
+  const t=String(f||'').toLowerCase();
+  if(!t)return '';
+  const n=t.match(/\d+/g);
+  if(t.includes('acima')||t.includes('mais de'))return n?`uma equipe de mais de ${n[0]} funcionários`:'sua equipe';
+  if(t.includes('até')&&n)return `uma equipe de até ${n[0]} funcionários`;
+  if(n&&n.length>=2)return `uma equipe de ${n[0]} a ${n[1]} funcionários`;
+  return 'sua equipe';
+}
+function fraseSolucao(s){
+  const t=String(s||'').toLowerCase();
+  if(t.includes('facial')&&(t.includes('tablet')||t.includes('celular')))
+    return 'o ponto por reconhecimento facial no celular ou tablet';
+  if(t.includes('fixo')||t.includes('relógio')||t.includes('relogio'))
+    return 'um relógio de ponto com reconhecimento facial';
+  if(t)return String(s).toLowerCase();
+  return 'um sistema de controle de ponto';
+}
+
+function sugestoesMensagem(lead){
+  const l=lead||{};
+  const primeiro=(l.nome||'').trim().split(' ')[0]
+    .replace(/^(.)(.*)$/,(m,a,b)=>a.toUpperCase()+b.toLowerCase());
+  const ola=primeiro?`Olá ${primeiro}`:'Olá';
+  const saud=saudacaoHora();
+  const porte=frasePorte(l.funcionarios);
+  const solucao=fraseSolucao(l.solucao);
+  const comPorte=porte?` para ${porte}`:'';
+
+  return [
+    `${ola}, ${saud}! Aqui é da Guion, revenda Secullum. Vi que você procurou ${solucao}${comPorte}. Posso te explicar rapidinho como funciona?`,
+    `${ola}, ${saud}! Sou da Guion Informática. Você demonstrou interesse em ${solucao}${comPorte} — consigo te passar os detalhes agora, se for um bom momento.`,
+    `${ola}, ${saud}! Aqui é da Guion, trabalhamos com controle de ponto Secullum. Recebi seu contato sobre ${solucao}${comPorte}. Qual a sua maior dificuldade hoje com o ponto dos funcionários?`,
+  ];
+}
+
+// Bloco verde da ficha do lead: abrir com o texto pronto, copiar texto, copiar número
+function BlocoWhatsAppLead({lead,onRegistrar}){
+  const [i,setI]=useState(0);
+  const [okTexto,setOkTexto]=useState(false);
+  const sugestoes=useMemo(()=>sugestoesMensagem(lead),[lead.nome,lead.funcionarios,lead.solucao]);
+  const mensagem=sugestoes[i%sugestoes.length];
+  const numero=waLead(lead.telefone);
+  const link=numero?`https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`:'';
+
+  return(
+    <div style={estiloSecao('contato',{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4'})}>
+      <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:10}}>
+        <div style={{flex:1,minWidth:180}}>
+          <div style={{fontWeight:700,fontSize:12,color:'#276749',marginBottom:2}}>Contato via WhatsApp</div>
+          <div style={{fontSize:11,color:'#7f8c8d',display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+            {lead.nome} • {lead.telefone}
+            <BotaoCopiar valor={telSemPais(lead.telefone)} rotulo="⧉ copiar número"
+              titulo={`Copiar ${telSemPais(lead.telefone)} — sem o código do país`}/>
+          </div>
+        </div>
+        <a href={link}
+          onClick={()=>onRegistrar&&onRegistrar()}
+          target="_blank" rel="noopener noreferrer"
+          style={{padding:'9px 18px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:13,textDecoration:'none',display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+          Abrir com a mensagem
+        </a>
+      </div>
+
+      <div style={{background:'#fff',border:'1px solid #c6f6d5',borderRadius:8,padding:'10px 12px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:5,flexWrap:'wrap'}}>
+          <span style={{fontSize:9,color:'#276749',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>
+            Sugestão de primeira mensagem
+          </span>
+          <div style={{flex:1}}/>
+          <button onClick={()=>setI(x=>x+1)} title="Escrever de outro jeito"
+            style={{border:'none',background:'transparent',color:'#276749',cursor:'pointer',fontSize:11,fontWeight:700}}>
+            ↻ outra versão
+          </button>
+          <button onClick={async()=>{
+              if(await copiar(mensagem)){setOkTexto(true);setTimeout(()=>setOkTexto(false),1800);}
+            }}
+            style={{border:'1px solid #9ae6b4',background:okTexto?'#d4edda':'#fff',color:'#276749',cursor:'pointer',fontSize:11,fontWeight:700,padding:'3px 11px',borderRadius:6}}>
+            {okTexto?'✓ copiado':'⧉ copiar texto'}
+          </button>
+        </div>
+        <div style={{fontSize:12,color:'#2c3e50',lineHeight:1.6}}>{mensagem}</div>
+        {!lead.funcionarios&&!lead.solucao&&(
+          <div style={{fontSize:10,color:'#b45309',marginTop:6}}>
+            Este lead não informou porte nem solução — o texto sai mais genérico.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function linkWaLead(lead){
   const num=waLead(lead.telefone);
   if(!num)return '';
@@ -13863,7 +14015,14 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
                           ?<div style={{fontSize:10,color:'#e74c3c',fontWeight:700,marginBottom:2}}>❗ Sem responsável</div>
                           :<div style={{fontSize:10,color:'#2b6cb0',fontWeight:700,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>🧑‍💼 {lead.responsavelNome}</div>}
 
-                        {lead.telefone&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2}}>📞 {lead.telefone}</div>}
+                        {lead.telefone&&(
+                          <div style={{fontSize:10,color:'#7f8c8d',marginBottom:2,display:'flex',alignItems:'center',gap:2}}
+                            onClick={e=>e.stopPropagation()}>
+                            📞 {lead.telefone}
+                            <BotaoCopiar valor={telSemPais(lead.telefone)} compacto
+                              titulo={`Copiar ${telSemPais(lead.telefone)} — sem o código do país`}/>
+                          </div>
+                        )}
                         {lead.funcionarios&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>👥 {lead.funcionarios}</div>}
                         {lead.origem&&<div style={{fontSize:10,color:'#95a5a6',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>🎯 {lead.origem}</div>}
 
@@ -14699,21 +14858,10 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
           })()}
         </div>
 
-        {/* WhatsApp */}
+        {/* WhatsApp — abrir com a mensagem pronta, copiar texto e copiar número */}
         {lead.telefone&&(
-          <div style={estiloSecao('contato',{background:'#f0fff4',borderRadius:10,padding:'14px 20px',border:'1px solid #9ae6b4',display:'flex',alignItems:'center',gap:12})}>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,fontSize:12,color:'#276749',marginBottom:2}}>Contato via WhatsApp</div>
-              <div style={{fontSize:11,color:'#7f8c8d'}}>{lead.nome} • {lead.telefone}</div>
-            </div>
-            <a href={linkWaLead(lead)}
-              onClick={()=>registrarEventoLead(lead,'whatsapp','Contato via WhatsApp')}
-              target="_blank" rel="noopener noreferrer"
-              style={{padding:'9px 18px',borderRadius:7,background:'#25D366',color:'#fff',fontWeight:700,fontSize:13,textDecoration:'none',display:'flex',alignItems:'center',gap:6}}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-              WhatsApp
-            </a>
-          </div>
+          <BlocoWhatsAppLead lead={lead}
+            onRegistrar={()=>registrarEventoLead(lead,'whatsapp','Contato via WhatsApp')}/>
         )}
       </div>
     );
@@ -14896,7 +15044,13 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                   </div>
                   <div style={{fontSize:11,color:'#7f8c8d',display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
                     {lead.email&&<span>✉️ {lead.email}</span>}
-                    {lead.telefone&&<span>📞 {lead.telefone}</span>}
+                    {lead.telefone&&(
+                      <span style={{display:'inline-flex',alignItems:'center',gap:2}} onClick={e=>e.stopPropagation()}>
+                        📞 {lead.telefone}
+                        <BotaoCopiar valor={telSemPais(lead.telefone)} compacto
+                          titulo={`Copiar ${telSemPais(lead.telefone)} — sem o código do país`}/>
+                      </span>
+                    )}
                     {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
                     <SeloResponsavel lead={lead}/>
                   </div>
