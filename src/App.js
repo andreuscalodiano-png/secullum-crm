@@ -14718,8 +14718,14 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
     return l.responsavelId===filtroResp;
   });
 
+  // Na etapa de entrada, "novo" significa lead que ninguém assumiu. Quem já
+  // tem responsável virou trabalho de alguém e não conta como novidade.
+  const idEntrada=etapaEntrada(etapasLead).id;
   const contadores={todos:leadsDoResp.length};
-  etapasLead.forEach(s=>contadores[s.id]=leadsDoResp.filter(l=>l.status===s.id).length);
+  etapasLead.forEach(s=>contadores[s.id]=leadsDoResp.filter(l=>
+    l.status===s.id&&(s.id!==idEntrada||!l.responsavelId)).length);
+  // Leads que estão na entrada mas já têm dono — contados à parte
+  contadores._entradaComDono=leadsDoResp.filter(l=>l.status===idEntrada&&l.responsavelId).length;
 
   // Quantos leads cada pessoa tem, para mostrar no seletor
   const porResponsavel={};
@@ -14727,6 +14733,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
   const leadsFiltrados=leadsDoResp.filter(l=>{
     if(filtroStatus!=='todos'&&l.status!==filtroStatus)return false;
+    // Coerência com o contador: filtrar pela entrada mostra só os sem dono
+    if(filtroStatus===idEntrada&&l.responsavelId)return false;
     if(busca){const b=busca.toLowerCase();return(l.nome||'').toLowerCase().includes(b)||(l.email||'').toLowerCase().includes(b)||(l.telefone||'').toLowerCase().includes(b);}
     return true;
   });
@@ -14995,12 +15003,21 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
       {/* Cards resumo */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:16}}>
-        {etapasLead.filter(e=>e.ativo!==false).map(s=>(
-          <div key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:'pointer',borderTop:`3px solid ${s.color}`}}>
-            <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.label}</div>
-            <div style={{fontSize:22,fontWeight:700,color:'#2c3e50'}}>{contadores[s.id]||0}</div>
-          </div>
-        ))}
+        {etapasLead.filter(e=>e.ativo!==false).map(s=>{
+          const ehEntrada=s.id===idEntrada;
+          return(
+            <div key={s.id} onClick={()=>setFiltroStatus(s.id)} style={{background:'#fff',borderRadius:8,padding:'12px 14px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',cursor:'pointer',borderTop:`3px solid ${s.color}`}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.label}</div>
+              <div style={{fontSize:22,fontWeight:700,color:ehEntrada&&contadores[s.id]>0?'#e74c3c':'#2c3e50'}}>{contadores[s.id]||0}</div>
+              {ehEntrada&&(
+                <div style={{fontSize:9,color:'#95a5a6',marginTop:2,lineHeight:1.4}}>
+                  sem responsável
+                  {contadores._entradaComDono>0&&<> · +{contadores._entradaComDono} já atribuído(s)</>}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Lista */}
@@ -15234,15 +15251,17 @@ export default function App(){
   const prevLeadIds=useRef(null);
   useEffect(()=>{
     if(prevLeadIds.current===null){prevLeadIds.current=new Set(leads.map(l=>l.id));return;}
-    const novos=leads.filter(l=>!prevLeadIds.current.has(l.id));
+    // Lead que já chegou com responsável não é novidade para ninguém: só avisa
+    // do que está sem dono, que é o que realmente precisa de alguém agora.
+    const novos=leads.filter(l=>!prevLeadIds.current.has(l.id)&&!l.responsavelId);
     if(novos.length>0){
       tocarSino(3);
       // Notificacao do navegador, se permitida
       try{
         if(typeof Notification!=='undefined'&&Notification.permission==='granted'){
           const n=novos.length;
-          new Notification(n===1?'Novo lead recebido!':`${n} novos leads recebidos!`,{
-            body:n===1?(novos[0].nome||'Lead sem nome'):'Confira no menu Leads.',
+          new Notification(n===1?'Novo lead sem responsável!':`${n} leads novos aguardando atendimento`,{
+            body:n===1?(novos[0].nome||'Lead sem nome'):'Ninguém assumiu ainda. Confira no menu Leads.',
             icon:'/favicon.ico',
           });
         }
