@@ -841,6 +841,120 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
 }
 
 // ─── CONFIG: TEXTO DO CONTRATO ───────────────────────────────────────────────
+// ─── CONFIG: LIMPEZA DE LEADS ────────────────────────────────────────────────
+// Junta duplicados e recolhe contatos que nunca deveriam ter virado lead.
+// Sempre mostra a prévia antes: apagar cadastro não tem desfazer.
+function ConfigLimpezaLeads(){
+  const [plano,setPlano]=useState(null);
+  const [analisando,setAnalisando]=useState(false);
+  const [executando,setExecutando]=useState(false);
+  const [feito,setFeito]=useState(null);
+  const [erro,setErro]=useState('');
+  const [tirarSemQualif,setTirarSemQualif]=useState(true);
+  const [verDetalhe,setVerDetalhe]=useState(false);
+
+  async function chamar(confirmar){
+    confirmar?setExecutando(true):setAnalisando(true);
+    setErro('');if(confirmar)setFeito(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/limparLeads`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({confirmar,removerSemQualificacao:tirarSemQualif}),
+      });
+      const d=await r.json();
+      if(d.error)setErro(d.error);
+      else if(confirmar){setFeito(d);setPlano(null);}
+      else setPlano(d);
+    }catch(e){setErro(e.message);}
+    setAnalisando(false);setExecutando(false);
+  }
+
+  function executar(){
+    const n=(plano?.leads_que_serao_removidos_por_duplicidade||0)+(tirarSemQualif?(plano?.contatos_sem_qualificacao||0):0);
+    if(!window.confirm(`Confirmar a limpeza?\n\n${n} cadastro(s) serão removidos da lista de leads.\n\nOs dados que só existiam neles são copiados para o cadastro que fica, e uma cópia completa vai para "leads_removidos" — nada é perdido de verdade.`))return;
+    chamar(true);
+  }
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#e67e22',marginBottom:4,textTransform:'uppercase'}}>🧹 Limpeza de leads</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        Junta cadastros da mesma pessoa (mesmo telefone) e recolhe os contatos que entraram sem qualificação nenhuma.
+        <strong> Sempre mostra o que vai fazer antes de fazer</strong>, e guarda uma cópia do que sair em
+        <code style={{fontSize:10,background:'#f8f9fa',padding:'1px 5px',borderRadius:4,margin:'0 3px'}}>leads_removidos</code>.
+      </div>
+
+      {erro&&(
+        <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 13px',marginBottom:12,fontSize:11,color:'#c53030'}}>{erro}</div>
+      )}
+
+      {feito&&(
+        <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'10px 13px',marginBottom:12,fontSize:11,color:'#276749',lineHeight:1.6}}>
+          <strong>✓ Limpeza concluída.</strong> {feito.fundidos} grupo(s) de duplicados unidos, {feito.removidos} cadastro(s) removidos da lista.
+        </div>
+      )}
+
+      {plano&&(
+        <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+          <div style={{fontSize:11,color:'#b45309',lineHeight:1.8,marginBottom:8}}>
+            <strong>Prévia — nada foi alterado ainda.</strong><br/>
+            {plano.total_de_leads} lead(s) na base.<br/>
+            <strong>{plano.grupos_duplicados}</strong> pessoa(s) cadastrada(s) mais de uma vez, resultando em
+            {' '}<strong>{plano.leads_que_serao_removidos_por_duplicidade}</strong> cadastro(s) a remover.<br/>
+            <strong>{plano.contatos_sem_qualificacao}</strong> contato(s) sem e-mail, sem porte, sem solução, sem dono e sem conversa.
+          </div>
+
+          <label style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 10px',borderRadius:6,cursor:'pointer',background:'#fff',border:'1px solid #fde68a',marginBottom:8}}>
+            <input type="checkbox" checked={tirarSemQualif} onChange={()=>setTirarSemQualif(!tirarSemQualif)} style={{marginTop:2,cursor:'pointer'}}/>
+            <div style={{fontSize:11,color:'#4a4a4a',lineHeight:1.5}}>
+              Remover também os {plano.contatos_sem_qualificacao} contatos sem qualificação
+              <div style={{fontSize:10,color:'#95a5a6',marginTop:2}}>São os que entraram por mensagem de WhatsApp e não têm nenhum dado além do telefone.</div>
+            </div>
+          </label>
+
+          {(plano.grupos_duplicados>0||plano.contatos_sem_qualificacao>0)&&(
+            <button onClick={()=>setVerDetalhe(!verDetalhe)} style={{background:'none',border:'none',cursor:'pointer',color:'#b45309',fontSize:11,fontWeight:700,padding:0,marginBottom:verDetalhe?8:0}}>
+              {verDetalhe?'Ocultar detalhes':'Ver o que exatamente vai sair'}
+            </button>
+          )}
+
+          {verDetalhe&&(
+            <div style={{maxHeight:260,overflowY:'auto',background:'#fff',borderRadius:6,padding:'9px 11px',fontSize:10,lineHeight:1.6}}>
+              {plano.fusoes.map((f,i)=>(
+                <div key={i} style={{marginBottom:7,paddingBottom:7,borderBottom:'1px solid #f5f6fa'}}>
+                  <div style={{color:'#276749',fontWeight:700}}>✓ fica: {f.manter.nome||'(sem nome)'} {f.manter.email?`· ${f.manter.email}`:''}</div>
+                  {f.remover.map((r,j)=>(
+                    <div key={j} style={{color:'#c53030'}}>✕ sai: {r.nome||'(sem nome)'} {r.email?`· ${r.email}`:''}</div>
+                  ))}
+                </div>
+              ))}
+              {tirarSemQualif&&plano.semQualificacao.map((s,i)=>(
+                <div key={'s'+i} style={{color:'#c53030'}}>✕ sem qualificação: {s.nome||'(sem nome)'} · {s.telefone}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={()=>chamar(false)} disabled={analisando||executando}
+          style={{padding:'8px 18px',borderRadius:7,border:'1px solid #e67e22',background:'#fff',color:'#e67e22',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {analisando?'Analisando...':'🔍 Analisar a base'}
+        </button>
+        {plano&&(plano.grupos_duplicados>0||plano.contatos_sem_qualificacao>0)&&(
+          <button onClick={executar} disabled={executando}
+            style={{padding:'8px 18px',borderRadius:7,border:'none',background:executando?'#dde1e7':'#e67e22',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            {executando?'Limpando...':'Executar limpeza'}
+          </button>
+        )}
+        {plano&&plano.grupos_duplicados===0&&plano.contatos_sem_qualificacao===0&&(
+          <span style={{fontSize:11,color:'#27ae60',fontWeight:600}}>✓ Base limpa, nada a fazer.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── CONFIG: RAIO-X DO SISTEMA ───────────────────────────────────────────────
 // Relatório com leitura de IA, enviado por WhatsApp no horário escolhido.
 // Os números são apurados pelo servidor; a IA só interpreta o que recebe.
@@ -1138,17 +1252,21 @@ function ConfigMailchimp(){
 
       {verGuia&&(
         <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 15px',marginBottom:12,fontSize:11,color:'#2b6cb0',lineHeight:1.8}}>
-          <strong>1.</strong> No Mailchimp, vá em <strong>Audience › All contacts › Create Audience</strong>. Preencha o remetente
-          com um e-mail do seu domínio e o endereço físico da empresa (é exigência legal do e-mail marketing).<br/>
-          <strong>2.</strong> Em <strong>Account › Extras › API keys</strong>, gere uma chave e cole aqui embaixo. O final dela
-          (ex: <code>-us21</code>) é o servidor, o sistema identifica sozinho.<br/>
-          <strong>3.</strong> Clique em <strong>Testar conexão</strong> e escolha a audiência na lista.<br/>
-          <strong>4.</strong> No Mailchimp, vá em <strong>Automations › Customer Journey › Build from scratch</strong>.
-          Escolha o gatilho <strong>"Tag added"</strong> e informe a tag <code>{c.tag||'sequencia-oferta'}</code>.<br/>
-          <strong>5.</strong> Monte assim: <em>e-mail de oferta</em> → <strong>Wait 3 days</strong> → <em>e-mail 2</em> →
-          <strong> Wait 2 days</strong> (chega no 5º) → <em>e-mail 3</em> → <strong>Wait 2 days</strong> (chega no 7º) → <em>e-mail final</em>.
-          Repare que a espera é o intervalo entre um e outro, não o total.<br/>
-          <strong>6.</strong> Publique a jornada e ligue a chave aqui embaixo.
+          <strong>1. Chave da API.</strong> No Mailchimp, clique na sua foto no canto superior direito e escolha
+          <strong>Perfil</strong>. Abra o menu <strong>Extras › Chaves de API</strong> e clique em <strong>Criar uma chave</strong>.
+          Copie e cole aqui embaixo — o final dela (ex: <code>-us21</code>) é o servidor, o sistema identifica sozinho.<br/>
+          <strong>2. Audiência.</strong> Clique em <strong>Testar conexão</strong> aqui embaixo: as suas audiências aparecem
+          na lista, é só escolher. Você não precisa procurar o número dela no Mailchimp.<br/>
+          <strong>3. Etiqueta.</strong> No menu lateral do Mailchimp, vá em <strong>Público › Etiquetas</strong> e crie a
+          etiqueta <code>{c.tag||'sequencia-oferta'}</code>, escrita exatamente igual. Ela precisa existir antes, senão
+          a jornada não deixa você escolhê-la.<br/>
+          <strong>4. Jornada.</strong> Vá em <strong>Automações</strong>, comece um fluxo do zero, dê um nome e escolha
+          a audiência. Em acionador, escolha <strong>"Etiqueta adicionada"</strong> e informe a mesma etiqueta.<br/>
+          <strong>5. Montagem.</strong> <em>e-mail de oferta</em> → <strong>Atraso de 3 dias</strong> → <em>e-mail 2</em> →
+          <strong> Atraso de 2 dias</strong> (cai no 5º) → <em>e-mail 3</em> → <strong>Atraso de 2 dias</strong> (cai no 7º) →
+          <em>e-mail final</em>. O atraso conta a partir do passo anterior, não da entrada — por isso 3, 2 e 2, não 3, 5 e 7.<br/>
+          <strong>6.</strong> Clique em <strong>Continuar</strong> e depois em <strong>Ativar fluxo</strong>. Só então ligue
+          a chave aqui embaixo.
         </div>
       )}
 
@@ -7849,7 +7967,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
         <div style={sec}><ConfigEtapasLead/></div>
         <div style={sec}><ConfigContrato/></div>
         <div style={sec}><ConfigMailchimp/></div>
-        <div style={sec}><ConfigRaioX usuarios={usuarios}/></div></>
+        <div style={sec}><ConfigRaioX usuarios={usuarios}/></div>
+        <div style={sec}><ConfigLimpezaLeads/></div></>
       )}
 
       {/* Horário de Funcionamento — agenda de instalações */}
@@ -12649,6 +12768,49 @@ function DetalheCampanha({campanha,onFechar}){
           )}
         </div>
       </div>
+
+      {/* Agrupa os erros: 53 linhas iguais viram uma causa só, legível */}
+      {(()=>{
+        const comErro=(c.destinatarios||[]).filter(d=>d.erro);
+        if(!comErro.length)return null;
+        const grupos={};
+        comErro.forEach(d=>{
+          // Tira número e id da mensagem para erros iguais caírem no mesmo grupo
+          const chave=String(d.erro).replace(/\b\d{8,}\b/g,'…').replace(/["'][^"']{20,}["']/g,'…').slice(0,180);
+          (grupos[chave]=grupos[chave]||[]).push(d);
+        });
+        const lista=Object.entries(grupos).sort((a,b)=>b[1].length-a[1].length);
+        return(
+          <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:10,padding:'14px 18px',marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:12,color:'#c53030',textTransform:'uppercase',marginBottom:3}}>
+              Por que falhou ({comErro.length} envio{comErro.length>1?'s':''})
+            </div>
+            <div style={{fontSize:10,color:'#95a5a6',marginBottom:10}}>
+              Erros iguais foram agrupados. O texto abaixo é a resposta da Meta, sem tradução.
+            </div>
+            {lista.map(([msg,itens],i)=>(
+              <div key={i} style={{background:'#fff',borderRadius:7,padding:'10px 12px',marginBottom:7,border:'1px solid #fed7d7'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                  <span style={{background:'#c53030',color:'#fff',borderRadius:10,padding:'1px 9px',fontSize:10,fontWeight:700}}>
+                    {itens.length}×
+                  </span>
+                  <span style={{fontSize:11,color:'#2c3e50',fontWeight:600,lineHeight:1.5,flex:1,minWidth:200}}>{msg}</span>
+                </div>
+                <div style={{fontSize:10,color:'#95a5a6'}}>
+                  Ex.: {itens.slice(0,3).map(x=>x.nome||x.telefone).join(', ')}{itens.length>3?` e mais ${itens.length-3}`:''}
+                </div>
+              </div>
+            ))}
+            <div style={{fontSize:10,color:'#b45309',lineHeight:1.6,marginTop:8,background:'#fff8ee',borderRadius:6,padding:'8px 10px'}}>
+              {c.tipo!=='template'
+                ?<><strong>Lembre:</strong> esta campanha é do tipo mensagem livre. A Meta só entrega para quem te
+                  respondeu nas últimas 24 horas. Para falar com os demais, é preciso usar <strong>Template</strong> aprovado.</>
+                :<><strong>Dica:</strong> em campanha de template, erro costuma ser template não aprovado, idioma diferente
+                  do cadastrado, ou número de variáveis diferente do que o template espera.</>}
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{background:'#fff',borderRadius:10,padding:'16px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'}}>
         <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase',marginBottom:10}}>Destinatários</div>
