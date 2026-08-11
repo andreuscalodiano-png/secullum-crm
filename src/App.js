@@ -841,6 +841,193 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
 }
 
 // ─── CONFIG: TEXTO DO CONTRATO ───────────────────────────────────────────────
+// ─── CONFIG: MAILCHIMP ───────────────────────────────────────────────────────
+// A régua de dias mora no Customer Journey do Mailchimp. Aqui só ligamos a
+// conta, escolhemos a audiência e a tag que dispara a jornada.
+function ConfigMailchimp(){
+  const [c,setC]=useState({apiKey:'',audienceId:'',tag:'sequencia-oferta',ativo:false,status:'subscribed'});
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [testando,setTestando]=useState(false);
+  const [audiencias,setAudiencias]=useState([]);
+  const [resultado,setResultado]=useState(null);
+  const [sincronizando,setSincronizando]=useState(false);
+  const [verGuia,setVerGuia]=useState(false);
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setC(x=>({...x,[k]:v}));setSalvo(false);};
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','mailchimp'),d=>{
+      if(d.exists())setC(x=>({...x,...d.data()}));
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','mailchimp'),{...c,atualizadoEm:new Date().toISOString(),atualizadoPor:auth.currentUser?.email||'—'},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function testar(){
+    if(!c.apiKey.trim()){alert('Cole a chave da API primeiro.');return;}
+    setTestando(true);setResultado(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/mailchimpProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({acao:'testar',apiKey:c.apiKey.trim()}),
+      });
+      const d=await r.json();
+      if(d.error)setResultado({erro:d.error});
+      else{setAudiencias(d.audiencias||[]);setResultado({ok:true,total:(d.audiencias||[]).length});}
+    }catch(e){setResultado({erro:e.message});}
+    setTestando(false);
+  }
+
+  async function sincronizarTudo(){
+    if(!c.audienceId){alert('Escolha a audiência antes.');return;}
+    if(!window.confirm('Enviar todos os leads com e-mail para a audiência do Mailchimp?\n\nQuem já está lá é apenas atualizado, não duplica. Atenção: quem receber a tag entra na jornada.'))return;
+    setSincronizando(true);setResultado(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/mailchimpProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({acao:'sincronizar'}),
+      });
+      const d=await r.json();
+      if(d.error)setResultado({erro:d.error});
+      else setResultado({sync:d});
+    }catch(e){setResultado({erro:e.message});}
+    setSincronizando(false);
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  const listaAud=audiencias.length?audiencias:(c.audienceId?[{id:c.audienceId,nome:'(audiência salva)',membros:'—'}]:[]);
+
+  return(
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#f5a623',textTransform:'uppercase'}}>✉️ Mailchimp — régua de e-mails</div>
+        <div style={{flex:1}}/>
+        <button onClick={()=>setVerGuia(!verGuia)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:11,fontWeight:700}}>
+          {verGuia?'Ocultar':'Como configurar'}
+        </button>
+      </div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        Todo lead com e-mail entra na audiência com a tag abaixo. <strong>A espera de 3, 5 e 7 dias é montada no
+        Customer Journey do Mailchimp</strong> — assim você muda texto, arte e prazo lá, sem mexer no sistema.
+      </div>
+
+      {verGuia&&(
+        <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 15px',marginBottom:12,fontSize:11,color:'#2b6cb0',lineHeight:1.8}}>
+          <strong>1.</strong> No Mailchimp, vá em <strong>Audience › All contacts › Create Audience</strong>. Preencha o remetente
+          com um e-mail do seu domínio e o endereço físico da empresa (é exigência legal do e-mail marketing).<br/>
+          <strong>2.</strong> Em <strong>Account › Extras › API keys</strong>, gere uma chave e cole aqui embaixo. O final dela
+          (ex: <code>-us21</code>) é o servidor, o sistema identifica sozinho.<br/>
+          <strong>3.</strong> Clique em <strong>Testar conexão</strong> e escolha a audiência na lista.<br/>
+          <strong>4.</strong> No Mailchimp, vá em <strong>Automations › Customer Journey › Build from scratch</strong>.
+          Escolha o gatilho <strong>"Tag added"</strong> e informe a tag <code>{c.tag||'sequencia-oferta'}</code>.<br/>
+          <strong>5.</strong> Monte assim: <em>e-mail de oferta</em> → <strong>Wait 3 days</strong> → <em>e-mail 2</em> →
+          <strong> Wait 2 days</strong> (chega no 5º) → <em>e-mail 3</em> → <strong>Wait 2 days</strong> (chega no 7º) → <em>e-mail final</em>.
+          Repare que a espera é o intervalo entre um e outro, não o total.<br/>
+          <strong>6.</strong> Publique a jornada e ligue a chave aqui embaixo.
+        </div>
+      )}
+
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
+        <div>
+          <label style={lbl}>Chave da API</label>
+          <input style={fi} type="password" value={c.apiKey} onChange={e=>up('apiKey',e.target.value)}
+            placeholder="a1b2c3d4e5f6...-us21" autoComplete="off"/>
+        </div>
+        <div style={{display:'flex',alignItems:'flex-end'}}>
+          <button onClick={testar} disabled={testando}
+            style={{padding:'8px 16px',borderRadius:6,border:'1px solid #f5a623',background:'#fff',color:'#b45309',fontWeight:700,cursor:'pointer',fontSize:12,width:'100%'}}>
+            {testando?'Testando...':'Testar conexão'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
+        <div>
+          <label style={lbl}>Audiência</label>
+          <select style={fi} value={c.audienceId} onChange={e=>up('audienceId',e.target.value)}>
+            <option value="">— Teste a conexão para listar —</option>
+            {listaAud.map(a=><option key={a.id} value={a.id}>{a.nome} ({a.membros} contatos)</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Tag que dispara a jornada</label>
+          <input style={fi} value={c.tag} onChange={e=>up('tag',e.target.value)} placeholder="sequencia-oferta"/>
+        </div>
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Como inscrever</label>
+        <select style={{...fi,maxWidth:340}} value={c.status} onChange={e=>up('status',e.target.value)}>
+          <option value="subscribed">Direto (lead do anúncio já autorizou o contato)</option>
+          <option value="pending">Com confirmação por e-mail (dupla verificação)</option>
+        </select>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
+          Com confirmação, a jornada só começa depois que a pessoa clicar no e-mail de confirmação — chega em menos gente,
+          mas protege mais a reputação do seu domínio.
+        </div>
+      </div>
+
+      <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'11px 13px',borderRadius:8,cursor:'pointer',marginBottom:12,
+        background:c.ativo?'#f0fff4':'#f8f9fa',border:`1px solid ${c.ativo?'#9ae6b4':'#e8eaed'}`}}>
+        <input type="checkbox" checked={!!c.ativo} onChange={()=>up('ativo',!c.ativo)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+        <div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>Enviar leads automaticamente</div>
+          <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.6,marginTop:2}}>
+            Todo lead novo com e-mail válido entra na audiência na hora. Quem chega sem e-mail e recebe um depois
+            (o contato do WhatsApp que preenche o formulário) também entra.
+          </div>
+        </div>
+      </label>
+
+      {resultado&&(
+        <div style={{borderRadius:7,padding:'10px 13px',marginBottom:12,fontSize:11,lineHeight:1.6,
+          background:resultado.erro?'#fff5f5':'#f0fff4',border:`1px solid ${resultado.erro?'#feb2b2':'#9ae6b4'}`,
+          color:resultado.erro?'#c53030':'#276749'}}>
+          {resultado.erro&&<><strong>Falhou:</strong> {resultado.erro}</>}
+          {resultado.ok&&<><strong>✓ Conectado.</strong> {resultado.total} audiência(s) encontrada(s). Escolha a sua acima e salve.</>}
+          {resultado.sync&&(
+            <>
+              <strong>✓ Sincronização concluída.</strong> {resultado.sync.enviados} enviado(s), {resultado.sync.pulados} sem e-mail,
+              {' '}{resultado.sync.falhas} falha(s).
+              {(resultado.sync.erros||[]).length>0&&(
+                <div style={{marginTop:5,color:'#c53030'}}>{resultado.sync.erros.map((e,i)=><div key={i}>• {e}</div>)}</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'8px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Salvo!':'Salvar'}
+        </button>
+        <button onClick={sincronizarTudo} disabled={sincronizando||!c.audienceId}
+          style={{padding:'8px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:c.audienceId?'pointer':'default',fontSize:12,color:'#7f8c8d',fontWeight:600,opacity:c.audienceId?1:.5}}>
+          {sincronizando?'Enviando...':'Enviar leads que já existem'}
+        </button>
+        <span style={{fontSize:10,color:'#95a5a6'}}>
+          Salve antes de sincronizar. A sincronização usa a audiência e a tag já gravadas.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ConfigContrato(){
   const [c,setC]=useState({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
   const [carregando,setCarregando]=useState(true);
@@ -7449,7 +7636,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <><div style={sec}><ConfigKanban/></div>
         <div style={sec}><ConfigEtapasLead/></div>
-        <div style={sec}><ConfigContrato/></div></>
+        <div style={sec}><ConfigContrato/></div>
+        <div style={sec}><ConfigMailchimp/></div></>
       )}
 
       {/* Horário de Funcionamento — agenda de instalações */}
