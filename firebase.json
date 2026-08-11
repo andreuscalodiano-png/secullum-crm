@@ -1,0 +1,40 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        "**/node_modules/**",
+        ".git",
+        "**/.git/**",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local",
+        "*.zip",
+        "*.rar",
+        "*.7z",
+        "*.tar",
+        "*.tar.gz",
+        "*.log",
+        "*.bak",
+        "*.old",
+        "**/.cache/**",
+        "**/.next/**",
+        "**/build/**",
+        "**/dist/**",
+        "**/coverage/**",
+        "**/__pycache__/**",
+        "**/venv/**",
+        "**/.venv/**",
+        "**/*.mp4",
+        "**/*.mov",
+        "**/*.psd",
+        "**/*.iso",
+        "**/backup/**",
+        "**/backups/**"
+      ]
+    }
+  ]
+}

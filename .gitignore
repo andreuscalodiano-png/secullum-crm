@@ -7,3 +7,11 @@ src/backup_*.json
 src/*.old
 src/download.pdf
 deploy_log.txt
+.env
+functions/.env
+l.json
+*.zip
+.env
+functions/.env
+src/env
+l.json

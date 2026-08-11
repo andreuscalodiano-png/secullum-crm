@@ -12362,6 +12362,190 @@ function AnunciosView({leads,usuarios,perfil}){
   );
 }
 
+// ─── VALIDADOR DE TEMPLATE DA META ───────────────────────────────────────────
+// A Meta recusa sem explicar qual regra foi quebrada, e a análise leva horas.
+// Melhor conferir aqui antes de mandar, e já oferecer a correção.
+//
+// nivel 'erro'  → recusa na certa, o salvamento fica bloqueado
+// nivel 'aviso' → costuma passar, mas aumenta o risco ou prejudica o resultado
+const PROMOCIONAL=/\b(oferta|desconto|promo(ç|c)(ã|a)o|gr(á|a)tis|imperd(í|i)vel|aproveite|liquida(ç|c)(ã|a)o|cupom|black friday|(ú|u)ltima chance|corra|s(ó|o) hoje)\b/i;
+const URGENCIA_FALSA=/\b((ú|u)ltima chance|corra|s(ó|o) hoje|acaba hoje|imperd(í|i)vel|urgente|n(ã|a)o perca|aproveite j(á|a))\b/i;
+const SENSIVEL=/\b(cpf|cnpj do cart(ã|a)o|n(ú|u)mero do cart(ã|a)o|senha|c(ó|o)digo de seguran(ç|c)a|cvv|token banc(á|a)rio)\b/i;
+
+function validarTemplateMeta({corpo='',categoria='MARKETING',botaoTexto=''}){
+  const p=[];
+  const t=String(corpo||'').trim();
+  const add=(nivel,msg,dica)=>p.push({nivel,msg,dica});
+
+  if(!t){add('erro','O corpo da mensagem está vazio.','Escreva o texto que o cliente vai receber.');return p;}
+
+  // ── Regras que reprovam na certa ──────────────────────────────────────────
+  if(/^\s*\{\{\s*\d+\s*\}\}/.test(t))
+    add('erro','O texto começa com uma variável.','Comece com uma palavra. Ex: trocar "{{1}}, tudo bem?" por "Olá {{1}}, tudo bem?".');
+
+  if(/\{\{\s*\d+\s*\}\}\s*$/.test(t))
+    add('erro','O texto termina com uma variável.','Acrescente uma frase depois da última variável.');
+
+  if(/\{\{\s*\d+\s*\}\}[\s]*\{\{\s*\d+\s*\}\}/.test(t))
+    add('erro','Há duas variáveis coladas, sem texto entre elas.','Escreva alguma palavra entre as duas.');
+
+  if(t.length>1024)
+    add('erro',`O texto tem ${t.length} caracteres e o limite é 1024.`,'Corte o que for menos essencial. O ideal fica entre 250 e 500.');
+
+  const nums=[...t.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(m=>Number(m[1]));
+  const unicos=[...new Set(nums)].sort((a,b)=>a-b);
+  if(unicos.length&&(unicos[0]!==1||unicos.some((n,i)=>n!==i+1)))
+    add('erro',`As variáveis precisam ser numeradas em sequência a partir de 1. Encontrei: ${unicos.join(', ')}.`,'Renumere para {{1}}, {{2}}, {{3}}...');
+
+  if(/\{\{\s*[a-zA-Z_]+\s*\}\}/.test(t))
+    add('erro','Há variável com nome, como {{nome}}.','No template da Meta as variáveis são numeradas: {{1}}, {{2}}. O nome do campo você escolhe depois, na campanha.');
+
+  // ── Regras que passam, mas cobram o preço depois ──────────────────────────
+  const linhas=t.split('\n').map(x=>x.trim()).filter(Boolean);
+  if(linhas.some(l=>l.length>12&&l===l.toUpperCase()&&/[A-ZÀ-Ú]/.test(l)))
+    add('aviso','Tem frase inteira em CAIXA ALTA.','A Meta lê isso como gritar. Deixe só a primeira letra maiúscula.');
+
+  if(/[!?]{2,}/.test(t))
+    add('aviso','Excesso de pontuação (!! ou ??).','Use um sinal só.');
+
+  if(URGENCIA_FALSA.test(t))
+    add('aviso','O texto usa urgência do tipo "última chance" ou "corra".','É o motivo mais comum de recusa em Marketing. Prefira falar do benefício.');
+
+  if(SENSIVEL.test(t))
+    add('erro','O texto pede dado sensível (CPF, cartão, senha).','A Meta proíbe. Peça isso por outro canal.');
+
+  if(categoria==='UTILITY'&&PROMOCIONAL.test(t))
+    add('erro','O texto tem conteúdo promocional, mas a categoria é Utilidade.','Ou tire a oferta do texto, ou mude a categoria para Marketing. A Meta recusa quando não bate.');
+
+  if(categoria==='MARKETING'&&!/(n(ã|a)o (quero|desejo) receber|parar|sair|descadastr|cancelar o recebimento)/i.test(botaoTexto+' '+t))
+    add('aviso','Campanha de Marketing sem opção de sair.','Acrescente um botão "Não quero receber". Sem saída, a chance de denúncia sobe e a Meta reduz seu limite diário de envio.');
+
+  if(t.length<40)
+    add('aviso','O texto está muito curto.','Mensagem sem contexto costuma ser denunciada. Diga quem é você e por que está falando.');
+
+  if(!/guion|secullum/i.test(t))
+    add('aviso','O texto não diz quem está falando.','A Meta exige que a empresa se identifique. Cite a Guion logo no começo.');
+
+  if(!unicos.length)
+    add('aviso','O texto não tem nenhuma variável.','Sem ao menos o nome, a mensagem chega igual para todo mundo e rende menos.');
+
+  return p;
+}
+
+// Conserta o que dá para consertar sem inventar conteúdo
+function corrigirTemplateMeta(corpo){
+  let t=String(corpo||'').trim();
+  const feitas=[];
+
+  if(/^\s*\{\{\s*\d+\s*\}\}/.test(t)){
+    t='Olá '+t;
+    feitas.push('acrescentei "Olá" no começo');
+  }
+  if(/\{\{\s*\d+\s*\}\}\s*$/.test(t)){
+    t=t+'\n\nQualquer dúvida, estou por aqui.';
+    feitas.push('acrescentei uma frase no final');
+  }
+  const antesColadas=t;
+  t=t.replace(/(\{\{\s*\d+\s*\}\})\s*(\{\{\s*\d+\s*\}\})/g,'$1 — $2');
+  if(t!==antesColadas)feitas.push('separei as variáveis que estavam coladas');
+
+  const antesPont=t;
+  t=t.replace(/([!?])[!?]+/g,'$1');
+  if(t!==antesPont)feitas.push('reduzi a pontuação repetida');
+
+  // Renumera as variáveis na ordem em que aparecem
+  const nums=[...t.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(m=>Number(m[1]));
+  const unicos=[...new Set(nums)];
+  if(unicos.length&&(unicos[0]!==1||unicos.some((n,i)=>n!==i+1))){
+    let i=0;const mapa={};
+    t=t.replace(/\{\{\s*(\d+)\s*\}\}/g,(m,n)=>{
+      if(!mapa[n])mapa[n]='{{'+(++i)+'}}';
+      return mapa[n];
+    });
+    feitas.push('renumerei as variáveis em sequência');
+  }
+
+  // CAIXA ALTA vira só a inicial maiúscula
+  const linhas=t.split('\n');
+  let mexeuCaixa=false;
+  const novas=linhas.map(l=>{
+    const s=l.trim();
+    if(s.length>12&&s===s.toUpperCase()&&/[A-ZÀ-Ú]/.test(s)){
+      mexeuCaixa=true;
+      return l.replace(s,s.charAt(0)+s.slice(1).toLowerCase());
+    }
+    return l;
+  });
+  if(mexeuCaixa){t=novas.join('\n');feitas.push('tirei o CAIXA ALTA');}
+
+  if(t.length>1024){t=t.slice(0,1020).trim()+'...';feitas.push('cortei para caber em 1024 caracteres');}
+
+  return {texto:t,feitas};
+}
+
+// Painel que aparece embaixo do editor, ao vivo
+function PainelValidacao({corpo,categoria,botaoTexto,onCorrigir}){
+  const problemas=useMemo(()=>validarTemplateMeta({corpo,categoria,botaoTexto}),[corpo,categoria,botaoTexto]);
+  const erros=problemas.filter(p=>p.nivel==='erro');
+  const avisos=problemas.filter(p=>p.nivel==='aviso');
+  const temCorrecao=useMemo(()=>corrigirTemplateMeta(corpo).feitas.length>0,[corpo]);
+
+  if(!String(corpo||'').trim())return null;
+
+  if(!problemas.length)return(
+    <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'9px 12px',marginTop:8,fontSize:11,color:'#276749',fontWeight:600}}>
+      ✓ Dentro das regras da Meta. Pode enviar para aprovação.
+    </div>
+  );
+
+  return(
+    <div style={{borderRadius:8,padding:'11px 13px',marginTop:8,
+      background:erros.length?'#fff5f5':'#fff8ee',
+      border:`1px solid ${erros.length?'#feb2b2':'#fde68a'}`}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+        <span style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:.5,color:erros.length?'#c53030':'#b45309'}}>
+          {erros.length
+            ?`${erros.length} ${erros.length>1?'problemas que reprovam':'problema que reprova'}`
+            :`${avisos.length} ${avisos.length>1?'pontos de atenção':'ponto de atenção'}`}
+        </span>
+        <div style={{flex:1}}/>
+        {temCorrecao&&(
+          <button onClick={onCorrigir}
+            style={{padding:'4px 12px',borderRadius:6,border:'none',background:'#3498db',color:'#fff',cursor:'pointer',fontSize:10,fontWeight:700}}>
+            ✨ Corrigir automaticamente
+          </button>
+        )}
+      </div>
+      {[...erros,...avisos].map((p,i)=>(
+        <div key={i} style={{display:'flex',gap:7,marginBottom:6,alignItems:'flex-start'}}>
+          <span style={{fontSize:11,flexShrink:0,marginTop:1}}>{p.nivel==='erro'?'⛔':'⚠️'}</span>
+          <div style={{fontSize:11,lineHeight:1.5}}>
+            <div style={{color:p.nivel==='erro'?'#c53030':'#b45309',fontWeight:700}}>{p.msg}</div>
+            <div style={{color:'#7f8c8d',marginTop:1}}>{p.dica}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Selo compacto para a lista dos templates que já existem
+function SeloValidacaoTemplate({template}){
+  const corpo=(template.components||[]).find(c=>c.type==='BODY')?.text||'';
+  const botao=((template.components||[]).find(c=>c.type==='BUTTONS')?.buttons||[]).map(b=>b.text).join(' ');
+  const problemas=validarTemplateMeta({corpo,categoria:template.category||'MARKETING',botaoTexto:botao});
+  const erros=problemas.filter(p=>p.nivel==='erro');
+  if(!problemas.length)return null;
+  return(
+    <span title={problemas.map(p=>`${p.nivel==='erro'?'⛔':'⚠️'} ${p.msg}`).join('\n')}
+      style={{display:'inline-flex',alignItems:'center',gap:4,borderRadius:10,padding:'1px 8px',fontSize:9,fontWeight:700,whiteSpace:'nowrap',
+        background:erros.length?'#fff5f5':'#fff8ee',color:erros.length?'#c53030':'#b45309',
+        border:`1px solid ${erros.length?'#feb2b2':'#fde68a'}`}}>
+      {erros.length?`⛔ ${erros.length} problema${erros.length>1?'s':''}`:`⚠️ ${problemas.length} atenção`}
+    </span>
+  );
+}
+
 function AbaTemplates(){
   const [lista,setLista]=useState([]);
   const [carregando,setCarregando]=useState(false);
@@ -12417,6 +12601,14 @@ function AbaTemplates(){
 
   async function criar(){
     if(!f.nome.trim()||!f.corpo.trim()){alert('Preencha o nome e o corpo da mensagem.');return;}
+    // Não adianta mandar para análise o que a Meta já vai recusar
+    const reprova=validarTemplateMeta({corpo:f.corpo,categoria:f.categoria,botaoTexto:f.botaoTexto})
+      .filter(p=>p.nivel==='erro');
+    if(reprova.length){
+      alert('A Meta vai recusar este template:\n\n'+reprova.map(p=>'• '+p.msg+'\n  '+p.dica).join('\n\n')+
+        '\n\nCorrija antes de enviar. O botão "Corrigir automaticamente" resolve a maioria.');
+      return;
+    }
     const nome=f.nome.trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
     const componentes=[{type:'BODY',text:f.corpo}];
     if(f.rodape.trim())componentes.push({type:'FOOTER',text:f.rodape.trim()});
@@ -12532,6 +12724,14 @@ function AbaTemplates(){
             <textarea ref={refCorpo} style={{...fi,minHeight:110,resize:'vertical',lineHeight:1.6}} value={f.corpo} onChange={e=>setF(x=>({...x,corpo:e.target.value}))}
               placeholder={'Olá {{1}}! 👋\n\nEstamos com condição especial no relógio de ponto facial este mês.\n\nQuer que eu te mande os detalhes?'}/>
 
+            {/* Confere as regras da Meta antes de enviar para aprovação */}
+            <PainelValidacao corpo={f.corpo} categoria={f.categoria} botaoTexto={f.botaoTexto}
+              onCorrigir={()=>{
+                const r=corrigirTemplateMeta(f.corpo);
+                setF(x=>({...x,corpo:r.texto}));
+                if(r.feitas.length)alert('Ajustes aplicados:\n\n• '+r.feitas.join('\n• '));
+              }}/>
+
             {/* Campos que podem ser usados */}
             <div style={{marginTop:8,background:'#f8f9fa',borderRadius:7,padding:'10px 12px'}}>
               <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>
@@ -12608,6 +12808,7 @@ function AbaTemplates(){
                 {LBL_ST[st]||st}
               </span>
               <span style={{fontSize:10,color:'#95a5a6'}}>{t.category||''}</span>
+              <SeloValidacaoTemplate template={t}/>
               <button onClick={()=>remover(t.name)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
             </div>
             {corpo&&<div style={{fontSize:11,color:'#7f8c8d',whiteSpace:'pre-wrap',lineHeight:1.5,paddingLeft:2}}>{corpo.slice(0,180)}{corpo.length>180?'...':''}</div>}

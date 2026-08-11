@@ -74,10 +74,24 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
 ];
 
+// Cada deploy de prévia na Vercel ganha um endereço novo. Fixar a lista fazia
+// o navegador barrar a chamada e mostrar só "Failed to fetch", sem explicar
+// nada. Agora qualquer endereço do projeto na Vercel é aceito.
+function origemPermitida(origin) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  if (/^http:\/\/localhost:\d+$/.test(origin)) return true;
+  return /^https:\/\/[a-z0-9-]*secullum-crm[a-z0-9-]*\.vercel\.app$/i.test(origin);
+}
+
 function setCors(req, res) {
   const origin = req.headers.origin || '';
-  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowed = origemPermitida(origin) ? origin : ALLOWED_ORIGINS[0];
+  if (origin && !origemPermitida(origin)) {
+    console.warn('[cors] origem recusada:', origin);
+  }
   res.set('Access-Control-Allow-Origin', allowed);
+  res.set('Vary', 'Origin');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
   res.set('Access-Control-Max-Age', '3600');
@@ -2197,7 +2211,11 @@ async function enviarDaCampanha(campanha, lead, token) {
       template: campanha.template,
       language: campanha.idioma || 'pt_BR',
     };
-    if (vars.length) body.body = vars;
+    // Variável de template não aceita quebra de linha, tabulação nem 5 espaços
+    // seguidos. A Meta rejeita no envio, não no cadastro — e o erro é obscuro.
+    if (vars.length) body.body = vars.map(v =>
+      String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').replace(/\s{4,}/g, ' ').trim()
+    );
     if (campanha.headerMidia) body.header = { image: { link: campanha.headerMidia } };
     return chamarDatafy({ token, path: '/messages/send/template', method: 'POST', body });
   }
@@ -2635,6 +2653,30 @@ exports.datafyWebhook = functions.https.onRequest(async (req, res) => {
     for (const entry of entradas) {
       for (const change of (entry.changes || [])) {
         const v = change.value || {};
+
+        // ── STATUS DE ENTREGA ──────────────────────────────────────────────
+        // A Meta avisa aqui se a mensagem foi entregue, lida ou falhou. Sem
+        // tratar isso, o CRM registrava "enviado" só porque a Datafy aceitou —
+        // e mensagem barrada pela janela de 24h passava despercebida.
+        for (const st of (v.statuses || [])) {
+          try {
+            const erroMeta = (st.errors || [])[0] || null;
+            await db.collection('whatsapp_status').doc(String(st.id || Date.now())).set({
+              messageId: st.id || '',
+              destino: String(st.recipient_id || '').replace(/\D/g, ''),
+              status: st.status || '',                    // sent | delivered | read | failed
+              erroCodigo: erroMeta?.code || '',
+              erroTitulo: erroMeta?.title || '',
+              erroDetalhe: erroMeta?.error_data?.details || erroMeta?.message || '',
+              em: new Date().toISOString(),
+            }, { merge: true });
+            if (st.status === 'failed') {
+              console.error(`[whatsapp] NÃO ENTREGUE para ${st.recipient_id}:`,
+                erroMeta?.title || '', erroMeta?.error_data?.details || erroMeta?.message || '');
+            }
+          } catch (e) { console.error('[whatsapp] status:', e.message); }
+        }
+
         const msgs = v.messages || [];
         if (!msgs.length) continue;
 
@@ -3684,6 +3726,182 @@ exports.raioXAgora = functions.runWith({ timeoutSeconds: 300 })
       res.status(200).json({ ok: true, ...r });
     } catch (err) {
       console.error('[raiox] agora:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LIMPEZA DE LEADS — junta duplicados e recolhe os contatos sem qualificação
+//
+// Sempre roda em duas etapas. Primeiro só analisa e devolve o que PRETENDE
+// fazer; nada é apagado enquanto você não confirmar. Apagar cadastro sem
+// prévia é o tipo de coisa que não tem desfazer.
+//
+// Duplicado é decidido pelos 8 últimos dígitos do telefone — é o que sobrevive
+// às diferenças de formato (+55, sem +55, com e sem máscara).
+// ═══════════════════════════════════════════════════════════════════════════
+
+function chaveTelefone(tel) {
+  const n = String(tel || '').replace(/\D/g, '');
+  return n.length >= 8 ? n.slice(-8) : '';
+}
+
+// Quanto mais campo preenchido, mais "completo" o cadastro. O vencedor de cada
+// grupo é o mais completo; havendo empate, o mais antigo.
+function pontuarLead(l) {
+  let p = 0;
+  if (l.email) p += 3;
+  if (l.funcionarios) p += 2;
+  if (l.solucao) p += 2;
+  if (l.sistema_ponto) p += 1;
+  if (l.responsavelId) p += 4;          // já tem dono: nunca descartar
+  if (l.leadgenId) p += 2;              // veio do formulário do anúncio
+  if ((l.conversa || []).length) p += 2;
+  if ((l.historico || []).length) p += 1;
+  if (l.apresData) p += 3;              // tem reunião marcada
+  if (l.status && l.status !== 'novo') p += 2;
+  if (l.nome && !/^(CONTATO WHATSAPP|SEM NOME)$/i.test(l.nome)) p += 1;
+  return p;
+}
+
+// Junta os dois cadastros: o vencedor recebe o que só existia no perdedor
+function fundirLeads(vencedor, perdedor) {
+  const dados = {};
+  const campos = ['email', 'telefone', 'funcionarios', 'solucao', 'sistema_ponto',
+    'origem', 'campanha', 'conjunto', 'anuncio', 'formulario', 'plataforma',
+    'leadgenId', 'responsavelId', 'responsavelNome', 'apresData', 'apresHora',
+    'apresResponsavelId', 'apresResponsavelNome', 'apresLocal', 'apresObs'];
+  campos.forEach(k => { if (!vencedor[k] && perdedor[k]) dados[k] = perdedor[k]; });
+
+  const conv = [...(vencedor.conversa || []), ...(perdedor.conversa || [])]
+    .sort((a, b) => new Date(a.data || 0) - new Date(b.data || 0));
+  if (conv.length > (vencedor.conversa || []).length) dados.conversa = conv.slice(-100);
+
+  const hist = [...(vencedor.historico || []), ...(perdedor.historico || [])]
+    .sort((a, b) => new Date(a.data || 0) - new Date(b.data || 0));
+  if (hist.length > (vencedor.historico || []).length) dados.historico = hist.slice(-100);
+
+  // Nome de perfil do WhatsApp perde para nome vindo do formulário
+  const ruim = n => !n || /^(CONTATO WHATSAPP|SEM NOME)$/i.test(n);
+  if (ruim(vencedor.nome) && !ruim(perdedor.nome)) dados.nome = perdedor.nome;
+
+  if (perdedor.criadoEm && (!vencedor.criadoEm || perdedor.criadoEm < vencedor.criadoEm)) {
+    dados.criadoEm = perdedor.criadoEm;
+  }
+  return dados;
+}
+
+async function analisarLimpeza() {
+  const snap = await db.collection('leads').get();
+  const leads = [];
+  snap.forEach(d => leads.push({ id: d.id, ...d.data() }));
+
+  // ── Duplicados por telefone ──────────────────────────────────────────────
+  const porTel = {};
+  leads.forEach(l => {
+    const k = chaveTelefone(l.telefone);
+    if (!k) return;
+    (porTel[k] = porTel[k] || []).push(l);
+  });
+
+  const fusoes = [];
+  Object.entries(porTel).forEach(([tel, grupo]) => {
+    if (grupo.length < 2) return;
+    const ordenado = [...grupo].sort((a, b) => {
+      const d = pontuarLead(b) - pontuarLead(a);
+      if (d !== 0) return d;
+      return String(a.criadoEm || '').localeCompare(String(b.criadoEm || ''));
+    });
+    const [vencedor, ...perdedores] = ordenado;
+    fusoes.push({
+      telefone: tel,
+      manter: { id: vencedor.id, nome: vencedor.nome || '', email: vencedor.email || '', pontos: pontuarLead(vencedor) },
+      remover: perdedores.map(p => ({ id: p.id, nome: p.nome || '', email: p.email || '', pontos: pontuarLead(p) })),
+    });
+  });
+
+  // ── Contatos que nunca deveriam ter virado lead ──────────────────────────
+  // Sem e-mail, sem porte, sem solução, sem dono e sem conversa: é o cadastro
+  // que o webhook antigo criava a partir de qualquer mensagem recebida.
+  const idsEmFusao = new Set(fusoes.flatMap(f => f.remover.map(r => r.id)));
+  const semQualificacao = leads.filter(l =>
+    !idsEmFusao.has(l.id) &&
+    !l.email && !l.funcionarios && !l.solucao &&
+    !l.responsavelId && !l.leadgenId &&
+    !(l.conversa || []).length &&
+    (l.origem === 'WhatsApp' || /^(CONTATO WHATSAPP|SEM NOME)$/i.test(l.nome || ''))
+  ).map(l => ({ id: l.id, nome: l.nome || '', telefone: l.telefone || '', criadoEm: l.criadoEm || '' }));
+
+  return {
+    total_de_leads: leads.length,
+    grupos_duplicados: fusoes.length,
+    leads_que_serao_removidos_por_duplicidade: fusoes.reduce((s, f) => s + f.remover.length, 0),
+    contatos_sem_qualificacao: semQualificacao.length,
+    fusoes,
+    semQualificacao,
+  };
+}
+
+exports.limparLeads = functions.runWith({ timeoutSeconds: 540 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { confirmar = false, removerSemQualificacao = false } = req.body || {};
+      const plano = await analisarLimpeza();
+
+      if (!confirmar) {
+        res.status(200).json({ ok: true, previa: true, ...plano });
+        return;
+      }
+
+      const snap = await db.collection('leads').get();
+      const mapa = {};
+      snap.forEach(d => { mapa[d.id] = { id: d.id, ...d.data() }; });
+
+      let fundidos = 0, removidos = 0;
+
+      for (const f of plano.fusoes) {
+        const vencedor = mapa[f.manter.id];
+        if (!vencedor) continue;
+        for (const r of f.remover) {
+          const perdedor = mapa[r.id];
+          if (!perdedor) continue;
+          const dados = fundirLeads(vencedor, perdedor);
+          if (Object.keys(dados).length) {
+            await db.collection('leads').doc(vencedor.id).set(dados, { merge: true });
+            Object.assign(vencedor, dados);
+          }
+          await db.collection('leads_removidos').doc(perdedor.id).set({
+            ...perdedor, motivo: 'duplicado', fundidoEm: vencedor.id,
+            removidoEm: new Date().toISOString(),
+          });
+          await db.collection('leads').doc(perdedor.id).delete();
+          removidos++;
+        }
+        fundidos++;
+      }
+
+      if (removerSemQualificacao) {
+        for (const s of plano.semQualificacao) {
+          const l = mapa[s.id];
+          if (!l) continue;
+          await db.collection('leads_removidos').doc(l.id).set({
+            ...l, motivo: 'sem qualificação', removidoEm: new Date().toISOString(),
+          });
+          await db.collection('leads').doc(l.id).delete();
+          removidos++;
+        }
+      }
+
+      await db.collection('sync_log').add({
+        tipo: 'limpeza_leads', fundidos, removidos,
+        data: new Date().toISOString(),
+      });
+
+      res.status(200).json({ ok: true, fundidos, removidos });
+    } catch (err) {
+      console.error('[limpeza] erro:', err.message);
       res.status(500).json({ error: err.message });
     }
   });
