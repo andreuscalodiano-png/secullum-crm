@@ -2257,12 +2257,15 @@ async function enviarDaCampanha(campanha, lead, token) {
     });
   }
   if (campanha.tipo === 'cta' && campanha.linkUrl) {
+    // A Datafy espera button_label e button_url SOLTOS no corpo. Enviar
+    // aninhado em { button: {...} } devolve 400 dizendo que são obrigatórios.
     return chamarDatafy({
       token, path: '/messages/send/cta', method: 'POST',
       body: {
         to: destino,
         body: texto,
-        button: { text: campanha.linkTexto || 'Saiba mais', url: campanha.linkUrl },
+        button_label: String(campanha.linkTexto || 'Saiba mais').slice(0, 20),
+        button_url: campanha.linkUrl,
       },
     });
   }
@@ -3207,6 +3210,8 @@ async function configMailchimp() {
     tag: d.tag || 'sequencia-oferta',
     ativo: d.ativo === true,
     status: d.status === 'pending' ? 'pending' : 'subscribed',
+    // arquivar (para de enviar, reversível) | tags (só troca as etiquetas) | nada
+    aoConverter: ['arquivar', 'tags', 'nada'].includes(d.aoConverter) ? d.aoConverter : 'arquivar',
   };
 }
 
@@ -3308,6 +3313,41 @@ async function enviarLeadMailchimp(lead, cfgOpcional) {
   return { ok: true, id: hash };
 }
 
+// Tira o contato da régua quando ele vira cliente ou é perdido.
+// NUNCA usa a exclusão definitiva do Mailchimp: e-mail apagado em definitivo
+// não pode mais ser recadastrado, e um dia esse cliente pode precisar receber
+// alguma coisa. Arquivar para de enviar e continua reversível.
+async function sairDaReguaMailchimp(lead, cfg, motivo) {
+  const email = String(lead.email || '').trim().toLowerCase();
+  if (!email || !cfg.apiKey || !cfg.audienceId) return { pulou: 'sem e-mail ou sem configuração' };
+  const hash = crypto.createHash('md5').update(email).digest('hex');
+  const acao = cfg.aoConverter || 'arquivar';
+  if (acao === 'nada') return { pulou: 'desligado na configuração' };
+
+  // Desliga a tag da jornada e marca o que a pessoa virou
+  const tags = [
+    { name: cfg.tag, status: 'inactive' },
+    { name: motivo === 'perdido' ? 'lead perdido' : 'cliente', status: 'active' },
+  ];
+  const rt = await chamarMailchimp({
+    apiKey: cfg.apiKey,
+    path: `/lists/${cfg.audienceId}/members/${hash}/tags`,
+    method: 'POST',
+    body: { tags },
+  });
+
+  if (acao === 'tags') return { ok: rt.ok, arquivado: false, erro: rt.ok ? '' : erroMailchimp(rt) };
+
+  // DELETE aqui é ARQUIVAR no Mailchimp — reversível, para de enviar tudo.
+  // A exclusão irreversível seria /actions/delete-permanent, que não usamos.
+  const ra = await chamarMailchimp({
+    apiKey: cfg.apiKey,
+    path: `/lists/${cfg.audienceId}/members/${hash}`,
+    method: 'DELETE',
+  });
+  return { ok: ra.ok || ra.status === 404, arquivado: true, erro: ra.ok ? '' : erroMailchimp(ra) };
+}
+
 async function registrarSyncMailchimp(leadId, resultado) {
   const dados = { mailchimpEm: new Date().toISOString() };
   if (resultado.ok) { dados.mailchimpId = resultado.id; dados.mailchimpErro = ''; }
@@ -3324,6 +3364,7 @@ exports.mailchimpNovoLead = functions.firestore
       const cfg = await configMailchimp();
       if (!cfg.ativo) return null;
       const lead = { id: snap.id, ...snap.data() };
+      if (['convertido', 'perdido'].includes(lead.status)) return null;
       const r = await enviarLeadMailchimp(lead, cfg);
       if (r.pulou) { console.log('[mailchimp] pulou', snap.id, '-', r.pulou); return null; }
       await registrarSyncMailchimp(snap.id, r);
@@ -3345,6 +3386,24 @@ exports.mailchimpLeadAtualizado = functions.firestore
       const depois = change.after.data() || {};
       const emailNovo = String(depois.email || '').trim().toLowerCase();
       const emailAntigo = String(antes.email || '').trim().toLowerCase();
+
+      // Virou cliente ou foi perdido: sai da régua para não receber oferta
+      const saiu = ['convertido', 'perdido'].includes(depois.status) && antes.status !== depois.status;
+      if (saiu) {
+        const cfgS = await configMailchimp();
+        if (!cfgS.ativo) return null;
+        const r = await sairDaReguaMailchimp({ ...depois, id: change.after.id }, cfgS, depois.status);
+        if (!r.pulou) {
+          await db.collection('leads').doc(change.after.id).set({
+            mailchimpForaDaRegua: true,
+            mailchimpForaDaReguaEm: new Date().toISOString(),
+            mailchimpErro: r.erro || '',
+          }, { merge: true });
+          console.log(`[mailchimp] ${depois.nome || change.after.id} saiu da régua (${depois.status}): ${r.ok ? 'ok' : r.erro}`);
+        }
+        return null;
+      }
+
       if (!emailNovo || emailNovo === emailAntigo) return null;   // e-mail não mudou
       if (depois.mailchimpId && emailNovo === emailAntigo) return null;
 
@@ -3412,6 +3471,8 @@ exports.mailchimpProxy = functions.https.onRequest(async (req, res) => {
       const erros = [];
       for (const d of snap.docs) {
         const lead = { id: d.id, ...d.data() };
+        // Quem já virou cliente ou foi perdido não volta para a régua
+        if (['convertido', 'perdido'].includes(lead.status) || lead.mailchimpForaDaRegua) { pulados++; continue; }
         const r = await enviarLeadMailchimp(lead, lista);
         if (r.pulou) { pulados++; continue; }
         if (r.ok) { enviados++; await registrarSyncMailchimp(d.id, r); }

@@ -1201,7 +1201,7 @@ function ConfigRaioX({usuarios}){
 // A régua de dias mora no Customer Journey do Mailchimp. Aqui só ligamos a
 // conta, escolhemos a audiência e a tag que dispara a jornada.
 function ConfigMailchimp(){
-  const [c,setC]=useState({apiKey:'',audienceId:'',tag:'sequencia-oferta',ativo:false,status:'subscribed'});
+  const [c,setC]=useState({apiKey:'',audienceId:'',tag:'sequencia-oferta',ativo:false,status:'subscribed',aoConverter:'arquivar'});
   const [carregando,setCarregando]=useState(true);
   const [salvando,setSalvando]=useState(false);
   const [salvo,setSalvo]=useState(false);
@@ -1338,6 +1338,21 @@ function ConfigMailchimp(){
         <div style={{fontSize:10,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
           Com confirmação, a jornada só começa depois que a pessoa clicar no e-mail de confirmação — chega em menos gente,
           mas protege mais a reputação do seu domínio.
+        </div>
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Quando o lead vira cliente (ou é perdido)</label>
+        <select style={{...fi,maxWidth:420}} value={c.aoConverter||'arquivar'} onChange={e=>up('aoConverter',e.target.value)}>
+          <option value="arquivar">Arquivar no Mailchimp — para de receber tudo</option>
+          <option value="tags">Só trocar as etiquetas — sai da jornada, continua na base</option>
+          <option value="nada">Não fazer nada</option>
+        </select>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:4,lineHeight:1.6}}>
+          Arquivar é reversível e é o único jeito de garantir que a jornada pare no meio.
+          <strong> O sistema nunca exclui em definitivo</strong> — e-mail excluído assim no Mailchimp não pode mais ser
+          recadastrado, nunca. Se escolher só trocar etiquetas, acrescente na sua jornada uma regra de saída
+          para quem tiver a etiqueta <code style={{fontSize:10}}>cliente</code>.
         </div>
       </div>
 
@@ -11976,8 +11991,11 @@ function exportarCsvDatafy(leads,rotulo){
   const linhas=[];
   let semTelefone=0,duplicados=0,optout=0;
 
+  let convertidos=0;
   (leads||[]).forEach(l=>{
     if(l.optout){optout++;return;}
+    // Cliente fechado e lead perdido não entram em campanha de oferta
+    if(l.status==='convertido'||l.status==='perdido'){convertidos++;return;}
     const tel=String(l.telefone||'').replace(/\D/g,'');
     if(tel.length<10){semTelefone++;return;}
     // Garante o DDI sem estragar DDD 55: só acrescenta quando tem 10 ou 11
@@ -12027,6 +12045,7 @@ function exportarCsvDatafy(leads,rotulo){
     semTelefone?`${semTelefone} sem telefone válido`:'',
     duplicados?`${duplicados} repetido(s)`:'',
     optout?`${optout} que pediram para não receber`:'',
+    convertidos?`${convertidos} já convertido(s) ou perdido(s)`:'',
   ].filter(Boolean);
 
   alert(
@@ -13258,13 +13277,27 @@ function DetalheCampanha({campanha,onFechar}){
                 </div>
               </div>
             ))}
-            <div style={{fontSize:10,color:'#b45309',lineHeight:1.6,marginTop:8,background:'#fff8ee',borderRadius:6,padding:'8px 10px'}}>
-              {c.tipo!=='template'
-                ?<><strong>Lembre:</strong> esta campanha é do tipo mensagem livre. A Meta só entrega para quem te
-                  respondeu nas últimas 24 horas. Para falar com os demais, é preciso usar <strong>Template</strong> aprovado.</>
-                :<><strong>Dica:</strong> em campanha de template, erro costuma ser template não aprovado, idioma diferente
-                  do cadastrado, ou número de variáveis diferente do que o template espera.</>}
-            </div>
+            {(()=>{
+              // A dica muda conforme o erro. Campo faltando é problema de envio,
+              // não da regra de 24h — misturar os dois manda o usuário para o
+              // lado errado, como já aconteceu aqui.
+              const todos=lista.map(([m])=>m).join(' ').toLowerCase();
+              const ehCampo=/obrigat|required|missing|400|inválid|invalid/.test(todos);
+              const ehJanela=/24|window|re-?engag|outside|template/.test(todos);
+              const dica=ehCampo
+                ?<><strong>Parece problema no formato do envio</strong>, não na regra de 24 horas. A Meta está dizendo que
+                  falta um campo. Confira o texto do botão e o link, e me mande esta mensagem se persistir.</>
+                :ehJanela||c.tipo!=='template'
+                  ?<><strong>Parece a janela de 24 horas.</strong> Mensagem livre só chega em quem te respondeu nas últimas
+                    24h. Para os demais, use <strong>Template</strong> aprovado ou o canal <strong>QR Code</strong>.</>
+                  :<><strong>Dica:</strong> em campanha de template, erro costuma ser template não aprovado, idioma diferente
+                    do cadastrado, ou número de variáveis diferente do esperado.</>;
+              return(
+                <div style={{fontSize:10,color:'#b45309',lineHeight:1.6,marginTop:8,background:'#fff8ee',borderRadius:6,padding:'8px 10px'}}>
+                  {dica}
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
@@ -13354,6 +13387,8 @@ function NovaCampanha({leads,onFechar}){
   const alvos=(leads||[]).filter(l=>{
     if(c.somenteComTelefone&&!l.telefone)return false;
     if(l.optout)return false;
+    // Quem já fechou não recebe oferta de novo, mesmo com o filtro em "todos"
+    if(l.status==='convertido'||l.status==='perdido')return false;
     if(c.filtroStatus!=='todos'&&l.status!==c.filtroStatus)return false;
     if(c.filtroOrigem!=='todas'&&(l.origem||'')!==c.filtroOrigem)return false;
     if(c.filtroPorte!=='todos'&&!(l.funcionarios||'').includes(c.filtroPorte))return false;
