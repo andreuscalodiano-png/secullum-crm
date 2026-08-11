@@ -439,29 +439,19 @@ const OBJETO_PADRAO={
   Basic:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Básica de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
 
 1.2. Trata-se de um sistema de gestão de ponto para empresas com até {{funcionarios}} funcionários, que oferece:
-• Controle e gestão online em tempo real,
-• Marcação de ponto (online e off-line),
-• Espelho de ponto e relatórios legais.
+{{recursos}}
 
 1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
   Pro:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Profissional (PRO) de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
 
 1.2. Trata-se de um sistema de gestão de ponto completo para empresas com até {{funcionarios}} funcionários, que oferece:
-• Controle e gestão online em tempo real,
-• Controle de banco de horas,
-• Gestão de escalas,
-• Marcação de ponto (online e off-line),
+{{recursos}}
 
 1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
   Ultimate:`1.1. O presente contrato tem por objeto a venda da licença de uso do software denominado Gestão Profissional Ultimate de Ponto WEB, desenvolvido e comercializado pela LICENCIANTE, destinado ao controle de ponto de funcionários.
 
 1.2. Trata-se de um sistema de gestão de ponto completo para empresas com até {{funcionarios}} funcionários, que oferece:
-• Controle e gestão online em tempo real,
-• Controle de banco de horas,
-• Gestão de escalas,
-• Marcação de ponto (online e off-line),
-• Assinatura eletrônica do cartão ponto,
-• Envio de atestados pelo aplicativo.
+{{recursos}}
 
 1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
 };
@@ -595,19 +585,26 @@ function dataExtenso(d){
 
 function useContratoConfig(){
   const [cfg,setCfg]=useState({
-    licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO,
+    licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO,servicos:[],
   });
   useEffect(()=>{
-    const unsub=onSnapshot(doc(db,'config','contrato'),d=>{
+    const u1=onSnapshot(doc(db,'config','contrato'),d=>{
       if(!d.exists())return;
       const x=d.data();
-      setCfg({
+      setCfg(c=>({
+        ...c,
         licenciante:{...LICENCIANTE_PADRAO,...(x.licenciante||{})},
         objetoPlano:{...OBJETO_PADRAO,...(x.objetoPlano||{})},
         modelo:x.modelo||MODELO_CONTRATO_PADRAO,
-      });
+      }));
     });
-    return()=>unsub();
+    // Os recursos da Cláusula 1 vêm da descrição do serviço vendido, para o
+    // contrato dizer exatamente o que foi contratado por aquele cliente.
+    const u2=onSnapshot(collection(db,'orc_servicos'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setCfg(c=>({...c,servicos:a}));
+    });
+    return()=>{u1();u2();};
   },[]);
   return cfg;
 }
@@ -630,6 +627,24 @@ function montarContrato(cliente,cfg){
         return `• ${i.nome}${qtd>1?` (${qtd} unidades)`:''}${i.semCusto?' — sem custo':v?` — ${moedaBR(v*qtd)}`:''}`;
       }).join('\n')
     : '';
+
+  // Recursos: descrição do(s) serviço(s) que este cliente contratou.
+  // Cada linha da descrição vira um item da lista na Cláusula 1.2.
+  const catalogo=cfg.servicos||[];
+  const servicosDoCliente=itens.filter(i=>i.tipo==='servico');
+  const linhasRecursos=[];
+  servicosDoCliente.forEach(i=>{
+    const ref=catalogo.find(s=>s.id===i.refId)||catalogo.find(s=>(s.nome||'').toUpperCase()===String(i.nome||'').toUpperCase());
+    const desc=String(ref?.descricao||'').trim();
+    if(!desc)return;
+    desc.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).forEach(linha=>{
+      const limpa=linha.replace(/^[•\-*·]\s*/,'').trim();
+      if(limpa&&!linhasRecursos.includes(limpa))linhasRecursos.push(limpa);
+    });
+  });
+  const recursos=linhasRecursos.length
+    ?linhasRecursos.map(x=>`• ${x}`).join('\n')
+    :'• Conforme especificação técnica do plano contratado.';
 
   const nomeSoftware=({
     Basic:'Gestão Básica de Ponto WEB',
@@ -654,6 +669,7 @@ function montarContrato(cliente,cfg){
     dia_vencimento:c.dtBoleto?String(new Date(c.dtBoleto+'T12:00:00').getDate()):'15',
     data_extenso:dataExtenso(),
     itens_contratados:listaItens,
+    recursos,
     objeto:'',
   };
   // O objeto é resolvido antes, porque ele mesmo usa variáveis
@@ -664,13 +680,20 @@ function montarContrato(cliente,cfg){
     .replace(/\{\{\s*(\w+)\s*\}\}/g,(m,k)=>vars[k]??'')
     .replace(/\n{3,}/g,'\n\n');
 
+  const semDescricao=servicosDoCliente
+    .filter(i=>{
+      const ref=catalogo.find(s=>s.id===i.refId)||catalogo.find(s=>(s.nome||'').toUpperCase()===String(i.nome||'').toUpperCase());
+      return !String(ref?.descricao||'').trim();
+    })
+    .map(i=>i.nome);
+
   const faltando=Object.entries({
     'Razão social':c.nome||c.empresa,CNPJ:c.cnpj,Endereço:c.rua,Número:c.numero,
     Bairro:c.bairro,Cidade:c.cidade,UF:c.uf,CEP:c.cep,'Nº de funcionários':func,
     'Valor mensal':vS,
   }).filter(([,v])=>!v).map(([k])=>k);
 
-  return {texto,vars,faltando,plano};
+  return {texto,vars,faltando,plano,semDescricao};
 }
 
 // HTML do documento — mesma base para a prévia, a impressão e o Word
@@ -740,7 +763,7 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
   const [salvando,setSalvando]=useState(false);
   const [registrado,setRegistrado]=useState(false);
 
-  const {texto,faltando,plano}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
+  const {texto,faltando,plano,semDescricao}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
   const idDoc=useMemo(()=>'CT-'+new Date().getFullYear()+'-'+String(cliente.id||'').slice(-6).toUpperCase(),[cliente.id]);
   const html=useMemo(()=>htmlContrato(texto,cliente,cfg.licenciante,idDoc),[texto,cliente,cfg,idDoc]);
   const arquivo=`Contrato_${String(cliente.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
@@ -805,6 +828,14 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
           </div>
           <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',fontSize:20,color:'#95a5a6',lineHeight:1}}>×</button>
         </div>
+
+        {(semDescricao||[]).length>0&&(
+          <div style={{margin:'12px 22px 0',background:'#fff8ee',border:'1px solid #fde68a',borderRadius:7,padding:'10px 13px',fontSize:11,color:'#b45309',lineHeight:1.6}}>
+            <strong>⚠ Serviço sem descrição:</strong> {semDescricao.join(', ')}.<br/>
+            A Cláusula 1.2 lista os recursos a partir da descrição do serviço. Cadastre em
+            <strong> Configurações › Orçamento › Serviços</strong>, uma linha por recurso, e o contrato passa a detalhar o que o cliente contratou.
+          </div>
+        )}
 
         {faltando.length>0&&(
           <div style={{margin:'12px 22px 0',background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 13px',fontSize:11,color:'#c53030',lineHeight:1.6}}>
@@ -1407,7 +1438,7 @@ function ConfigContrato(){
     ['valor_por_funcionario','Valor por funcionário'],['valor_por_funcionario_extenso','Por extenso'],
     ['valor_implantacao','Implantação'],['valor_equipamento','Equipamento'],['valor_total','Total'],
     ['dia_vencimento','Dia do vencimento'],['data_extenso','Data por extenso'],
-    ['objeto','Cláusula 1 do plano'],['itens_contratados','Itens contratados'],
+    ['objeto','Cláusula 1 do plano'],['recursos','Recursos (descrição do serviço)'],['itens_contratados','Itens contratados'],
     ['licenciante_razao','Razão social da Guion'],['licenciante_cnpj','CNPJ da Guion'],
     ['licenciante_representante','Representante'],['licenciante_cpf','CPF'],
     ['cidade_licenciante','Cidade da Guion'],['foro','Foro'],
@@ -9231,7 +9262,16 @@ function OrcConfigServicos({servicos}){
           <div><label style={lbl}>Nome *</label><input style={{...fi,textTransform:'uppercase'}} value={form.nome} onChange={e=>setForm(x=>({...x,nome:e.target.value.toUpperCase()}))}/></div>
           <div><label style={lbl}>Valor (R$) *</label><input style={fi} type="number" step="0.01" value={form.valor} onChange={e=>setForm(x=>({...x,valor:e.target.value}))}/></div>
         </div>
-        <div style={{marginBottom:8}}><label style={lbl}>Descrição</label><textarea style={{...fi,resize:'vertical',minHeight:50}} value={form.descricao} onChange={e=>setForm(x=>({...x,descricao:e.target.value}))}/></div>
+        <div style={{marginBottom:8}}>
+          <label style={lbl}>Descrição — recursos deste serviço</label>
+          <textarea style={{...fi,resize:'vertical',minHeight:80,lineHeight:1.6}} value={form.descricao}
+            onChange={e=>setForm(x=>({...x,descricao:e.target.value}))}
+            placeholder={'Controle e gestão online em tempo real\nControle de banco de horas\nGestão de escalas\nMarcação de ponto (online e off-line)'}/>
+          <div style={{fontSize:10,color:'#7f8c8d',marginTop:4,lineHeight:1.6}}>
+            <strong>Uma linha por recurso.</strong> Estas linhas viram a lista da Cláusula 1.2 do contrato do cliente
+            que contratar este serviço — então descreva aqui o que o plano entrega para essa faixa de funcionários.
+          </div>
+        </div>
         <div style={{display:'flex',gap:8}}>
           <button onClick={salvar} style={{padding:'8px 18px',borderRadius:6,border:'none',background:saved?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>{saved?'✓ Salvo!':(editId?'Salvar':'+ Adicionar')}</button>
           {editId&&<button onClick={()=>{setEditId(null);setForm({nome:'',descricao:'',valor:''});}} style={{padding:'8px 14px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,color:'#7f8c8d'}}>Cancelar</button>}
