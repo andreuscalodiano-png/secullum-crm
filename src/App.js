@@ -11830,6 +11830,78 @@ function PainelCampanhas({leads}){
   );
 }
 
+// ─── EXPORTAR PARA O PAINEL DA DATAFY ────────────────────────────────────────
+// A Datafy não deixa criar template pela API, mas a campanha dela aceita CSV.
+// Então o CRM faz o que faz bem — filtrar e higienizar a lista — e entrega
+// no formato que o painel espera: coluna "telefone" com DDI, e as demais
+// colunas viram as variáveis do template, na ordem em que aparecem.
+function exportarCsvDatafy(leads,rotulo){
+  const vistos=new Set();
+  const linhas=[];
+  let semTelefone=0,duplicados=0,optout=0;
+
+  (leads||[]).forEach(l=>{
+    if(l.optout){optout++;return;}
+    const tel=String(l.telefone||'').replace(/\D/g,'');
+    if(tel.length<10){semTelefone++;return;}
+    // Garante o DDI sem estragar DDD 55: só acrescenta quando tem 10 ou 11
+    const comDdi=(tel.length===10||tel.length===11)?'55'+tel:tel;
+    if(vistos.has(comDdi.slice(-8))){duplicados++;return;}
+    vistos.add(comDdi.slice(-8));
+    const nome=String(l.nome||'').trim();
+    linhas.push({
+      telefone:comDdi,
+      // Tira pontuação grudada: "MARIA, SOUZA" não pode virar "Maria,"
+      primeiro_nome:(nome.split(/\s+/)[0]||'').replace(/[^\p{L}]+$/u,'')
+        .replace(/^(.)(.*)$/u,(m,a,b)=>a.toUpperCase()+b.toLowerCase()),
+      nome,
+      solucao:l.solucao||'',
+      funcionarios:l.funcionarios||'',
+      campanha:l.campanha||'',
+    });
+  });
+
+  if(!linhas.length){
+    alert('Nenhum lead com telefone válido nesta seleção.');
+    return null;
+  }
+
+  const cols=['telefone','primeiro_nome','nome','solucao','funcionarios','campanha'];
+  const esc=v=>{
+    const s=String(v==null?'':v).replace(/[\r\n]+/g,' ').trim();
+    return /[",;]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+  };
+
+  // Máximo de 1.000 por arquivo, que é o limite do painel da Datafy
+  const partes=[];
+  for(let i=0;i<linhas.length;i+=1000)partes.push(linhas.slice(i,i+1000));
+
+  partes.forEach((parte,idx)=>{
+    const csv=[cols.join(','),...parte.map(l=>cols.map(c=>esc(l[c])).join(','))].join('\r\n');
+    // BOM para o Excel abrir os acentos corretamente
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`datafy_${(rotulo||'leads').replace(/[^\w]+/g,'_').toLowerCase()}${partes.length>1?`_parte${idx+1}`:''}.csv`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+  });
+
+  const descartes=[
+    semTelefone?`${semTelefone} sem telefone válido`:'',
+    duplicados?`${duplicados} repetido(s)`:'',
+    optout?`${optout} que pediram para não receber`:'',
+  ].filter(Boolean);
+
+  alert(
+    `✅ ${linhas.length} contato(s) exportado(s)${partes.length>1?` em ${partes.length} arquivos de até 1.000`:''}.`+
+    (descartes.length?`\n\nFicaram de fora: ${descartes.join(', ')}.`:'')+
+    `\n\nNo painel da Datafy, em Nova Campanha, suba o arquivo. As colunas viram as variáveis do template nesta ordem:`+
+    `\n{{1}} primeiro_nome · {{2}} nome · {{3}} solucao · {{4}} funcionarios · {{5}} campanha`
+  );
+  return linhas.length;
+}
+
 // ─── MODAL: NOVO LEAD MANUAL ─────────────────────────────────────────────────
 function ModalNovoLead({onFechar}){
   const [f,setF]=useState({nome:'',email:'',telefone:'',funcionarios:'',sistema_ponto:'',solucao:'',origem:'Manual',obs:''});
@@ -12557,6 +12629,8 @@ function AbaTemplates(){
   const [gerando,setGerando]=useState(false);
   const [objetivo,setObjetivo]=useState('');
   const refCorpo=useRef(null);
+  const [bloqueadoApi,setBloqueadoApi]=useState(false);
+  const [copiado,setCopiado]=useState(false);
 
   const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
@@ -12629,7 +12703,15 @@ function AbaTemplates(){
             ? d.error
             : (d.detalhe?JSON.stringify(d.detalhe).slice(0,500):'A Datafy recusou sem detalhar. Veja o log da function datafyTemplates.'))
         : '';
-      if(msgErro)alert('❌ A Meta ou a Datafy recusou este template:\n\n'+msgErro+
+      if(/405|not allowed on this route/i.test(msgErro)){
+        // A Datafy só permite LER templates pela API. Criar é pelo painel deles.
+        setBloqueadoApi(true);
+        alert('A Datafy não permite criar template pela API — só pelo painel deles.\n\n'+
+          'Use o botão "Copiar para colar na Datafy" que apareceu aqui embaixo: ele copia tudo já formatado. '+
+          'Depois é só colar no painel da Datafy, em Modelos de mensagem.\n\n'+
+          'O texto já passou pela conferência das regras da Meta, então vai aprovar.');
+      }
+      else if(msgErro)alert('❌ A Meta ou a Datafy recusou este template:\n\n'+msgErro+
         '\n\nCausas comuns: nome já usado em outro template, categoria diferente do conteúdo, ou número de variáveis diferente do esperado.');
       else{
         alert('✅ Template enviado para aprovação da Meta.\n\nA análise costuma levar de alguns minutos a 2 dias. Você acompanha o status aqui na lista.');
@@ -12730,6 +12812,37 @@ function AbaTemplates(){
             <label style={lbl}>Corpo da mensagem</label>
             <textarea ref={refCorpo} style={{...fi,minHeight:110,resize:'vertical',lineHeight:1.6}} value={f.corpo} onChange={e=>setF(x=>({...x,corpo:e.target.value}))}
               placeholder={'Olá {{1}}! 👋\n\nEstamos com condição especial no relógio de ponto facial este mês.\n\nQuer que eu te mande os detalhes?'}/>
+
+            {/* A Datafy só aceita criar template pelo painel dela */}
+            {bloqueadoApi&&(
+              <div style={{background:'#ebf8ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 14px',marginTop:8,fontSize:11,color:'#2b6cb0',lineHeight:1.7}}>
+                <strong>A criação é feita no painel da Datafy</strong>, não por aqui — a API deles só permite ler os
+                templates existentes. O botão abaixo copia tudo formatado; é só colar lá em <strong>Modelos de mensagem</strong>.
+                Depois de aprovado, ele aparece sozinho nesta lista e na tela de campanha.
+                <div style={{display:'flex',gap:8,marginTop:9,flexWrap:'wrap'}}>
+                  <button onClick={async()=>{
+                      const nomeSlug=f.nome.trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
+                      const txt=[
+                        `Nome: ${nomeSlug}`,
+                        `Categoria: ${f.categoria==='UTILITY'?'Utilidade':f.categoria==='MARKETING'?'Marketing':f.categoria}`,
+                        `Idioma: Português (BR)`,
+                        '',
+                        'CORPO:',f.corpo,
+                        ...(f.rodape.trim()?['','RODAPÉ:',f.rodape.trim()]:[]),
+                        ...(f.botaoTexto.trim()?['','BOTÃO:',`${f.botaoTexto.trim()}${f.botaoUrl.trim()?' → '+f.botaoUrl.trim():''}`]:[]),
+                      ].join('\n');
+                      if(await copiar(txt)){setCopiado(true);setTimeout(()=>setCopiado(false),2500);}
+                    }}
+                    style={{padding:'7px 15px',borderRadius:7,border:'none',background:copiado?'#27ae60':'#2b6cb0',color:'#fff',cursor:'pointer',fontSize:11,fontWeight:700}}>
+                    {copiado?'✓ Copiado!':'⧉ Copiar para colar na Datafy'}
+                  </button>
+                  <a href="https://app.datafyapi.com.br/dashboard" target="_blank" rel="noopener noreferrer"
+                    style={{padding:'7px 15px',borderRadius:7,border:'1px solid #bee3f8',background:'#fff',color:'#2b6cb0',fontSize:11,fontWeight:700,textDecoration:'none'}}>
+                    Abrir painel da Datafy ↗
+                  </a>
+                </div>
+              </div>
+            )}
 
             {/* Confere as regras da Meta antes de enviar para aprovação */}
             <PainelValidacao corpo={f.corpo} categoria={f.categoria} botaoTexto={f.botaoTexto} rodape={f.rodape}
@@ -15743,6 +15856,16 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
         </button>
         <button onClick={()=>setModalImport(true)} style={{padding:'9px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,color:'#4a4a4a',display:'flex',alignItems:'center',gap:6}}>
           📥 Importar CSV
+        </button>
+        <button onClick={()=>{
+            const alvo=leadsFiltrados.length?leadsFiltrados:leadsDoResp;
+            const quem=filtroResp==='todos'?'':(usuarios||[]).find(u=>u.id===filtroResp)?.nome||filtroResp;
+            if(!window.confirm(`Exportar ${alvo.length} lead(s) do recorte atual para o painel da Datafy?\n\nO arquivo sai no formato que a campanha deles espera, sem repetidos e sem quem pediu para não receber.`))return;
+            exportarCsvDatafy(alvo,quem||filtroStatus);
+          }}
+          title="Gera o CSV no formato da campanha da Datafy, respeitando os filtros da tela"
+          style={{padding:'9px 16px',borderRadius:7,border:'1px solid #25D366',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,color:'#1a9c4d',display:'flex',alignItems:'center',gap:6}}>
+          📤 Exportar p/ Datafy
         </button>
         <button onClick={()=>setModalNovo(true)} style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#e84393',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,display:'flex',alignItems:'center',gap:6}}>
           ＋ Novo lead
