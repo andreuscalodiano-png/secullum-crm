@@ -14068,6 +14068,65 @@ function ModalAssumirLead({lead,etapa,usuarios,sugerido,onConfirmar,onCancelar})
   );
 }
 
+// ─── SELO DO MAILCHIMP ───────────────────────────────────────────────────────
+// Mostra se o lead chegou na audiência. Sem isto ninguém sabe se a régua de
+// e-mails pegou aquele contato — e erro silencioso em automação é o pior tipo.
+function SeloMailchimp({lead,detalhado}){
+  const [enviando,setEnviando]=useState(false);
+  const [msg,setMsg]=useState('');
+  const temEmail=!!String(lead.email||'').trim();
+  if(!temEmail)return null;
+
+  const erro=lead.mailchimpErro;
+  const enviado=!!lead.mailchimpId&&!erro;
+  const nunca=!lead.mailchimpEm;
+
+  // Na lista, contato ainda não processado não vira ruído visual
+  if(nunca&&!detalhado)return null;
+
+  async function reenviar(){
+    setEnviando(true);setMsg('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/mailchimpProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({acao:'enviarLead',leadId:lead.id}),
+      });
+      const d=await r.json();
+      setMsg(d.ok?'✓ enviado':(d.motivo||d.error||'falhou'));
+    }catch(e){setMsg(e.message);}
+    setEnviando(false);
+  }
+
+  const cor=enviado?{bg:'#f0fff4',bd:'#9ae6b4',tx:'#276749'}
+           :erro?{bg:'#fff5f5',bd:'#feb2b2',tx:'#c53030'}
+                :{bg:'#f8f9fa',bd:'#e8eaed',tx:'#95a5a6'};
+
+  const selo=(
+    <span title={erro||(enviado?`Na audiência desde ${new Date(lead.mailchimpEm).toLocaleString('pt-BR')}`:'Ainda não foi para o Mailchimp')}
+      style={{display:'inline-flex',alignItems:'center',gap:4,background:cor.bg,color:cor.tx,
+        border:`1px solid ${cor.bd}`,borderRadius:10,padding:detalhado?'2px 9px':'1px 7px',
+        fontSize:detalhado?10:9,fontWeight:700,whiteSpace:'nowrap'}}>
+      ✉️ {enviado?'Mailchimp':erro?'Falhou no Mailchimp':'Fora da régua'}
+    </span>
+  );
+
+  if(!detalhado)return selo;
+
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+      {selo}
+      {erro&&<span style={{fontSize:10,color:'#c53030',maxWidth:340,lineHeight:1.4}}>{erro}</span>}
+      {(erro||nunca)&&(
+        <button onClick={reenviar} disabled={enviando}
+          style={{padding:'3px 11px',borderRadius:6,border:'1px solid #f5a623',background:'#fff',color:'#b45309',cursor:'pointer',fontSize:10,fontWeight:700}}>
+          {enviando?'Enviando...':'Enviar para o Mailchimp'}
+        </button>
+      )}
+      {msg&&<span style={{fontSize:10,color:msg.startsWith('✓')?'#27ae60':'#c53030',fontWeight:600}}>{msg}</span>}
+    </div>
+  );
+}
+
 // ─── SELO DO RESPONSÁVEL ─────────────────────────────────────────────────────
 // Sem responsável vira alerta vermelho: é o estado que precisa incomodar.
 function SeloResponsavel({lead,compacto}){
@@ -14228,6 +14287,7 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
 
                         <div style={{display:'flex',alignItems:'center',gap:8,marginTop:3,flexWrap:'wrap'}}>
                           {conversa>0&&<span style={{fontSize:10,color:'#7f8c8d'}}>💬 {conversa}</span>}
+                          <SeloMailchimp lead={lead}/>
                           {lead.telefone&&(
                             <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
                               onClick={e=>{e.stopPropagation();registrarEventoLead(lead,'whatsapp','Contato via WhatsApp');}}
@@ -15059,6 +15119,16 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
           <BlocoWhatsAppLead lead={lead}
             onRegistrar={()=>registrarEventoLead(lead,'whatsapp','Contato via WhatsApp')}/>
         )}
+
+        {/* Situação na régua de e-mails */}
+        {lead.email&&(
+          <div style={{background:'#fff',borderRadius:10,padding:'12px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.06)',marginTop:10}}>
+            <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>
+              Régua de e-mails
+            </div>
+            <SeloMailchimp lead={lead} detalhado/>
+          </div>
+        )}
       </div>
     );
   }
@@ -15258,6 +15328,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                     )}
                     {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
                     <SeloResponsavel lead={lead}/>
+                    <SeloMailchimp lead={lead}/>
                   </div>
                 </div>
                 {/* WhatsApp direto do card */}
