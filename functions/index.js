@@ -2134,12 +2134,24 @@ exports.datafyTemplates = functions.https.onRequest(async (req, res) => {
       const r = await chamarDatafy({
         token: numero.token, path: '/templates', method: 'POST', body: template,
       });
+      // A Datafy às vezes responde 200 com {error:true} no corpo, e às vezes
+      // manda o erro em formato diferente. Antes a tela mostrava só "true".
+      const deuRuim = !r.ok || r.data?.error === true || r.data?.error === 'true';
       await db.collection('anuncios_log').add({
         tipo: 'template_criado', nome: template.name || '',
-        sucesso: r.ok, resposta: JSON.stringify(r.data).slice(0, 400),
+        sucesso: !deuRuim, resposta: JSON.stringify(r.data).slice(0, 600),
+        enviado: JSON.stringify(template).slice(0, 600),
         usuario: req.body.usuario || '—', data: new Date().toISOString(),
       });
-      res.status(r.ok ? 200 : r.status).json(r.data);
+      if (deuRuim) {
+        console.error('[templates] recusado:', JSON.stringify(r.data));
+        res.status(r.status && r.status !== 200 ? r.status : 400).json({
+          error: msgErroDatafy(r),
+          detalhe: r.data,
+        });
+        return;
+      }
+      res.status(200).json(r.data);
       return;
     }
     if (acao === 'remover') {

@@ -12484,8 +12484,8 @@ function corrigirTemplateMeta(corpo){
 }
 
 // Painel que aparece embaixo do editor, ao vivo
-function PainelValidacao({corpo,categoria,botaoTexto,onCorrigir}){
-  const problemas=useMemo(()=>validarTemplateMeta({corpo,categoria,botaoTexto}),[corpo,categoria,botaoTexto]);
+function PainelValidacao({corpo,categoria,botaoTexto,rodape,onCorrigir}){
+  const problemas=useMemo(()=>validarTemplateMeta({corpo,categoria,botaoTexto:(botaoTexto||'')+' '+(rodape||'')}),[corpo,categoria,botaoTexto,rodape]);
   const erros=problemas.filter(p=>p.nivel==='erro');
   const avisos=problemas.filter(p=>p.nivel==='aviso');
   const temCorrecao=useMemo(()=>corrigirTemplateMeta(corpo).feitas.length>0,[corpo]);
@@ -12602,7 +12602,7 @@ function AbaTemplates(){
   async function criar(){
     if(!f.nome.trim()||!f.corpo.trim()){alert('Preencha o nome e o corpo da mensagem.');return;}
     // Não adianta mandar para análise o que a Meta já vai recusar
-    const reprova=validarTemplateMeta({corpo:f.corpo,categoria:f.categoria,botaoTexto:f.botaoTexto})
+    const reprova=validarTemplateMeta({corpo:f.corpo,categoria:f.categoria,botaoTexto:(f.botaoTexto||'')+' '+(f.rodape||'')})
       .filter(p=>p.nivel==='erro');
     if(reprova.length){
       alert('A Meta vai recusar este template:\n\n'+reprova.map(p=>'• '+p.msg+'\n  '+p.dica).join('\n\n')+
@@ -12623,7 +12623,14 @@ function AbaTemplates(){
           template:{name:nome,language:'pt_BR',category:f.categoria,components:componentes}}),
       });
       const d=await r.json();
-      if(d.error)alert('❌ '+d.error);
+      // d.error pode vir como booleano; nesse caso mostra o corpo da resposta
+      const msgErro=d.error
+        ? (typeof d.error==='string'&&d.error!=='true'
+            ? d.error
+            : (d.detalhe?JSON.stringify(d.detalhe).slice(0,500):'A Datafy recusou sem detalhar. Veja o log da function datafyTemplates.'))
+        : '';
+      if(msgErro)alert('❌ A Meta ou a Datafy recusou este template:\n\n'+msgErro+
+        '\n\nCausas comuns: nome já usado em outro template, categoria diferente do conteúdo, ou número de variáveis diferente do esperado.');
       else{
         alert('✅ Template enviado para aprovação da Meta.\n\nA análise costuma levar de alguns minutos a 2 dias. Você acompanha o status aqui na lista.');
         setCriando(false);setF({nome:'',categoria:'MARKETING',corpo:'',rodape:'',botaoTexto:'',botaoUrl:''});
@@ -12725,7 +12732,7 @@ function AbaTemplates(){
               placeholder={'Olá {{1}}! 👋\n\nEstamos com condição especial no relógio de ponto facial este mês.\n\nQuer que eu te mande os detalhes?'}/>
 
             {/* Confere as regras da Meta antes de enviar para aprovação */}
-            <PainelValidacao corpo={f.corpo} categoria={f.categoria} botaoTexto={f.botaoTexto}
+            <PainelValidacao corpo={f.corpo} categoria={f.categoria} botaoTexto={f.botaoTexto} rodape={f.rodape}
               onCorrigir={()=>{
                 const r=corrigirTemplateMeta(f.corpo);
                 setF(x=>({...x,corpo:r.texto}));
