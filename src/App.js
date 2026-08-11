@@ -3176,7 +3176,10 @@ const FINALIDADES_WA=[
 function ConfigWhatsApp(){
   const [numeros,setNumeros]=useState([]);
   const [carregando,setCarregando]=useState(true);
-  const [form,setForm]=useState({nome:'',token:'',finalidade:'comercial',numero:''});
+  const [form,setForm]=useState({nome:'',token:'',finalidade:'comercial',numero:'',
+    tipo:'oficial',provedor:'zapi',baseUrl:'',instancia:'',clientToken:''});
+  const [testandoQR,setTestandoQR]=useState(false);
+  const [destinoTeste,setDestinoTeste]=useState('');
   const [editId,setEditId]=useState(null);
   const [salvando,setSalvando]=useState(false);
   const [testando,setTestando]=useState(null);
@@ -3198,7 +3201,9 @@ function ConfigWhatsApp(){
   async function salvar(){
     setErro('');
     if(!form.nome.trim()){setErro('Dê um nome para identificar o número.');return;}
-    if(!form.token.trim()){setErro('Cole o token gerado no painel da Datafy.');return;}
+    if(!form.token.trim()){setErro(form.tipo==='qr'?'Cole o token do provedor.':'Cole o token gerado no painel da Datafy.');return;}
+    if(form.tipo==='qr'&&!form.instancia.trim()&&form.provedor!=='custom'){setErro('Informe a instância do provedor.');return;}
+    if(form.tipo==='qr'&&form.provedor!=='zapi'&&!form.baseUrl.trim()){setErro('Informe o endereço da API do provedor.');return;}
     setSalvando(true);
     try{
       const id=editId||'wa_'+Date.now();
@@ -3208,11 +3213,20 @@ function ConfigWhatsApp(){
         token:form.token.trim(),
         finalidade:form.finalidade,
         numero:form.numero.trim(),
+        tipo:form.tipo||'oficial',
+        ...(form.tipo==='qr'?{
+          provedor:form.provedor,
+          baseUrl:form.baseUrl.trim(),
+          instancia:form.instancia.trim(),
+          clientToken:form.clientToken.trim(),
+          // Marca quando o chip entrou, para a escada de aquecimento
+          conectadoEm:editId?undefined:new Date().toISOString(),
+        }:{}),
         ativo:true,
         ...(primeiro?{padrao:true}:{}),
         atualizadoEm:new Date().toISOString(),
       },{merge:true});
-      setForm({nome:'',token:'',finalidade:'comercial',numero:''});setEditId(null);
+      setForm({nome:'',token:'',finalidade:'comercial',numero:'',tipo:'oficial',provedor:'zapi',baseUrl:'',instancia:'',clientToken:''});setEditId(null);
     }catch(e){setErro('Erro ao salvar: '+e.message);}
     setSalvando(false);
   }
@@ -3338,8 +3352,90 @@ function ConfigWhatsApp(){
           </div>
         </div>
         <div style={{marginBottom:10}}>
-          <label style={lbl}>Token da Datafy</label>
-          <input style={{...fi,fontFamily:'monospace',fontSize:12}} value={form.token} onChange={e=>setForm(f=>({...f,token:e.target.value}))} placeholder="sk_live_..."/>
+          {/* Tipo de conexão: oficial (Datafy) ou QR Code (não oficial) */}
+          <div style={{marginBottom:10}}>
+            <label style={lbl}>Tipo de conexão</label>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {[{id:'oficial',l:'✅ API oficial',d:'Datafy · template e janela de 24h'},
+                {id:'qr',l:'📱 QR Code',d:'Não oficial · sem janela, com risco'}].map(x=>(
+                <button key={x.id} onClick={()=>setForm(f=>({...f,tipo:x.id}))}
+                  style={{padding:'7px 13px',borderRadius:7,cursor:'pointer',fontSize:11,textAlign:'left',
+                    border:`1px solid ${form.tipo===x.id?(x.id==='qr'?'#e67e22':'#25D366'):'#dde1e7'}`,
+                    background:form.tipo===x.id?(x.id==='qr'?'#fff8ee':'#f0fff4'):'#fff',
+                    color:form.tipo===x.id?(x.id==='qr'?'#b45309':'#276749'):'#7f8c8d'}}>
+                  <div style={{fontWeight:700}}>{x.l}</div>
+                  <div style={{fontSize:9,opacity:.85}}>{x.d}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.tipo==='qr'&&(
+            <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 12px',marginBottom:10,fontSize:10,color:'#c53030',lineHeight:1.6}}>
+              <strong>Conexão não oficial.</strong> Contraria os termos do WhatsApp e o número pode ser banido.
+              Use um <strong>chip dedicado</strong> — nunca o número comercial que está na Datafy, nem o celular pessoal de alguém.
+              Um mesmo número não pode estar nos dois lugares ao mesmo tempo.
+            </div>
+          )}
+
+          {form.tipo==='qr'&&(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+              <div>
+                <label style={lbl}>Provedor</label>
+                <select style={fi} value={form.provedor} onChange={e=>setForm(f=>({...f,provedor:e.target.value}))}>
+                  <option value="zapi">Z-API</option>
+                  <option value="evolution">Evolution API</option>
+                  <option value="zapster">Zapster</option>
+                  <option value="custom">Outro (configurar na mão)</option>
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Instância / ID</label>
+                <input style={fi} value={form.instancia} onChange={e=>setForm(f=>({...f,instancia:e.target.value}))} placeholder="ID da instância"/>
+              </div>
+              {form.provedor!=='zapi'&&(
+                <div style={{gridColumn:'1 / -1'}}>
+                  <label style={lbl}>Endereço da API</label>
+                  <input style={fi} value={form.baseUrl} onChange={e=>setForm(f=>({...f,baseUrl:e.target.value}))} placeholder="https://sua-evolution.com.br"/>
+                </div>
+              )}
+              {form.provedor==='zapi'&&(
+                <div style={{gridColumn:'1 / -1'}}>
+                  <label style={lbl}>Client-Token (segurança da conta Z-API)</label>
+                  <input style={{...fi,fontFamily:'monospace',fontSize:12}} value={form.clientToken} onChange={e=>setForm(f=>({...f,clientToken:e.target.value}))} placeholder="F..."/>
+                </div>
+              )}
+            </div>
+          )}
+
+          <label style={lbl}>{form.tipo==='qr'?'Token do provedor':'Token da Datafy'}</label>
+          <input style={{...fi,fontFamily:'monospace',fontSize:12}} value={form.token} onChange={e=>setForm(f=>({...f,token:e.target.value}))} placeholder={form.tipo==='qr'?'token da instância':'sk_live_...'}/>
+
+          {form.tipo==='qr'&&(
+            <div style={{display:'flex',gap:8,alignItems:'flex-end',marginTop:8,flexWrap:'wrap'}}>
+              <div style={{flex:1,minWidth:160}}>
+                <label style={lbl}>Testar enviando para</label>
+                <input style={fi} value={destinoTeste} onChange={e=>setDestinoTeste(mascaraTel(e.target.value))} placeholder="(00) 00000-0000" maxLength={15}/>
+              </div>
+              <button onClick={async()=>{
+                  if(!destinoTeste.trim()){alert('Informe um número para o teste.');return;}
+                  setTestandoQR(true);
+                  try{
+                    const r=await fetch(`${FUNCTIONS_URL}/qrTestar`,{
+                      method:'POST',headers:{'Content-Type':'application/json'},
+                      body:JSON.stringify({numero:{...form,tipo:'qr'},para:destinoTeste}),
+                    });
+                    const d=await r.json();
+                    alert(d.ok?'✅ Mensagem enviada. Confira o celular de destino.'
+                      :'❌ Não enviou.\n\n'+JSON.stringify(d.resposta||d.error||d).slice(0,400)+(d.dica?'\n\n'+d.dica:''));
+                  }catch(e){alert('Erro: '+e.message);}
+                  setTestandoQR(false);
+                }} disabled={testandoQR}
+                style={{padding:'8px 16px',borderRadius:6,border:'1px solid #e67e22',background:'#fff',color:'#b45309',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                {testandoQR?'Enviando...':'Testar conexão'}
+              </button>
+            </div>
+          )}
         </div>
         <div style={{marginBottom:10}}>
           <label style={lbl}>Número (opcional — o teste preenche sozinho)</label>
@@ -13157,6 +13253,8 @@ function NovaCampanha({leads,onFechar}){
     texto:'',midia:'',linkTexto:'',linkUrl:'',botoes:[],
     filtroStatus:'todos',filtroOrigem:'todas',filtroPorte:'todos',somenteComTelefone:true,
     limiteDiario:200,intervaloSegundos:4,quando:'agora',agendadaPara:'',finalidade:'comercial',
+    canal:'oficial',intervaloMin:30,intervaloMax:75,
+    janelaInicio:'09:00',janelaFim:'18:00',respeitarHorario:true,pararAposFalhas:5,
   });
   const [templates,setTemplates]=useState([]);
   const [mostrarCuidados,setMostrarCuidados]=useState(false);
@@ -13274,7 +13372,62 @@ function NovaCampanha({leads,onFechar}){
       </div>
 
       <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #c2185b'}}>
-        <div style={{fontSize:10,color:'#c2185b',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · O que enviar</div>
+        <div style={{fontSize:10,color:'#c2185b',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · Por onde e o que enviar</div>
+
+        {/* Canal: oficial respeita a janela de 24h, QR não — com o risco que vem junto */}
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
+          {[{id:'oficial',l:'✅ API oficial',d:'Template chega em todos'},
+            {id:'qr',l:'📱 QR Code',d:'Sem janela · risco de banimento'}].map(x=>(
+            <button key={x.id} onClick={()=>up('canal',x.id)}
+              style={{padding:'7px 13px',borderRadius:7,cursor:'pointer',fontSize:11,textAlign:'left',
+                border:`1px solid ${c.canal===x.id?(x.id==='qr'?'#e67e22':'#25D366'):'#dde1e7'}`,
+                background:c.canal===x.id?(x.id==='qr'?'#fff8ee':'#f0fff4'):'#fff',
+                color:c.canal===x.id?(x.id==='qr'?'#b45309':'#276749'):'#7f8c8d'}}>
+              <div style={{fontWeight:700}}>{x.l}</div>
+              <div style={{fontSize:9,opacity:.85}}>{x.d}</div>
+            </button>
+          ))}
+        </div>
+
+        {c.canal==='qr'&&(
+          <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'11px 13px',marginBottom:10}}>
+            <div style={{fontSize:10,color:'#c53030',fontWeight:700,lineHeight:1.6,marginBottom:9}}>
+              ⚠ Canal não oficial. O número pode ser banido. Os controles abaixo reduzem o padrão que o WhatsApp
+              identifica como robô, mas não eliminam o risco. Use sempre o chip dedicado.
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+              <div>
+                <label style={lbl}>Intervalo mínimo (s)</label>
+                <input style={fi} type="number" min="10" value={c.intervaloMin} onChange={e=>up('intervaloMin',e.target.value)}/>
+              </div>
+              <div>
+                <label style={lbl}>Intervalo máximo (s)</label>
+                <input style={fi} type="number" min="10" value={c.intervaloMax} onChange={e=>up('intervaloMax',e.target.value)}/>
+              </div>
+              <div>
+                <label style={lbl}>Parar após X falhas</label>
+                <input style={fi} type="number" min="2" value={c.pararAposFalhas} onChange={e=>up('pararAposFalhas',e.target.value)}/>
+              </div>
+              <div>
+                <label style={lbl}>Enviar das</label>
+                <input style={fi} type="time" value={c.janelaInicio} onChange={e=>up('janelaInicio',e.target.value)}/>
+              </div>
+              <div>
+                <label style={lbl}>Até</label>
+                <input style={fi} type="time" value={c.janelaFim} onChange={e=>up('janelaFim',e.target.value)}/>
+              </div>
+              <div>
+                <label style={lbl}>Teto do dia</label>
+                <input style={fi} type="number" value={c.limiteDiario} onChange={e=>up('limiteDiario',e.target.value)}/>
+              </div>
+            </div>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:7,lineHeight:1.6}}>
+              O tempo entre um envio e outro é <strong>sorteado</strong> dentro da faixa — ritmo cravado é assinatura de robô.
+              Chip novo começa com teto baixo e sobe ao longo dos dias, mesmo que você peça mais.
+              Sábado e domingo não dispara.
+            </div>
+          </div>
+        )}
         <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
           {[
             {id:'template',l:'📄 Template',d:'Inicia conversa'},
@@ -13293,7 +13446,7 @@ function NovaCampanha({leads,onFechar}){
           ))}
         </div>
 
-        {c.tipo!=='template'&&(
+        {c.tipo!=='template'&&c.canal!=='qr'&&(
           <div style={{background:'#fff8ee',border:'1px solid #fde68a',borderRadius:6,padding:'8px 11px',fontSize:11,color:'#b45309',marginBottom:10,lineHeight:1.5}}>
             ⚠ Só chega em quem te respondeu nas últimas 24 horas. Para os demais, use template.
           </div>
@@ -13479,7 +13632,7 @@ function NovaCampanha({leads,onFechar}){
         </div>
 
         {/* Conferência da janela de 24h antes de disparar, não depois de falhar */}
-        {c.tipo!=='template'&&alvos.length>0&&(()=>{
+        {c.tipo!=='template'&&c.canal!=='qr'&&alvos.length>0&&(()=>{
           const abertos=alvos.filter(l=>l.ultimaMensagemEm&&(Date.now()-new Date(l.ultimaMensagemEm).getTime())<86400000);
           const fora=alvos.length-abertos.length;
           if(fora===0)return(

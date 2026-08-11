@@ -2232,6 +2232,17 @@ async function enviarDaCampanha(campanha, lead, token) {
     return chamarDatafy({ token, path: '/messages/send/template', method: 'POST', body });
   }
 
+  // Canal QR: texto livre sem depender da janela de 24h, com o risco que ela
+  // existe para evitar. Só entra quando a campanha foi marcada assim.
+  if (campanha.canal === 'qr') {
+    const t = String(campanha.texto || '')
+      .replace(/\{\{nome\}\}/g, lead.nome || '')
+      .replace(/\{\{primeiro_nome\}\}/g, primeiroNome)
+      .replace(/\{\{solucao\}\}/g, lead.solucao || '')
+      .replace(/\{\{funcionarios\}\}/g, lead.funcionarios || '');
+    return enviarPorQR(campanha._numeroQR || {}, destino, t);
+  }
+
   // Texto livre — só vale para quem respondeu nas últimas 24h
   const texto = String(campanha.texto || '')
     .replace(/\{\{nome\}\}/g, lead.nome || '')
@@ -2279,6 +2290,14 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalh
   if (!reenviarFalhas && (c.status === 'concluida' || c.status === 'pausada')) return { enviados: 0, motivo: c.status };
 
   const numero = await obterNumeroDatafy({ numeroId: c.numeroId, finalidade: c.finalidade || 'comercial' });
+  const ehQR = c.canal === 'qr' || (numero.tipo || 'oficial') === 'qr';
+  if (ehQR) c._numeroQR = numero;
+
+  // No canal QR o disparo respeita horário comercial. Mensagem de madrugada
+  // multiplica a chance de bloqueio e de denúncia.
+  if (ehQR && c.respeitarHorario !== false && !dentroDaJanela(c.janelaInicio, c.janelaFim)) {
+    return { enviados: 0, motivo: 'fora da janela de horário' };
+  }
 
   // Quem ainda não recebeu. Com reenviarFalhas, quem falhou volta para a fila —
   // sem isso um erro passageiro travava o destinatário para sempre.
@@ -2292,7 +2311,7 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalh
   const hoje = new Date().toISOString().slice(0, 10);
   const enviadosHoje = (c.destinatarios || [])
     .filter(d => d.enviadoEm && d.enviadoEm.startsWith(hoje)).length;
-  const limiteDia = Number(c.limiteDiario) || 200;
+  const limiteDia = ehQR ? tetoDoDia(numero, c.limiteDiario) : (Number(c.limiteDiario) || 200);
   const podeHoje = Math.max(limiteDia - enviadosHoje, 0);
   if (podeHoje === 0) return { enviados: 0, motivo: 'limite diário atingido' };
 
@@ -2322,8 +2341,27 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalh
       atualizados[idx] = { ...alvo, erro: String(e.message).slice(0, 200) };
       falhas++;
     }
-    // Intervalo entre envios: disparo em rajada derruba a qualidade do número
-    await new Promise(r => setTimeout(r, (Number(c.intervaloSegundos) || 3) * 1000));
+    // Intervalo entre envios: rajada derruba a qualidade do número. No canal QR
+    // o tempo é sorteado dentro de uma faixa, porque ritmo cravado denuncia robô.
+    await new Promise(r => setTimeout(r,
+      ehQR ? intervaloSorteado(c.intervaloMin || 30, c.intervaloMax || 75)
+           : (Number(c.intervaloSegundos) || 3) * 1000));
+
+    // Freio de emergência: muitas falhas seguidas costuma ser sessão caída ou
+    // número já bloqueado. Continuar só piora.
+    if (ehQR) {
+      const ultimos = atualizados.filter(d => d.erro || d.enviadoEm).slice(-6);
+      const seguidas = (() => { let n = 0; for (let i = ultimos.length - 1; i >= 0; i--) { if (ultimos[i].erro) n++; else break; } return n; })();
+      if (seguidas >= (Number(c.pararAposFalhas) || 5)) {
+        await ref.set({
+          destinatarios: atualizados, status: 'pausada',
+          pausadaEm: new Date().toISOString(),
+          motivoPausa: `${seguidas} falhas seguidas — conferir a conexão do número antes de continuar`,
+        }, { merge: true });
+        console.error(`[campanha] pausada por ${seguidas} falhas seguidas`);
+        return { enviados: ok, falhas, pausada: true, motivo: `${seguidas} falhas seguidas` };
+      }
+    }
   }
 
   const restante = atualizados.filter(d => !d.enviadoEm && !d.erro).length;
@@ -3917,3 +3955,141 @@ exports.limparLeads = functions.runWith({ timeoutSeconds: 540 })
       res.status(500).json({ error: err.message });
     }
   });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANAL QR CODE — WhatsApp conectado por leitura de código
+//
+// Segundo caminho de envio, ao lado da API oficial. Serve para falar com quem
+// está FORA da janela de 24 horas sem depender de template aprovado.
+//
+// ╔═ O QUE VOCÊ PRECISA SABER ═══════════════════════════════════════════════
+// Conexão por QR é API NÃO OFICIAL: a ferramenta se passa por WhatsApp Web.
+// Isso contraria os termos de uso do WhatsApp e o número PODE SER BANIDO.
+// Use sempre um chip dedicado, nunca o número comercial nem o pessoal.
+// O que mais derruba número não é velocidade: é falar com muita gente que
+// nunca falou com você, ter pouca resposta e receber bloqueio ou denúncia.
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Não fixamos um fornecedor. Em config_whatsapp, o número com tipo 'qr' guarda
+// qual provedor usar, e cada um tem seu formato de chamada.
+
+function montarChamadaQR(numero, destino, texto) {
+  const prov = (numero.provedor || 'zapi').toLowerCase();
+  const base = String(numero.baseUrl || '').replace(/\/+$/, '');
+  const inst = numero.instancia || '';
+  const tok = numero.token || '';
+
+  if (prov === 'zapi') {
+    return {
+      url: `${base || 'https://api.z-api.io'}/instances/${inst}/token/${tok}/send-text`,
+      headers: numero.clientToken ? { 'Client-Token': numero.clientToken } : {},
+      body: { phone: destino, message: texto },
+    };
+  }
+  if (prov === 'evolution') {
+    return {
+      url: `${base}/message/sendText/${inst}`,
+      headers: { apikey: tok },
+      body: { number: destino, text: texto },
+    };
+  }
+  if (prov === 'zapster') {
+    return {
+      url: `${base || 'https://api.zapsterapi.com'}/v1/wa/messages`,
+      headers: { Authorization: `Bearer ${tok}` },
+      body: { instance_id: inst, recipient: destino, text: texto },
+    };
+  }
+  // custom: o corpo vem de um modelo JSON com marcadores
+  const modelo = numero.corpoModelo || '{"phone":"__DESTINO__","message":"__TEXTO__"}';
+  let corpo;
+  try {
+    corpo = JSON.parse(
+      modelo.replace(/__DESTINO__/g, destino).replace(/__TEXTO__/g, JSON.stringify(texto).slice(1, -1))
+    );
+  } catch (_) { corpo = { phone: destino, message: texto }; }
+  let headers = {};
+  try { headers = numero.headersExtras ? JSON.parse(numero.headersExtras) : {}; } catch (_) {}
+  return { url: `${base}${numero.caminho || ''}`, headers, body: corpo };
+}
+
+async function enviarPorQR(numero, para, texto) {
+  const destino = normalizarNumero(para);
+  const { url, headers, body } = montarChamadaQR(numero, destino, texto);
+  if (!url || /undefined|\/\/$/.test(url)) {
+    return { ok: false, status: 0, data: { error: 'Configuração do provedor QR incompleta.' } };
+  }
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+    const t = await resp.text();
+    let data; try { data = t ? JSON.parse(t) : {}; } catch (_) { data = { raw: t }; }
+    return { status: resp.status, ok: resp.ok, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: e.message } };
+  }
+}
+
+// Ponto único de envio: escolhe o caminho pelo tipo do número cadastrado
+async function enviarTextoWhats(numero, para, texto) {
+  if ((numero.tipo || 'oficial') === 'qr') return enviarPorQR(numero, para, texto);
+  return chamarDatafy({
+    token: numero.token, path: '/messages/send/text',
+    method: 'POST', body: { to: normalizarNumero(para), text: texto },
+  });
+}
+
+// ─── PROTEÇÕES DO DISPARO POR QR ─────────────────────────────────────────────
+// Nenhuma delas elimina o risco de banimento. Elas reduzem o padrão que o
+// WhatsApp usa para identificar automação.
+
+// Intervalo sorteado dentro de uma faixa. Ritmo exato é assinatura de robô:
+// 30 segundos cravados entre cada envio é mais suspeito que 25 a 70 variando.
+function intervaloSorteado(min, max) {
+  const a = Math.max(5, Number(min) || 30);
+  const b = Math.max(a, Number(max) || a * 2);
+  return Math.round((a + Math.random() * (b - a)) * 1000);
+}
+
+// Aquecimento: número novo que dispara 200 mensagens no primeiro dia cai.
+// A escada começa baixa e sobe conforme os dias de uso do chip.
+function tetoDoDia(numero, limiteConfigurado) {
+  const teto = Number(limiteConfigurado) || 100;
+  const desde = numero.conectadoEm ? new Date(numero.conectadoEm).getTime() : null;
+  if (!desde) return Math.min(teto, 20);
+  const dias = Math.floor((Date.now() - desde) / 86400000);
+  const escada = [20, 30, 50, 80, 120, 160, 200];
+  const permitido = dias >= escada.length ? teto : escada[dias];
+  return Math.min(teto, permitido);
+}
+
+function dentroDaJanela(inicio, fim) {
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const dia = agora.getDay();
+  if (dia === 0 || dia === 6) return false;                 // fim de semana fora
+  const hm = `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`;
+  return hm >= (inicio || '09:00') && hm <= (fim || '18:00');
+}
+
+// ─── TESTE DE CONEXÃO DO NÚMERO QR ───────────────────────────────────────────
+exports.qrTestar = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { numero, para, texto } = req.body || {};
+    if (!numero) throw new Error('Envie os dados do número.');
+    if (!para) throw new Error('Informe um número de destino para o teste.');
+    const r = await enviarPorQR(numero, para, texto || 'Teste de conexão do CRM Guion. Se você recebeu, está funcionando.');
+    res.status(200).json({
+      ok: r.ok,
+      status: r.status,
+      resposta: r.data,
+      dica: r.ok ? '' : 'Confira o provedor, a instância e o token. Muitos provedores exigem que o QR esteja lido e a sessão conectada.',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
