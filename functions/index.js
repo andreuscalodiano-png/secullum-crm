@@ -496,10 +496,41 @@ exports.metaLeads = functions.https.onRequest(async (req, res) => {
             atualizadoEm: new Date().toISOString(),
           };
 
-          // Mesmo id usado pelo sync da planilha: o lead que chega pelos dois
-          // caminhos cai no mesmo documento em vez de duplicar.
-          await db.collection('leads').doc('lead_meta_' + leadId).set(leadDoc, { merge: true });
-          console.log('[metaLeads] lead salvo:', leadId, campos.nome || '(sem nome)');
+          // ── Já existe esse contato? ────────────────────────────────────
+          // A mesma pessoa costuma chegar por dois caminhos: manda mensagem no
+          // WhatsApp e preenche o formulário do anúncio. Sem esta busca, o
+          // formulário criava um segundo lead — um só com nome e telefone, e
+          // outro completo. Aqui os dados do anúncio enriquecem o que já existe.
+          const telNovo = String(campos.telefone || '').replace(/\D/g, '');
+          const mailNovo = String(campos.email || '').toLowerCase().trim();
+          let alvo = null;
+
+          if (telNovo || mailNovo) {
+            const todos = await db.collection('leads').get();
+            todos.forEach(d => {
+              if (alvo) return;
+              const l = d.data();
+              if (String(l.leadgenId || '') === String(leadId)) { alvo = d.id; return; }
+              const t = String(l.telefone || '').replace(/\D/g, '');
+              if (telNovo && t && t.slice(-8) === telNovo.slice(-8)) { alvo = d.id; return; }
+              const e = String(l.email || '').toLowerCase().trim();
+              if (mailNovo && e && e === mailNovo) { alvo = d.id; }
+            });
+          }
+
+          if (alvo) {
+            // Não sobrescreve o que o vendedor já preencheu à mão: só completa
+            const limpo = Object.fromEntries(
+              Object.entries(leadDoc).filter(([k, v]) => v !== '' && v != null && k !== 'status' && k !== 'criadoEm')
+            );
+            await db.collection('leads').doc(alvo).set(limpo, { merge: true });
+            console.log('[metaLeads] lead existente enriquecido:', alvo, '←', leadId);
+          } else {
+            // Mesmo id usado pelo sync da planilha: quem chega pelos dois
+            // caminhos cai no mesmo documento em vez de duplicar.
+            await db.collection('leads').doc('lead_meta_' + leadId).set(leadDoc, { merge: true });
+            console.log('[metaLeads] lead novo:', leadId, campos.nome || '(sem nome)');
+          }
         }
       }
 
@@ -3053,6 +3084,606 @@ exports.iaExtrairConhecimento = functions.runWith({ timeoutSeconds: 300 })
       res.status(200).json({ ok: true, itens, pedacos: pedacos.length });
     } catch (err) {
       console.error('[iaExtrairConhecimento]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAILCHIMP — leads viram contatos na audiência, com tag
+//
+// A régua de 3, 5 e 7 dias NÃO fica aqui. Ela é montada uma vez no Customer
+// Journey do Mailchimp, disparada pela tag que este código aplica. Assim você
+// muda texto, arte e prazo lá dentro, sem depender de deploy — e o descadastro
+// fica sob responsabilidade deles, que é o certo para e-mail de marketing.
+//
+// Config em config/mailchimp:
+//   apiKey      chave da API. O sufixo dela (ex: -us21) é o datacenter
+//   audienceId  id da audiência (lista)
+//   tag         tag que dispara a jornada. Padrão: "sequencia-oferta"
+//   ativo       liga/desliga o envio automático
+//   status      "subscribed" (padrão) ou "pending" (com confirmação por e-mail)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const crypto = require('crypto');
+
+async function configMailchimp() {
+  const snap = await db.collection('config').doc('mailchimp').get();
+  const d = snap.exists ? snap.data() : {};
+  return {
+    apiKey: d.apiKey || '',
+    audienceId: d.audienceId || '',
+    tag: d.tag || 'sequencia-oferta',
+    ativo: d.ativo === true,
+    status: d.status === 'pending' ? 'pending' : 'subscribed',
+  };
+}
+
+// O datacenter vem depois do hífen na própria chave
+function dcDaChave(apiKey) {
+  const p = String(apiKey || '').split('-');
+  return p.length > 1 ? p[p.length - 1] : '';
+}
+
+async function chamarMailchimp({ apiKey, path, method = 'GET', body = null }) {
+  const dc = dcDaChave(apiKey);
+  if (!dc) throw new Error('Chave da API inválida — falta o sufixo do datacenter (ex: -us21).');
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Basic ' + Buffer.from('anystring:' + apiKey).toString('base64'),
+    },
+  };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const resp = await fetch(`https://${dc}.api.mailchimp.com/3.0${path}`, opts);
+  const texto = await resp.text();
+  let data;
+  try { data = texto ? JSON.parse(texto) : {}; } catch (_) { data = { raw: texto }; }
+  return { status: resp.status, ok: resp.ok, data };
+}
+
+function erroMailchimp(r) {
+  const d = r?.data || {};
+  const detalhe = Array.isArray(d.errors) && d.errors.length
+    ? d.errors.map(e => `${e.field}: ${e.message}`).join(' | ')
+    : '';
+  return [d.title, d.detail, detalhe].filter(Boolean).join(' — ') || `HTTP ${r?.status}`;
+}
+
+// Tags de segmentação: dá para filtrar a jornada por porte e solução lá dentro
+function tagsDoLead(lead, cfg) {
+  const t = [cfg.tag];
+  if (lead.origem) t.push(`origem: ${lead.origem}`);
+  if (lead.funcionarios) t.push(`porte: ${lead.funcionarios}`);
+  if (lead.solucao) t.push(`solucao: ${lead.solucao}`);
+  return t.filter(Boolean).slice(0, 8);
+}
+
+// Sobe (ou atualiza) o lead na audiência. O id do contato é o md5 do e-mail
+// em minúsculo — é assim que o Mailchimp identifica, então repetir não duplica.
+async function enviarLeadMailchimp(lead, cfgOpcional) {
+  const cfg = cfgOpcional || await configMailchimp();
+  if (!cfg.apiKey || !cfg.audienceId) return { pulou: 'não configurado' };
+
+  const email = String(lead.email || '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return { pulou: 'sem e-mail válido' };
+
+  const hash = crypto.createHash('md5').update(email).digest('hex');
+  const nome = String(lead.nome || '').trim();
+  const partes = nome.split(/\s+/);
+
+  const corpo = {
+    email_address: email,
+    status_if_new: cfg.status,
+    merge_fields: {
+      FNAME: partes[0] || '',
+      LNAME: partes.slice(1).join(' '),
+      ...(lead.telefone ? { PHONE: String(lead.telefone) } : {}),
+    },
+    tags: tagsDoLead(lead, cfg),
+  };
+
+  const r = await chamarMailchimp({
+    apiKey: cfg.apiKey,
+    path: `/lists/${cfg.audienceId}/members/${hash}`,
+    method: 'PUT',
+    body: corpo,
+  });
+
+  if (!r.ok) {
+    // Merge field que não existe na audiência não pode derrubar o cadastro
+    if (r.status === 400 && JSON.stringify(r.data).includes('merge')) {
+      const r2 = await chamarMailchimp({
+        apiKey: cfg.apiKey,
+        path: `/lists/${cfg.audienceId}/members/${hash}`,
+        method: 'PUT',
+        body: { email_address: email, status_if_new: cfg.status, tags: corpo.tags },
+      });
+      if (r2.ok) return { ok: true, id: hash, aviso: 'enviado sem os campos extras' };
+      return { erro: erroMailchimp(r2) };
+    }
+    return { erro: erroMailchimp(r) };
+  }
+
+  // A tag precisa ser aplicada à parte para o Journey enxergar como "tag added"
+  await chamarMailchimp({
+    apiKey: cfg.apiKey,
+    path: `/lists/${cfg.audienceId}/members/${hash}/tags`,
+    method: 'POST',
+    body: { tags: corpo.tags.map(name => ({ name, status: 'active' })) },
+  });
+
+  return { ok: true, id: hash };
+}
+
+async function registrarSyncMailchimp(leadId, resultado) {
+  const dados = { mailchimpEm: new Date().toISOString() };
+  if (resultado.ok) { dados.mailchimpId = resultado.id; dados.mailchimpErro = ''; }
+  else if (resultado.erro) { dados.mailchimpErro = String(resultado.erro).slice(0, 300); }
+  else return;
+  try { await db.collection('leads').doc(leadId).set(dados, { merge: true }); } catch (_) {}
+}
+
+// ─── Lead novo entra na audiência sozinho ────────────────────────────────────
+exports.mailchimpNovoLead = functions.firestore
+  .document('leads/{id}')
+  .onCreate(async snap => {
+    try {
+      const cfg = await configMailchimp();
+      if (!cfg.ativo) return null;
+      const lead = { id: snap.id, ...snap.data() };
+      const r = await enviarLeadMailchimp(lead, cfg);
+      if (r.pulou) { console.log('[mailchimp] pulou', snap.id, '-', r.pulou); return null; }
+      await registrarSyncMailchimp(snap.id, r);
+      console.log(`[mailchimp] ${lead.nome || snap.id}: ${r.ok ? 'na audiência' : 'ERRO ' + r.erro}`);
+    } catch (e) {
+      console.error('[mailchimp] onCreate:', e.message);
+    }
+    return null;
+  });
+
+// ─── Lead que ganhou e-mail depois também entra ──────────────────────────────
+// O contato do WhatsApp entra sem e-mail e só recebe o endereço quando o
+// formulário da Meta chega. Sem isto, ele nunca iria para a audiência.
+exports.mailchimpLeadAtualizado = functions.firestore
+  .document('leads/{id}')
+  .onUpdate(async change => {
+    try {
+      const antes = change.before.data() || {};
+      const depois = change.after.data() || {};
+      const emailNovo = String(depois.email || '').trim().toLowerCase();
+      const emailAntigo = String(antes.email || '').trim().toLowerCase();
+      if (!emailNovo || emailNovo === emailAntigo) return null;   // e-mail não mudou
+      if (depois.mailchimpId && emailNovo === emailAntigo) return null;
+
+      const cfg = await configMailchimp();
+      if (!cfg.ativo) return null;
+      const r = await enviarLeadMailchimp({ id: change.after.id, ...depois }, cfg);
+      if (r.pulou) return null;
+      await registrarSyncMailchimp(change.after.id, r);
+      console.log(`[mailchimp] atualizado ${depois.nome || change.after.id}: ${r.ok ? 'ok' : r.erro}`);
+    } catch (e) {
+      console.error('[mailchimp] onUpdate:', e.message);
+    }
+    return null;
+  });
+
+// ─── Testar conexão e listar audiências ──────────────────────────────────────
+exports.mailchimpProxy = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { acao = 'testar', apiKey: chaveAvulsa = '', audienceId = '' } = req.body || {};
+    const cfg = await configMailchimp();
+    const apiKey = chaveAvulsa || cfg.apiKey;
+    if (!apiKey) throw new Error('Informe a chave da API do Mailchimp.');
+
+    if (acao === 'testar') {
+      const r = await chamarMailchimp({ apiKey, path: '/ping' });
+      if (!r.ok) throw new Error(erroMailchimp(r));
+      const l = await chamarMailchimp({ apiKey, path: '/lists?count=100&fields=lists.id,lists.name,lists.stats.member_count' });
+      res.status(200).json({
+        ok: true,
+        saude: r.data?.health_status || 'ok',
+        audiencias: (l.data?.lists || []).map(x => ({ id: x.id, nome: x.name, membros: x.stats?.member_count ?? 0 })),
+      });
+      return;
+    }
+
+    if (acao === 'jornadas') {
+      // Lista as jornadas para você conferir qual está ligada na tag
+      const r = await chamarMailchimp({ apiKey, path: '/customer-journeys/journeys?count=50' });
+      res.status(r.ok ? 200 : r.status).json(r.ok ? { ok: true, jornadas: r.data } : { error: erroMailchimp(r) });
+      return;
+    }
+
+    if (acao === 'enviarLead') {
+      // Reenvio de um lead só, usado pelo botão da ficha quando deu erro
+      const { leadId } = req.body || {};
+      if (!leadId) throw new Error('Informe o lead.');
+      const d = await db.collection('leads').doc(leadId).get();
+      if (!d.exists) throw new Error('Lead não encontrado.');
+      const r = await enviarLeadMailchimp({ id: d.id, ...d.data() }, { ...cfg, apiKey });
+      if (r.pulou) { res.status(200).json({ ok: false, motivo: r.pulou }); return; }
+      await registrarSyncMailchimp(leadId, r);
+      if (r.erro) { res.status(200).json({ ok: false, motivo: r.erro }); return; }
+      res.status(200).json({ ok: true, aviso: r.aviso || '' });
+      return;
+    }
+
+    if (acao === 'sincronizar') {
+      // Sobe de uma vez os leads que já estão na base
+      const lista = audienceId ? { ...cfg, apiKey, audienceId } : { ...cfg, apiKey };
+      if (!lista.audienceId) throw new Error('Escolha a audiência antes de sincronizar.');
+      const snap = await db.collection('leads').get();
+      let enviados = 0, pulados = 0, falhas = 0;
+      const erros = [];
+      for (const d of snap.docs) {
+        const lead = { id: d.id, ...d.data() };
+        const r = await enviarLeadMailchimp(lead, lista);
+        if (r.pulou) { pulados++; continue; }
+        if (r.ok) { enviados++; await registrarSyncMailchimp(d.id, r); }
+        else { falhas++; erros.push(`${lead.nome || d.id}: ${r.erro}`); await registrarSyncMailchimp(d.id, r); }
+        await new Promise(x => setTimeout(x, 120));   // respiro para não tomar rate limit
+      }
+      await db.collection('sync_log').add({
+        tipo: 'mailchimp', enviados, pulados, falhas,
+        erros: erros.slice(0, 20), data: new Date().toISOString(),
+      });
+      res.status(200).json({ ok: true, enviados, pulados, falhas, erros: erros.slice(0, 10) });
+      return;
+    }
+
+    throw new Error('Ação desconhecida: ' + acao);
+  } catch (err) {
+    console.error('[mailchimp] proxy:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RAIO-X DO SISTEMA — relatório com leitura de IA, por WhatsApp
+//
+// Roda no horário configurado, levanta os números de verdade das coleções e
+// entrega para a OpenAI comentar. A IA NÃO consulta nada e NÃO inventa: ela
+// recebe os números já apurados e só interpreta — destaque, alerta e dica.
+//
+// Config em config/raiox:
+//   ativo, frequencia (diario|dias_uteis|semanal), horario, diaSemana
+//   destinatarios [ids de usuarios], finalidade (número do WhatsApp)
+//   secoes {leads, comercial, implantacao, suporte, automacoes, qualidade}
+//   instrucaoExtra (o que você quer que a IA olhe com atenção)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function configRaioX() {
+  const snap = await db.collection('config').doc('raiox').get();
+  const d = snap.exists ? snap.data() : {};
+  return {
+    ativo: d.ativo === true,
+    frequencia: d.frequencia || 'dias_uteis',
+    horario: d.horario || '18:00',
+    diaSemana: Number(d.diaSemana ?? 1),
+    destinatarios: Array.isArray(d.destinatarios) ? d.destinatarios : [],
+    finalidade: d.finalidade || 'interno',
+    numeroId: d.numeroId || null,
+    secoes: {
+      leads: true, comercial: true, implantacao: true,
+      suporte: true, automacoes: true, qualidade: true,
+      ...(d.secoes || {}),
+    },
+    instrucaoExtra: d.instrucaoExtra || '',
+    ultimoEnvioEm: d.ultimoEnvioEm || '',
+  };
+}
+
+const DIA_MS = 86400000;
+function ehHoje(iso, ref) {
+  if (!iso) return false;
+  return String(iso).slice(0, 10) === ref;
+}
+function diasDesde(iso) {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return null;
+  return Math.floor((Date.now() - t) / DIA_MS);
+}
+
+// Levanta os números do dia. Tudo aqui é contagem real, sem opinião.
+async function coletarRaioX(cfg) {
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+
+  const [leadSnap, cliSnap, implSnap, solSnap, usuSnap, campSnap, gatSnap] = await Promise.all([
+    db.collection('leads').get(),
+    db.collection('clientes').get(),
+    db.collection('implantacoes').get(),
+    db.collection('solicitacoes').get(),
+    db.collection('usuarios').get(),
+    db.collection('campanhas').get(),
+    db.collection('gatilhos_log').get(),
+  ]);
+  const arr = s => { const a = []; s.forEach(d => a.push({ id: d.id, ...d.data() })); return a; };
+  const leads = arr(leadSnap), clientes = arr(cliSnap), impl = arr(implSnap);
+  const sols = arr(solSnap), usuarios = arr(usuSnap), camps = arr(campSnap);
+  const logs = arr(gatSnap);
+
+  const dados = { data: hoje };
+  const nomeUsu = id => (usuarios.find(u => u.id === id) || {}).nome || '';
+
+  if (cfg.secoes.leads) {
+    const doDia = leads.filter(l => ehHoje(l.criadoEm, hoje));
+    const semDono = leads.filter(l => !l.responsavelId);
+    const parados = leads.filter(l => {
+      const d = diasDesde(l.etapaEm || l.criadoEm);
+      return d !== null && d >= 3 && !['convertido', 'perdido'].includes(l.status);
+    });
+    const porOrigem = {};
+    doDia.forEach(l => { const o = l.origem || 'Sem origem'; porOrigem[o] = (porOrigem[o] || 0) + 1; });
+    const porResponsavel = {};
+    leads.filter(l => l.responsavelId).forEach(l => {
+      const n = l.responsavelNome || nomeUsu(l.responsavelId) || '—';
+      porResponsavel[n] = (porResponsavel[n] || 0) + 1;
+    });
+    dados.leads = {
+      total_na_base: leads.length,
+      novos_hoje: doDia.length,
+      novos_hoje_por_origem: porOrigem,
+      sem_responsavel: semDono.length,
+      sem_responsavel_ha_mais_de_1_dia: semDono.filter(l => (diasDesde(l.criadoEm) || 0) >= 1).length,
+      parados_3_dias_ou_mais: parados.length,
+      carteira_por_vendedor: porResponsavel,
+      convertidos_hoje: leads.filter(l => l.status === 'convertido' && ehHoje(l.atualizadoEm, hoje)).length,
+      perdidos_hoje: leads.filter(l => l.status === 'perdido' && ehHoje(l.atualizadoEm, hoje)).length,
+      reunioes_marcadas_hoje: leads.filter(l => l.apresData === hoje).length,
+    };
+  }
+
+  if (cfg.secoes.comercial) {
+    const novosHoje = clientes.filter(c => ehHoje(c.criadoEm, hoje));
+    const fatHoje = clientes.filter(c => c.status === 'Faturado' && ehHoje(c.atualizadoEm, hoje));
+    const soma = (l, k) => l.reduce((s, c) => s + (Number(c[k]) || 0), 0);
+    const porVendedor = {};
+    novosHoje.forEach(c => { const v = c.vendedor || '—'; porVendedor[v] = (porVendedor[v] || 0) + 1; });
+    dados.comercial = {
+      clientes_na_base: clientes.length,
+      novos_clientes_hoje: novosHoje.length,
+      novos_clientes_hoje_por_vendedor: porVendedor,
+      valor_total_dos_novos_hoje: soma(novosHoje, 'total'),
+      faturados_hoje: fatHoje.length,
+      valor_faturado_hoje: soma(fatHoje, 'total'),
+      aguardando_faturamento: clientes.filter(c => ['Aguardando', 'Boletos emitidos', 'Links enviados'].includes(c.status)).length,
+      inadimplentes: clientes.filter(c => c.status === 'Inadimplente').length,
+      faturado_parcial: clientes.filter(c => c.status === 'Faturado parcial').length,
+      cancelados_no_mes: clientes.filter(c => c.status === 'Cancelado' && String(c.atualizadoEm || '').slice(0, 7) === hoje.slice(0, 7)).length,
+    };
+  }
+
+  if (cfg.secoes.implantacao) {
+    const atrasadas = impl.filter(i => i.prazo && i.prazo < hoje && i.etapa !== 'processo_finalizado');
+    const paradas = impl.filter(i => {
+      const d = diasDesde(i.etapaData);
+      return d !== null && d >= 7 && i.etapa !== 'processo_finalizado';
+    });
+    const porEtapa = {};
+    impl.filter(i => i.etapa !== 'processo_finalizado').forEach(i => {
+      porEtapa[i.etapa || 'sem etapa'] = (porEtapa[i.etapa || 'sem etapa'] || 0) + 1;
+    });
+    dados.implantacao = {
+      em_andamento: impl.filter(i => i.etapa !== 'processo_finalizado').length,
+      por_etapa: porEtapa,
+      atrasadas: atrasadas.length,
+      nomes_das_atrasadas: atrasadas.slice(0, 5).map(i => i.clienteNome || i.id),
+      paradas_7_dias_ou_mais: paradas.length,
+      sem_prazo: impl.filter(i => !i.prazo && i.etapa !== 'processo_finalizado').length,
+      sem_responsavel: impl.filter(i => !i.responsavelId && i.etapa !== 'processo_finalizado').length,
+    };
+  }
+
+  if (cfg.secoes.suporte) {
+    const abertas = sols.filter(s => s.status !== 'Concluída' && s.status !== 'Cancelada');
+    const porPrior = {};
+    abertas.forEach(s => { porPrior[s.prioridade || '—'] = (porPrior[s.prioridade || '—'] || 0) + 1; });
+    dados.suporte = {
+      abertas: abertas.length,
+      abertas_hoje: sols.filter(s => ehHoje(s.criadoEm, hoje)).length,
+      concluidas_hoje: sols.filter(s => s.status === 'Concluída' && ehHoje(s.atualizadoEm, hoje)).length,
+      por_prioridade: porPrior,
+      sem_responsavel: abertas.filter(s => !s.responsavelId).length,
+      abertas_ha_mais_de_5_dias: abertas.filter(s => (diasDesde(s.criadoEm) || 0) >= 5).length,
+    };
+  }
+
+  if (cfg.secoes.automacoes) {
+    const logHoje = logs.filter(l => ehHoje(l.data, hoje));
+    const campAtivas = camps.filter(c => c.status === 'enviando' || c.status === 'agendada');
+    dados.automacoes = {
+      mensagens_automaticas_hoje: logHoje.length,
+      falhas_de_envio_hoje: logHoje.filter(l => !l.sucesso).length,
+      exemplos_de_falha: logHoje.filter(l => !l.sucesso).slice(0, 3).map(l => `${l.gatilhoNome || l.evento}: ${String(l.erro || '').slice(0, 90)}`),
+      campanhas_em_andamento: campAtivas.length,
+      campanhas_com_falha: camps.filter(c => (c.falhas || 0) > 0).map(c => ({ nome: c.nome, enviados: c.enviados || 0, falhas: c.falhas })).slice(0, 5),
+      leads_com_erro_no_mailchimp: leads.filter(l => l.mailchimpErro).length,
+    };
+  }
+
+  if (cfg.secoes.qualidade) {
+    dados.qualidade_do_cadastro = {
+      leads_sem_telefone: leads.filter(l => !l.telefone).length,
+      leads_sem_email: leads.filter(l => !l.email).length,
+      leads_sem_porte_informado: leads.filter(l => !l.funcionarios).length,
+      clientes_sem_cnpj: clientes.filter(c => !c.cnpj).length,
+      usuarios_sem_celular: usuarios.filter(u => u.status !== 'revogado' && !u.celular).map(u => u.nome || u.email),
+      usuarios_sem_sala_de_reuniao: usuarios.filter(u => u.status !== 'revogado' && !u.salaReuniao).map(u => u.nome || u.email),
+      possiveis_leads_duplicados: (() => {
+        const porTel = {};
+        leads.forEach(l => {
+          const t = String(l.telefone || '').replace(/\D/g, '').slice(-8);
+          if (t) porTel[t] = (porTel[t] || 0) + 1;
+        });
+        return Object.values(porTel).filter(n => n > 1).length;
+      })(),
+    };
+  }
+
+  return dados;
+}
+
+// A IA recebe os números prontos e só interpreta
+async function comentarRaioX(dados, cfg, destinatario) {
+  if (!OPENAI_KEY) return null;
+
+  const sistema = [
+    'Você é o analista de dados da Guion Informática, revenda Secullum de sistemas de controle de ponto.',
+    'Recebe os números reais do CRM de hoje e escreve um raio-x curto no WhatsApp para o time.',
+    '',
+    'REGRAS DE CONTEÚDO',
+    '- Use APENAS os números que estão no JSON. Nunca invente, estime nem projete.',
+    '- Se um número for zero ou o dado não existir, simplesmente não fale dele.',
+    '- Vá do mais importante para o menos. O que exige ação hoje vem primeiro.',
+    '- Compare e relacione: lead sem responsável parado há dias é mais grave que lead novo sem responsável.',
+    '- Aponte causa provável quando os números sugerirem, mas deixe claro que é leitura sua.',
+    '',
+    'FORMATO (WhatsApp, não markdown)',
+    '- Negrito com *asterisco simples*. Nunca use #, ## nem tabelas.',
+    '- Comece com uma linha de título com a data.',
+    '- Depois, no máximo 4 blocos curtos. Cada bloco: um título em negrito e 2 a 4 linhas.',
+    '- Use no máximo 5 emojis na mensagem inteira, sempre no começo da linha.',
+    '- Termine com *O que eu faria hoje* e 2 ou 3 ações concretas, na ordem de prioridade.',
+    '- No máximo 20 linhas no total. Se sobrar assunto, corte o menos importante.',
+    '- Escreva como um colega analisando o dia, não como relatório corporativo.',
+    cfg.instrucaoExtra ? `\nORIENTAÇÃO DA CASA\n${cfg.instrucaoExtra}` : '',
+  ].filter(Boolean).join('\n');
+
+  const pedido = [
+    destinatario ? `Este relatório vai para ${destinatario}.` : '',
+    'Números de hoje:',
+    '```json',
+    JSON.stringify(dados, null, 1),
+    '```',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 900, temperature: 0.6,
+        messages: [{ role: 'system', content: sistema }, { role: 'user', content: pedido }],
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { console.error('[raiox] OpenAI:', data?.error?.message); return null; }
+    return (data.choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    console.error('[raiox] erro IA:', e.message);
+    return null;
+  }
+}
+
+// Texto de reserva, caso a IA não responda: os números crus, sem leitura
+function raioXSemIA(dados) {
+  const l = [`📊 *Raio-x do sistema* — ${new Date(dados.data + 'T12:00:00').toLocaleDateString('pt-BR')}`, ''];
+  const bloco = (titulo, obj) => {
+    if (!obj) return;
+    const linhas = Object.entries(obj)
+      .filter(([, v]) => v && !(Array.isArray(v) && !v.length) && !(typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length))
+      .map(([k, v]) => `• ${k.replace(/_/g, ' ')}: ${Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ') : v}`);
+    if (linhas.length) l.push(`*${titulo}*`, ...linhas.slice(0, 8), '');
+  };
+  bloco('Leads', dados.leads);
+  bloco('Comercial', dados.comercial);
+  bloco('Implantação', dados.implantacao);
+  bloco('Suporte', dados.suporte);
+  bloco('Automações', dados.automacoes);
+  bloco('Qualidade do cadastro', dados.qualidade_do_cadastro);
+  return l.join('\n').trim();
+}
+
+async function gerarEEnviarRaioX({ apenasGerar, paraUsuarioId } = {}) {
+  const cfg = await configRaioX();
+  const dados = await coletarRaioX(cfg);
+
+  const usnap = await db.collection('usuarios').get();
+  const usuarios = [];
+  usnap.forEach(d => usuarios.push({ id: d.id, ...d.data() }));
+
+  const alvos = (paraUsuarioId ? [paraUsuarioId] : cfg.destinatarios)
+    .map(id => usuarios.find(u => u.id === id))
+    .filter(u => u && u.celular && u.status !== 'revogado');
+
+  const texto = (await comentarRaioX(dados, cfg, alvos[0]?.nome?.split(' ')[0])) || raioXSemIA(dados);
+
+  if (apenasGerar) return { texto, dados, destinatarios: alvos.map(u => u.nome || u.email) };
+
+  if (!alvos.length) {
+    console.log('[raiox] nenhum destinatário com celular cadastrado');
+    return { texto, enviados: 0, motivo: 'sem destinatário' };
+  }
+
+  let enviados = 0;
+  for (const u of alvos) {
+    try {
+      const numero = await obterNumeroDatafy({ numeroId: cfg.numeroId, finalidade: cfg.finalidade });
+      const r = await chamarDatafy({
+        token: numero.token, path: '/messages/send/text',
+        method: 'POST', body: { to: normalizarNumero(u.celular), text: texto },
+      });
+      await db.collection('gatilhos_log').add({
+        gatilhoNome: 'Raio-x do sistema', evento: 'raiox',
+        destinatario: u.nome || u.email, destino: normalizarNumero(u.celular),
+        mensagem: texto.slice(0, 500), comIA: true, sucesso: r.ok,
+        erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
+        data: new Date().toISOString(),
+      });
+      if (r.ok) enviados++;
+    } catch (e) {
+      console.error('[raiox] envio para', u.nome, ':', e.message);
+    }
+  }
+  return { texto, enviados, total: alvos.length };
+}
+
+// ─── Execução agendada ───────────────────────────────────────────────────────
+exports.raioXAgendado = functions.runWith({ timeoutSeconds: 300 }).pubsub
+  .schedule('every 15 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const cfg = await configRaioX();
+      if (!cfg.ativo) return null;
+
+      const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+      const dia = agora.getDay();
+
+      if (cfg.frequencia === 'dias_uteis' && (dia === 0 || dia === 6)) return null;
+      if (cfg.frequencia === 'semanal' && dia !== cfg.diaSemana) return null;
+      if ((cfg.ultimoEnvioEm || '').slice(0, 10) === hoje) return null;   // uma vez por dia
+
+      const minutos = t => { const [h, m] = String(t).split(':'); return (+h || 0) * 60 + (+m || 0); };
+      const atraso = (agora.getHours() * 60 + agora.getMinutes()) - minutos(cfg.horario);
+      if (atraso < 0 || atraso > 60) return null;   // janela de 1h após o horário
+
+      await db.collection('config').doc('raiox').set({ ultimoEnvioEm: new Date().toISOString() }, { merge: true });
+      const r = await gerarEEnviarRaioX();
+      console.log(`[raiox] enviado para ${r.enviados}/${r.total || 0}`);
+    } catch (e) {
+      console.error('[raiox] erro geral:', e.message, e.stack);
+    }
+    return null;
+  });
+
+// ─── Gerar agora (prévia ou envio manual) ────────────────────────────────────
+exports.raioXAgora = functions.runWith({ timeoutSeconds: 300 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { apenasGerar = true, paraUsuarioId = null } = req.body || {};
+      const r = await gerarEEnviarRaioX({ apenasGerar, paraUsuarioId });
+      res.status(200).json({ ok: true, ...r });
+    } catch (err) {
+      console.error('[raiox] agora:', err.message);
       res.status(500).json({ error: err.message });
     }
   });

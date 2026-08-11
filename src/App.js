@@ -841,6 +841,217 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
 }
 
 // ─── CONFIG: TEXTO DO CONTRATO ───────────────────────────────────────────────
+// ─── CONFIG: RAIO-X DO SISTEMA ───────────────────────────────────────────────
+// Relatório com leitura de IA, enviado por WhatsApp no horário escolhido.
+// Os números são apurados pelo servidor; a IA só interpreta o que recebe.
+const SECOES_RAIOX=[
+  {id:'leads',       l:'Leads',                 d:'Entradas do dia, sem responsável, parados na etapa, carteira por vendedor, reuniões marcadas.'},
+  {id:'comercial',   l:'Comercial',             d:'Clientes novos, faturados do dia e valores, aguardando faturamento, inadimplentes.'},
+  {id:'implantacao', l:'Implantação',           d:'Em andamento por etapa, atrasadas, paradas há mais de 7 dias, sem prazo.'},
+  {id:'suporte',     l:'Solicitações',          d:'Abertas e concluídas no dia, por prioridade, sem responsável, arrastando há dias.'},
+  {id:'automacoes',  l:'Automações',            d:'Mensagens disparadas, falhas de envio, campanhas em andamento, erros no Mailchimp.'},
+  {id:'qualidade',   l:'Qualidade do cadastro', d:'Leads sem telefone ou porte, clientes sem CNPJ, usuários sem celular, possíveis duplicados.'},
+];
+
+function ConfigRaioX({usuarios}){
+  const [c,setC]=useState({
+    ativo:false,frequencia:'dias_uteis',horario:'18:00',diaSemana:1,
+    destinatarios:[],finalidade:'interno',instrucaoExtra:'',
+    secoes:{leads:true,comercial:true,implantacao:true,suporte:true,automacoes:true,qualidade:true},
+  });
+  const [carregando,setCarregando]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const [salvo,setSalvo]=useState(false);
+  const [previa,setPrevia]=useState(null);
+  const [gerando,setGerando]=useState(false);
+  const [erro,setErro]=useState('');
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setC(x=>({...x,[k]:v}));setSalvo(false);};
+  const upSecao=(k)=>{const s={...(c.secoes||{})};s[k]=s[k]===false;up('secoes',s);};
+
+  const elegiveis=(usuarios||[]).filter(u=>u.id&&u.status!=='revogado');
+  const semCelular=elegiveis.filter(u=>!u.celular);
+
+  useEffect(()=>{
+    const unsub=onSnapshot(doc(db,'config','raiox'),d=>{
+      if(d.exists())setC(x=>({...x,...d.data(),secoes:{...x.secoes,...(d.data().secoes||{})}}));
+      setCarregando(false);
+    });
+    return()=>unsub();
+  },[]);
+
+  async function salvar(){
+    setSalvando(true);
+    try{
+      await setDoc(doc(db,'config','raiox'),{...c,atualizadoEm:new Date().toISOString(),atualizadoPor:auth.currentUser?.email||'—'},{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){alert('Erro: '+e.message);}
+    setSalvando(false);
+  }
+
+  async function gerar(enviar){
+    setGerando(true);setPrevia(null);setErro('');
+    try{
+      const eu=elegiveis.find(u=>u.email===auth.currentUser?.email);
+      const r=await fetch(`${FUNCTIONS_URL}/raioXAgora`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({apenasGerar:!enviar,paraUsuarioId:enviar?(eu?.id||null):null}),
+      });
+      const d=await r.json();
+      if(d.error)setErro(d.error);
+      else setPrevia({texto:d.texto,enviados:d.enviados});
+    }catch(e){setErro(e.message);}
+    setGerando(false);
+  }
+
+  function toggleDest(id){
+    const a=c.destinatarios||[];
+    up('destinatarios',a.includes(id)?a.filter(x=>x!==id):[...a,id]);
+  }
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#16a085',marginBottom:4,textTransform:'uppercase'}}>🩻 Raio-x do sistema</div>
+      <div style={{fontSize:11,color:'#7f8c8d',marginBottom:12,lineHeight:1.6}}>
+        No horário escolhido, o sistema levanta os números do dia, pede uma leitura à IA e manda por WhatsApp
+        para quem você marcar. <strong>Os números são apurados pelo servidor</strong> — a IA só interpreta o que recebe,
+        então ela não tem como inventar dado.
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
+        <div>
+          <label style={lbl}>Quando</label>
+          <select style={fi} value={c.frequencia} onChange={e=>up('frequencia',e.target.value)}>
+            <option value="diario">Todo dia</option>
+            <option value="dias_uteis">Dias úteis</option>
+            <option value="semanal">Uma vez por semana</option>
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Horário</label>
+          <select style={fi} value={c.horario} onChange={e=>up('horario',e.target.value)}>
+            {Array.from({length:48},(_,i)=>`${String(Math.floor(i/2)).padStart(2,'0')}:${i%2===0?'00':'30'}`)
+              .map(h=><option key={h} value={h}>{h}</option>)}
+          </select>
+        </div>
+        <div>
+          {c.frequencia==='semanal'
+            ?<>
+              <label style={lbl}>Dia da semana</label>
+              <select style={fi} value={c.diaSemana} onChange={e=>up('diaSemana',Number(e.target.value))}>
+                {['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'].map((d,i)=><option key={i} value={i}>{d}</option>)}
+              </select>
+            </>
+            :<>
+              <label style={lbl}>Enviar pelo número</label>
+              <select style={fi} value={c.finalidade} onChange={e=>up('finalidade',e.target.value)}>
+                {FINALIDADES_WA.map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
+            </>}
+        </div>
+      </div>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Quem recebe</label>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {elegiveis.map(u=>{
+            const sel=(c.destinatarios||[]).includes(u.id);
+            const sem=!u.celular;
+            return(
+              <button key={u.id} onClick={()=>toggleDest(u.id)} disabled={sem}
+                title={sem?'Sem celular cadastrado em Usuários e acessos':''}
+                style={{padding:'5px 13px',borderRadius:16,cursor:sem?'not-allowed':'pointer',fontSize:11,fontWeight:700,
+                  border:`1px solid ${sel?'#16a085':'#dde1e7'}`,
+                  background:sel?'#16a085':'#fff',color:sel?'#fff':sem?'#c0c0c0':'#7f8c8d',opacity:sem?.6:1}}>
+                {u.nome||u.email}{sem?' ⚠':''}
+              </button>
+            );
+          })}
+        </div>
+        {semCelular.length>0&&(
+          <div style={{fontSize:10,color:'#c0392b',marginTop:5}}>
+            ⚠ Sem celular cadastrado: {semCelular.map(u=>u.nome||u.email).join(', ')}
+          </div>
+        )}
+      </div>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>O que entra no relatório</label>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+          {SECOES_RAIOX.map(s=>{
+            const on=(c.secoes||{})[s.id]!==false;
+            return(
+              <label key={s.id} style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 10px',borderRadius:7,cursor:'pointer',
+                background:on?'#f0fffd':'#f8f9fa',border:`1px solid ${on?'#a7f3e4':'#e8eaed'}`}}>
+                <input type="checkbox" checked={on} onChange={()=>upSecao(s.id)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+                <div>
+                  <div style={{fontWeight:700,fontSize:11,color:'#2c3e50'}}>{s.l}</div>
+                  <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.5,marginTop:1}}>{s.d}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>O que a IA deve olhar com atenção (opcional)</label>
+        <textarea style={{...fi,minHeight:60,resize:'vertical',lineHeight:1.6}} value={c.instrucaoExtra}
+          onChange={e=>up('instrucaoExtra',e.target.value)}
+          placeholder="Ex: cobrar quando lead do Meta Ads ficar mais de 1 dia sem responsável. Avisar sempre que houver implantação atrasada. Comentar a performance de cada vendedor."/>
+      </div>
+
+      <label style={{display:'flex',alignItems:'flex-start',gap:9,padding:'11px 13px',borderRadius:8,cursor:'pointer',marginBottom:12,
+        background:c.ativo?'#f0fffd':'#f8f9fa',border:`1px solid ${c.ativo?'#a7f3e4':'#e8eaed'}`}}>
+        <input type="checkbox" checked={!!c.ativo} onChange={()=>up('ativo',!c.ativo)} style={{marginTop:2,cursor:'pointer',flexShrink:0}}/>
+        <div>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>Enviar automaticamente</div>
+          <div style={{fontSize:10,color:'#95a5a6',lineHeight:1.6,marginTop:2}}>
+            Dispara uma vez por dia, na janela de uma hora após o horário escolhido. Se o sistema estiver fora do ar
+            nesse intervalo, ele não manda atrasado no dia seguinte.
+          </div>
+        </div>
+      </label>
+
+      {erro&&(
+        <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'10px 13px',marginBottom:12,fontSize:11,color:'#c53030'}}>
+          {erro}
+        </div>
+      )}
+
+      {previa&&(
+        <div style={{background:'#f8f9fa',border:'1px solid #e8eaed',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+          <div style={{fontSize:10,color:'#16a085',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>
+            Como vai chegar no WhatsApp{previa.enviados?` · enviado para ${previa.enviados}`:''}
+          </div>
+          <div style={{background:'#dcf8c6',borderRadius:8,padding:'11px 13px',fontSize:12,color:'#2c3e50',lineHeight:1.7,whiteSpace:'pre-wrap',maxWidth:460}}>
+            {previa.texto}
+          </div>
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'8px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':'#16a085',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {salvando?'Salvando...':salvo?'✓ Salvo!':'Salvar'}
+        </button>
+        <button onClick={()=>gerar(false)} disabled={gerando}
+          style={{padding:'8px 16px',borderRadius:7,border:'1px solid #16a085',background:'#fff',color:'#16a085',cursor:'pointer',fontSize:12,fontWeight:700}}>
+          {gerando?'Analisando...':'👁 Ver como fica agora'}
+        </button>
+        <button onClick={()=>gerar(true)} disabled={gerando}
+          style={{padding:'8px 16px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:600}}>
+          Mandar no meu WhatsApp
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── CONFIG: MAILCHIMP ───────────────────────────────────────────────────────
 // A régua de dias mora no Customer Journey do Mailchimp. Aqui só ligamos a
 // conta, escolhemos a audiência e a tag que dispara a jornada.
@@ -7637,7 +7848,8 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
         <><div style={sec}><ConfigKanban/></div>
         <div style={sec}><ConfigEtapasLead/></div>
         <div style={sec}><ConfigContrato/></div>
-        <div style={sec}><ConfigMailchimp/></div></>
+        <div style={sec}><ConfigMailchimp/></div>
+        <div style={sec}><ConfigRaioX usuarios={usuarios}/></div></>
       )}
 
       {/* Horário de Funcionamento — agenda de instalações */}
