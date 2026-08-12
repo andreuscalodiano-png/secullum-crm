@@ -3533,6 +3533,8 @@ const EVENTOS_GATILHO=[
    vars:['cliente','contato','telefone','email','total','vendedor','data','hora']},
   {id:'agendado',          label:'Por horário (relatório)', icone:'⏰', cor:'#e67e22',
    vars:['data','hora']},
+  {id:'campanha_concluida',label:'Campanha terminou',       icone:'📊', cor:'#c2185b',
+   vars:['campanha','tipo','canal','publico','mensagem','total','enviados','falhas','fora_janela','outras_falhas','taxa','motivos','lista_enviados','lista_falhas','criada_por','relatorio','data','hora']},
   {id:'reuniao_lembrete',  label:'Lembrete de reunião',     icone:'📅', cor:'#2980b9',
    vars:['lead','telefone','email','data','hora','minutos_restantes','local','observacoes','solucao','funcionarios','responsavel','link','total_reunioes']},
 ];
@@ -3558,6 +3560,40 @@ const OPERADORES_GATILHO=[
   {id:'preenchido',label:'está preenchido'},
   {id:'vazio',     label:'está vazio'},
 ];
+
+// Tom de voz das mensagens escritas pela IA — vale para todos os gatilhos
+function CampoTomDeVoz(){
+  const [tom,setTom]=useState('');
+  const [salvo,setSalvo]=useState(false);
+  const PADRAO='Profissional e amigável. Direto, cordial, sem formalidade excessiva e sem parecer texto de robô.';
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'config','mensagens'),d=>{ if(d.exists())setTom(d.data().tomDeVoz||''); });
+    return()=>u();
+  },[]);
+  async function salvar(){
+    await setDoc(doc(db,'config','mensagens'),{tomDeVoz:tom.trim(),atualizadoEm:new Date().toISOString()},{merge:true});
+    setSalvo(true);setTimeout(()=>setSalvo(false),2000);
+  }
+  return(
+    <div style={{background:'#faf5ff',border:'1px solid #e9d5ff',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+      <div style={{fontSize:10,color:'#6b21a8',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>
+        ✨ Tom de voz das mensagens com IA
+      </div>
+      <div style={{fontSize:10,color:'#7f8c8d',marginBottom:7,lineHeight:1.6}}>
+        Vale para todos os gatilhos que usam IA. Ela também recebe as últimas cinco mensagens que escreveu em cada
+        gatilho, com ordem de não repetir a abertura nem a estrutura — assim o texto de amanhã sai diferente do de hoje.
+      </div>
+      <textarea value={tom} onChange={e=>{setTom(e.target.value);setSalvo(false);}} placeholder={PADRAO}
+        style={{padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box',minHeight:56,resize:'vertical',lineHeight:1.6}}/>
+      <div style={{display:'flex',alignItems:'center',gap:9,marginTop:7}}>
+        <button onClick={salvar} style={{padding:'6px 15px',borderRadius:6,border:'none',background:salvo?'#27ae60':'#6b21a8',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
+          {salvo?'✓ Salvo!':'Salvar tom'}
+        </button>
+        <span style={{fontSize:10,color:'#95a5a6'}}>Em branco usa o padrão: {PADRAO.slice(0,45)}...</span>
+      </div>
+    </div>
+  );
+}
 
 function ConfigGatilhos({usuarios}){
   const [gatilhos,setGatilhos]=useState([]);
@@ -3648,6 +3684,8 @@ function ConfigGatilhos({usuarios}){
         Dispara mensagens de WhatsApp automaticamente quando algo acontece no sistema, ou em um horário fixo.
         Roda no servidor — funciona com o CRM fechado.
       </div>
+
+      <CampoTomDeVoz/>
 
       {gatilhos.length===0&&(
         <div style={{fontSize:12,color:'#7f8c8d',textAlign:'center',padding:'20px',background:'#f8f9fa',borderRadius:8,marginBottom:12}}>
@@ -3833,6 +3871,15 @@ function EditorGatilho({gatilho,usuarios,onFechar}){
         <select style={{...fi,marginBottom:(ehAgendado||ehReuniao)?10:0}} value={g.evento} onChange={e=>{up('evento',e.target.value);up('condicoes',[]);}}>
           {EVENTOS_GATILHO.map(e=><option key={e.id} value={e.id}>{e.icone} {e.label}</option>)}
         </select>
+
+        {g.evento==='campanha_concluida'&&(
+          <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginTop:4}}>
+            Dispara sozinho quando a última mensagem da campanha sai. Use a variável
+            <code style={{background:'#fdf2f8',padding:'1px 6px',borderRadius:4,margin:'0 3px',fontSize:10}}>{'{{relatorio}}'}</code>
+            para receber o bloco pronto — entregues, falhas, motivos agrupados e a lista de quem recebeu e quem não recebeu.
+            Se preferir montar do seu jeito, as outras variáveis estão logo abaixo.
+          </div>
+        )}
 
         {ehReuniao&&(
           <div>

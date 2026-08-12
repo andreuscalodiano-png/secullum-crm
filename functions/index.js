@@ -1036,6 +1036,9 @@ function montarVariaveis(evento, dados, extra = {}) {
       responsavel: c.responsavelNome || '', aberta_por: c.criadoPor || '',
     };
   }
+  if (evento === 'campanha_concluida') {
+    return { ...base, ...c };   // já vem pronto de montarDadosCampanha
+  }
   if (evento === 'lead_criado') {
     return {
       ...base,
@@ -1152,6 +1155,7 @@ async function processarGatilhos(evento, dados, extra = {}) {
         const vars = montarVariaveis(evento, dados, extra);
         const textoFixo = aplicarVariaveis(g.mensagem, vars);
         const destinos = await resolverDestinos(g.destino, dados, extra);
+        let ultimoTextoIA = '';
 
         if (!destinos.length) {
           console.log(`[gatilho] "${g.nome}" sem destinatário válido`);
@@ -1171,6 +1175,8 @@ async function processarGatilhos(evento, dados, extra = {}) {
                 dados: vars,
                 destinatario: (d.nome || '').split(' ')[0],
                 textoFallback: textoFixo,
+                historico: g.ultimasMensagens || [],
+                tom: await tomDeVoz(),
               })
             : textoFixo;
 
@@ -1188,6 +1194,7 @@ async function processarGatilhos(evento, dados, extra = {}) {
             method: 'POST',
             body: { to: destinoNum, text: texto },
           });
+          if (g.usarIA) ultimoTextoIA = texto;
           await db.collection('gatilhos_log').add({
             gatilhoId: g.id, gatilhoNome: g.nome, evento,
             destinatario: d.nome, destino: destinoNum,
@@ -1202,6 +1209,9 @@ async function processarGatilhos(evento, dados, extra = {}) {
         await db.collection('gatilhos').doc(g.id).set({
           ultimoDisparo: new Date().toISOString(),
           totalDisparos: (g.totalDisparos || 0) + 1,
+          ...(g.usarIA && ultimoTextoIA
+            ? { ultimasMensagens: [...(g.ultimasMensagens || []), ultimoTextoIA].slice(-5) }
+            : {}),
         }, { merge: true });
       } catch (errG) {
         console.error(`[gatilho] erro em "${g.nome}":`, errG.message);
@@ -1387,13 +1397,17 @@ exports.gatilhosAgendados = functions.pubsub
         for (const d of destinos) {
           // A IA escreve só a abertura; a lista do relatório vai como está
           let texto;
+          let aberturaGerada = '';
           if (g.usarIA) {
             const abertura = await gerarMensagemIA({
               instrucao: aplicarVariaveis(g.instrucaoIA || g.mensagem || 'Avise que segue o relatório abaixo.', montarVariaveis('agendado', {})),
               dados: { itens_no_relatorio: (relatorio.match(/^•/gm) || []).length },
               destinatario: (d.nome || '').split(' ')[0],
               textoFallback: aberturaFixa,
+              historico: g.ultimasMensagens || [],   // para não repetir o de ontem
+              tom: await tomDeVoz(),
             });
+            aberturaGerada = abertura;
             texto = relatorio ? `${abertura}\n\n${relatorio}` : abertura;
           } else {
             texto = relatorio ? (aberturaFixa ? `${aberturaFixa}\n\n${relatorio}` : relatorio) : aberturaFixa;
@@ -1418,6 +1432,11 @@ exports.gatilhosAgendados = functions.pubsub
             erro: r.ok ? '' : JSON.stringify(r.data).slice(0, 300),
             data: new Date().toISOString(),
           });
+        }
+        // Guarda o que a IA escreveu, para o próximo disparo sair diferente
+        if (g.usarIA && aberturaGerada) {
+          const hist = [...(g.ultimasMensagens || []), aberturaGerada].slice(-5);
+          await db.collection('gatilhos').doc(g.id).set({ ultimasMensagens: hist }, { merge: true });
         }
         await db.collection('gatilhos').doc(g.id).set({
           ultimoDisparo: new Date().toISOString(),
@@ -1527,7 +1546,7 @@ REGRAS RÍGIDAS
 - Não assine a mensagem.
 - Responda somente com o texto final da mensagem, sem aspas e sem comentários.`;
 
-async function gerarMensagemIA({ instrucao, dados, destinatario, textoFallback }) {
+async function gerarMensagemIA({ instrucao, dados, destinatario, textoFallback, historico, tom }) {
   const key = OPENAI_KEY;
   if (!key) return textoFallback || instrucao;
   try {
@@ -1545,6 +1564,15 @@ async function gerarMensagemIA({ instrucao, dados, destinatario, textoFallback }
       ``,
       `DADOS DISPONÍVEIS:`,
       contexto || '(sem dados adicionais)',
+      // Sem isso a IA escreve do zero todo dia e repete a construção por acaso.
+      ...((historico || []).length ? [
+        ``,
+        `VOCÊ JÁ ESCREVEU ASSIM NOS ÚLTIMOS DIAS — NÃO REPITA:`,
+        ...historico.slice(-5).map((h, i) => `${i + 1}. ${String(h).slice(0, 220)}`),
+        ``,
+        `Escreva de um jeito claramente diferente destes: outra abertura, outra ordem das informações, outras palavras. O conteúdo é o mesmo, a forma não pode ser.`,
+      ] : []),
+      ...(tom ? ['', `TOM DE VOZ:`, tom] : []),
     ].join('\n');
 
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -2285,6 +2313,75 @@ async function enviarDaCampanha(campanha, lead, token) {
 }
 
 // Processa a fila de uma campanha, respeitando o limite diário
+// Transforma o resultado da campanha em números e listas prontas para leitura
+function montarDadosCampanha(c) {
+  const dest = c.destinatarios || [];
+  const enviados = dest.filter(d => d.enviadoEm);
+  const falhas = dest.filter(d => d.erro);
+
+  // Separa o que a Meta barrou pela janela de 24h do resto
+  const ehJanela = e => /24|window|re-?engag|outside|template|não .*sess|no .*session/i.test(String(e || ''));
+  const foraJanela = falhas.filter(d => ehJanela(d.erro));
+  const outrasFalhas = falhas.filter(d => !ehJanela(d.erro));
+
+  // Agrupa os motivos, tirando número e id para erros iguais caírem juntos
+  const grupos = {};
+  falhas.forEach(d => {
+    const chave = String(d.erro).replace(/\b\d{8,}\b/g, '…').slice(0, 140);
+    grupos[chave] = (grupos[chave] || 0) + 1;
+  });
+  const motivos = Object.entries(grupos)
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, n]) => `• ${n}× ${m}`)
+    .join('\n');
+
+  const lista = (arr, limite = 25) => {
+    if (!arr.length) return '';
+    const nomes = arr.slice(0, limite).map(d => `• ${d.nome || d.telefone}`);
+    if (arr.length > limite) nomes.push(`• …e mais ${arr.length - limite}`);
+    return nomes.join('\n');
+  };
+
+  const publico = [
+    c.filtroStatus && c.filtroStatus !== 'todos' ? `etapa ${c.filtroStatus}` : '',
+    c.filtroOrigem && c.filtroOrigem !== 'todas' ? `origem ${c.filtroOrigem}` : '',
+    c.filtroPorte && c.filtroPorte !== 'todos' ? `porte ${c.filtroPorte}` : '',
+  ].filter(Boolean).join(', ') || 'todos os leads';
+
+  const total = dest.length;
+  const taxa = total ? Math.round((enviados.length / total) * 100) : 0;
+
+  return {
+    campanha: c.nome || '(sem nome)',
+    tipo: c.tipo === 'template' ? `template ${c.template || ''}` : c.tipo,
+    canal: c.canal === 'qr' ? 'QR Code' : 'API oficial',
+    publico,
+    mensagem: String(c.texto || c.template || '').slice(0, 300),
+    total: String(total),
+    enviados: String(enviados.length),
+    falhas: String(falhas.length),
+    fora_janela: String(foraJanela.length),
+    outras_falhas: String(outrasFalhas.length),
+    taxa: `${taxa}%`,
+    motivos: motivos || '(sem falhas)',
+    lista_enviados: lista(enviados),
+    lista_falhas: lista(falhas),
+    criada_por: c.criadaPor || '—',
+    // Bloco pronto, para quem não quiser montar o texto na mão
+    relatorio: [
+      `📊 *${c.nome || 'Campanha'}* — resultado`,
+      `Público: ${publico} · ${c.canal === 'qr' ? 'QR Code' : 'API oficial'}`,
+      ``,
+      `✅ Entregues: ${enviados.length} de ${total} (${taxa}%)`,
+      falhas.length ? `❌ Falharam: ${falhas.length}` : '',
+      foraJanela.length ? `⏰ Fora da janela de 24h: ${foraJanela.length}` : '',
+      falhas.length ? `\n*Motivos*\n${motivos}` : '',
+      enviados.length ? `\n*Receberam*\n${lista(enviados)}` : '',
+      falhas.length ? `\n*Não receberam*\n${lista(falhas)}` : '',
+    ].filter(Boolean).join('\n'),
+  };
+}
+
 async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalhas = false) {
   const ref = db.collection('campanhas').doc(campanhaId);
   const snap = await ref.get();
@@ -2376,6 +2473,16 @@ async function processarCampanha(campanhaId, limiteNesteCiclo = 40, reenviarFalh
     ultimoEnvioEm: new Date().toISOString(),
     ...(restante === 0 ? { concluidaEm: new Date().toISOString() } : {}),
   }, { merge: true });
+
+  // Campanha fechou: avisa quem acompanha, com o resultado mastigado
+  if (restante === 0 && !c.relatorioEnviadoEm) {
+    try {
+      await ref.set({ relatorioEnviadoEm: new Date().toISOString() }, { merge: true });
+      await processarGatilhos('campanha_concluida', montarDadosCampanha({ ...c, destinatarios: atualizados }));
+    } catch (e) {
+      console.error('[campanha] relatório final:', e.message);
+    }
+  }
 
   return { enviados: ok, falhas, restante };
 }
@@ -3507,6 +3614,17 @@ exports.mailchimpProxy = functions.https.onRequest(async (req, res) => {
 //   secoes {leads, comercial, implantacao, suporte, automacoes, qualidade}
 //   instrucaoExtra (o que você quer que a IA olhe com atenção)
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Tom de voz das mensagens automáticas. Global, com padrão sensato.
+async function tomDeVoz() {
+  try {
+    const s = await db.collection('config').doc('mensagens').get();
+    const d = s.exists ? s.data() : {};
+    return d.tomDeVoz || 'Profissional e amigável. Direto, cordial, sem formalidade excessiva e sem parecer texto de robô.';
+  } catch (_) {
+    return 'Profissional e amigável.';
+  }
+}
 
 async function configRaioX() {
   const snap = await db.collection('config').doc('raiox').get();
