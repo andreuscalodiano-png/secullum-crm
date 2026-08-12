@@ -5283,7 +5283,7 @@ function StatCard({icon,label,value,sub,color,pct,onClick}){
 }
 
 // --- CARD DETALHE (IMPLANTAÇÃO) -----------------------------------------------
-function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente,horarioFuncionamento}){
+function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,onDesfazer}){
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const [local,setLocal]=useState({etapa:'venda_fechada',prazo:'',comentarios:[],processos:[],arquivos:[],...implData});
   const [comentario,setComentario]=useState('');
@@ -5291,6 +5291,28 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
   const [enviandoArquivo,setEnviandoArquivo]=useState(false);
   const [erroArquivo,setErroArquivo]=useState('');
   const [removendoIdx,setRemovendoIdx]=useState(null);
+  const [desfazendo,setDesfazendo]=useState(false);
+
+  // "Fechar Venda" clicado por engano cria cliente e implantação de uma vez.
+  // Sem uma saída, alguém teria que apagar nos dois lugares na mão — e o
+  // orçamento ficaria marcado como fechado para sempre.
+  async function desfazer(){
+    const temTrabalho=(local.comentarios||[]).length>0
+      ||(local.arquivos||[]).length>0
+      ||String(local.descricao||'').trim().length>0;
+    const aviso=temTrabalho
+      ? '⚠️ ATENÇÃO: esta implantação já tem comentários, arquivos ou descrição preenchida.\n\n'
+      : '';
+    if(!window.confirm(
+      `${aviso}Desfazer a criação de "${cliente.nome}"?\n\n`
+      +'• O cliente e a implantação saem das telas\n'
+      +'• Uma cópia fica guardada, nada é perdido de verdade\n'
+      +'• O orçamento de origem volta para "Enviado"'
+    ))return;
+    setDesfazendo(true);
+    try{ await onDesfazer(cliente,local); }
+    catch(e){ alert('Não consegui desfazer: '+e.message); setDesfazendo(false); }
+  }
 
   function salvar(){onSalvar(cliente.id,local);setSaved(true);setTimeout(()=>setSaved(false),1800);}
 
@@ -5465,13 +5487,26 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
         <button onClick={salvar} style={{width:'100%',padding:'12px',borderRadius:6,border:'none',background:saved?'#27ae60':'#2c3e50',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:8,transition:'background .3s'}}>
           <i className={`ti ${saved?'ti-check':'ti-device-floppy'}`}/>{saved?'Salvo! Kanban atualizado.':'Salvar e atualizar Kanban'}
         </button>
+
+        {onDesfazer&&(
+          <div style={{marginTop:16,paddingTop:12,borderTop:'1px dashed #e8eaed',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+            <button onClick={desfazer} disabled={desfazendo}
+              style={{padding:'7px 14px',borderRadius:6,border:'1px solid #feb2b2',background:'#fff5f5',color:'#c53030',cursor:desfazendo?'default':'pointer',fontSize:11,fontWeight:700}}>
+              {desfazendo?'Desfazendo...':'↩ Desfazer criação'}
+            </button>
+            <span style={{fontSize:10,color:'#95a5a6',flex:1,minWidth:180,lineHeight:1.5}}>
+              Para quando a venda foi fechada por engano. Remove o cliente e esta implantação,
+              guarda uma cópia e devolve o orçamento para "Enviado".
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 // --- KANBAN VIEW --------------------------------------------------------------
-function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,buscaGlobal,etapasConfig}){
+function KanbanView({todos,implantacoes,onSalvarImpl,onDesfazerImpl,currentUser,usuarios,onAbrirCliente,horarioFuncionamento,buscaGlobal,etapasConfig}){
   const ETAPAS_USE=(etapasConfig||ETAPAS_DEFAULT).filter(e=>e.ativo!==false);
   const [subAba,setSubAba]=useState('kanban');
   const [clienteKanban,setClienteKanban]=useState(null);
@@ -5512,7 +5547,8 @@ function KanbanView({todos,implantacoes,onSalvarImpl,currentUser,usuarios,onAbri
   const fi={padding:'6px 10px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   if(clienteKanban){
-    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios} onAbrirCliente={onAbrirCliente} horarioFuncionamento={horarioFuncionamento}/>;
+    return <CardDetalhe cliente={clienteKanban} implData={getImpl(clienteKanban.id)} onSalvar={(id,data)=>{onSalvarImpl(id,data,getImpl(clienteKanban.id),clienteKanban);setClienteKanban(c=>({...c,impl:data}));}} onVoltar={()=>setClienteKanban(null)} currentUser={currentUser} usuarios={usuarios} onAbrirCliente={onAbrirCliente} horarioFuncionamento={horarioFuncionamento}
+      onDesfazer={onDesfazerImpl?async(cli,impl)=>{await onDesfazerImpl(cli,impl);setClienteKanban(null);}:null}/>;
   }
 
   const subAbas=[
@@ -18545,6 +18581,27 @@ export default function App(){
     setPage('orcamentos');
   }
 
+  // Desfaz um "Fechar Venda" feito por engano. Nada é apagado de verdade: o
+  // cliente e a implantação vão para clientes_removidos antes de sair das telas,
+  // e o orçamento de origem volta a ficar disponível para negociação.
+  async function desfazerImplantacao(cliente,impl){
+    if(!cliente?.id)throw new Error('Cliente sem identificador.');
+    await setDoc(doc(db,'clientes_removidos',cliente.id),{
+      cliente,implantacao:impl||null,
+      removidoEm:new Date().toISOString(),
+      removidoPor:auth.currentUser?.email||'—',
+      motivo:'Venda fechada por engano',
+    });
+    if(cliente.orcamentoId){
+      await setDoc(doc(db,'orcamentos',cliente.orcamentoId),{
+        status:'enviado',atualizadoEm:new Date().toISOString(),
+        obsInterna:`Venda desfeita em ${new Date().toLocaleString('pt-BR')} por ${auth.currentUser?.email||'—'}.`,
+      },{merge:true}).catch(()=>{});
+    }
+    await deleteDoc(doc(db,'implantacoes',cliente.id)).catch(()=>{});
+    await deleteDoc(doc(db,'clientes',cliente.id));
+  }
+
   async function salvarCliente(dados){
     const ref=doc(collection(db,'clientes'));
     await setDoc(ref,{...dados,id:ref.id});
@@ -18860,7 +18917,7 @@ export default function App(){
           {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} orcServicos={orcServicos} perfil={perfil} usuarios={usuarios}/>}
 
           {/* IMPLANTAÇÃO */}
-          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca} etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}/>}
+          {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} onDesfazerImpl={desfazerImplantacao} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca} etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}/>}
 
           {/* CONFIGURAÇÕES */}
           {!clienteSel&&page==='config'&&<ConfigView usuarios={usuarios} currentUser={userProfile} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} menuOrder={menuOrder} onMenuOrderChange={order=>{setMenuOrder(order);}} orcServicos={orcServicos} orcFormas={orcFormas} orcTemplates={orcTemplates} asaasHabilitado={asaasHabilitado} onToggleAsaas={alternarAsaas} todos={todos}/>}
