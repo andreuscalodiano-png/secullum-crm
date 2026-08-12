@@ -14656,17 +14656,26 @@ function EditorResposta({resposta,etapas,onFechar}){
   );
 }
 
-function AbaConversas({leads}){
+function AbaConversas({leads,leadInicial,onConsumirInicial}){
   const [sel,setSel]=useState(null);
   const [texto,setTexto]=useState('');
   const [enviando,setEnviando]=useState(false);
   const fimRef=useRef(null);
 
+  // Inclui quem já tem conversa OU já foi contatado por aqui: lead novo sem
+  // mensagem nenhuma não polui a lista, mas some se você abriu ele pelo botão.
   const comConversa=(leads||[])
     .filter(l=>(l.conversa||[]).length)
     .sort((a,b)=>new Date(b.ultimaMensagemEm||b.atualizadoEm||0)-new Date(a.ultimaMensagemEm||a.atualizadoEm||0));
 
   const lead=sel?(leads||[]).find(l=>l.id===sel.id)||sel:null;
+
+  // Abre já na conversa quando o vendedor chega pelo botão do WhatsApp na lista
+  useEffect(()=>{
+    if(!leadInicial)return;
+    const l=(leads||[]).find(x=>x.id===leadInicial);
+    if(l){setSel(l);onConsumirInicial?.();}
+  },[leadInicial,leads]);
 
   useEffect(()=>{fimRef.current?.scrollIntoView({behavior:'smooth'});},[lead?.conversa?.length]);
 
@@ -14727,6 +14736,34 @@ function AbaConversas({leads}){
           })}
           <div ref={fimRef}/>
         </div>
+
+        {(()=>{
+          const j=janelaAberta(lead);
+          if(j.aberta){
+            const h=Math.floor(j.restam/36e5), m=Math.round((j.restam%36e5)/6e4);
+            const apertado=j.restam<6*36e5;
+            return(
+              <div style={{padding:'7px 18px',fontSize:10,fontWeight:600,
+                background:apertado?'#fff8ee':'#f0fff4',color:apertado?'#b45309':'#276749',
+                borderTop:'1px solid #e8eaed'}}>
+                {apertado?'⏳':'✅'} Janela aberta — resta {h>0?`${h}h `:''}{m}min para responder livremente.
+              </div>
+            );
+          }
+          return(
+            <div style={{padding:'9px 18px',fontSize:10,lineHeight:1.6,
+              background:'#fff5f5',color:'#c53030',borderTop:'1px solid #e8eaed'}}>
+              <strong>Janela de 24 horas fechada.</strong> {j.nunca
+                ?'Este contato nunca escreveu para o número comercial.'
+                :'Faz mais de 24 horas que ele não escreve.'} Mensagem livre vai falhar —
+              só entrega por template aprovado. Mandar mensagem não reabre a janela; só a resposta dele reabre.
+              {lead.telefone&&(
+                <> <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
+                  style={{color:'#128C7E',fontWeight:700,whiteSpace:'nowrap'}}>Abrir no WhatsApp Web →</a></>
+              )}
+            </div>
+          );
+        })()}
 
         <div style={{padding:'12px 18px',borderTop:'1px solid #e8eaed',display:'flex',gap:8,alignItems:'flex-end'}}>
           <textarea value={texto} onChange={e=>setTexto(e.target.value)}
@@ -15711,6 +15748,27 @@ const ETAPAS_LEAD_DEFAULT=[
   {id:'perdido',     label:'Perdido',     color:'#e74c3c',ordem:4,padrao:false,ativo:true},
 ];
 
+// A etapa que representa "já falei com ele". Preferimos a de id 'contatado';
+// se o cliente renomeou as etapas, cai na segunda ativa da fila.
+function etapaDeContato(etapas){
+  const ativas=(etapas||[]).filter(e=>e.ativo!==false).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+  return ativas.find(e=>e.id==='contatado')||ativas[1]||ativas[0]||null;
+}
+
+// Quando o cliente falou pela última vez. É isso, e só isso, que mantém aberta
+// a janela de 24 horas da Meta — mensagem nossa não reabre nada.
+function ultimaEntradaCliente(lead){
+  const msgs=(lead?.conversa||[]).filter(m=>m.de==='cliente'&&m.data);
+  if(!msgs.length)return null;
+  return new Date(msgs[msgs.length-1].data);
+}
+function janelaAberta(lead){
+  const d=ultimaEntradaCliente(lead);
+  if(!d||isNaN(d.getTime()))return {aberta:false,restam:0,nunca:true};
+  const passou=Date.now()-d.getTime();
+  return {aberta:passou<864e5,restam:Math.max(0,864e5-passou),nunca:false};
+}
+
 function useEtapasLead(){
   const [etapas,setEtapas]=useState(ETAPAS_LEAD_DEFAULT);
   useEffect(()=>{
@@ -15956,7 +16014,7 @@ function SeloResponsavel({lead,compacto}){
 }
 
 // ─── KANBAN DE LEADS ─────────────────────────────────────────────────────────
-function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
+function KanbanLeads({leads,etapas,usuarios,onAbrir,onConversar,busca}){
   const [dragId,setDragId]=useState(null);
   // Arrastar termina em clique em alguns navegadores; sem esta trava,
   // soltar o card no destino abriria a ficha sem querer.
@@ -16097,12 +16155,12 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,busca}){
                           {conversa>0&&<span style={{fontSize:10,color:'#7f8c8d'}}>💬 {conversa}</span>}
                           <SeloMailchimp lead={lead}/>
                           {lead.telefone&&(
-                            <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
-                              onClick={e=>{e.stopPropagation();registrarEventoLead(lead,'whatsapp','Contato via WhatsApp');}}
-                              title="Chamar no WhatsApp"
-                              style={{width:20,height:20,borderRadius:'50%',background:'#25D366',display:'flex',alignItems:'center',justifyContent:'center',textDecoration:'none',flexShrink:0}}>
+                            <button
+                              onClick={e=>{e.stopPropagation();onConversar?.(lead);}}
+                              title="Assumir e conversar aqui"
+                              style={{width:20,height:20,borderRadius:'50%',background:'#1EA952',border:'none',padding:0,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-                            </a>
+                            </button>
                           )}
                           <div style={{flex:1}}/>
                           <span style={{fontSize:9,color:'#bdc3c7'}}>⠿ arrastar</span>
@@ -17272,6 +17330,34 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const [pedirRespLista,setPedirRespLista]=useState(null);
   const [filtroResp,setFiltroResp]=useState('todos');
   const [modalOrcTopo,setModalOrcTopo]=useState(false);
+  const [leadParaConversa,setLeadParaConversa]=useState('');
+
+  // Clique no ícone do WhatsApp: assume o lead e abre a conversa AQUI, em vez de
+  // jogar o vendedor no WhatsApp Web. Dentro da janela de 24h não há motivo
+  // para sair do sistema — e sair custa o registro da conversa.
+  async function assumirEConversar(lead){
+    const eu=(usuarios||[]).find(u=>u.email===auth.currentUser?.email);
+    const jaMeu=eu&&lead.responsavelId===eu.id;
+    const etapaC=etapaDeContato(etapasLead);
+    const vaiMover=etapaC&&lead.status!==etapaC.id
+      &&!['convertido','perdido','qualificado'].includes(lead.status);
+    const linhas=[`Abrir a conversa com ${lead.nome} aqui no sistema?`,''];
+    if(!jaMeu&&eu)linhas.push(`• Você fica como responsável`);
+    if(vaiMover)linhas.push(`• O lead vai para "${etapaC.label}"`);
+    if(!window.confirm(linhas.join('\n')))return;
+    const patch={atualizadoEm:new Date().toISOString()};
+    if(!jaMeu&&eu)patch.responsavelId=eu.id;
+    if(vaiMover)patch.status=etapaC.id;
+    try{
+      await setDoc(doc(db,'leads',lead.id),patch,{merge:true});
+      const detalhe=[!jaMeu&&eu?`assumido por ${eu.nome||eu.email}`:'',vaiMover?`movido para ${etapaC.label}`:'']
+        .filter(Boolean).join(' · ');
+      await registrarEventoLead(lead,'whatsapp','Conversa aberta no sistema'+(detalhe?' — '+detalhe:''));
+    }catch(e){alert('Erro ao assumir o lead: '+e.message);return;}
+    setLeadParaConversa(lead.id);
+    setSel(null);
+    setAba('conversas');
+  }
 
   // Acompanha o log de sincronizacao para mostrar a ultima atualizacao
   useEffect(()=>{
@@ -17551,7 +17637,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {/* Abas + Ações */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
         <div style={{display:'flex',gap:6}}>
-          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'conversas',l:'💬 Conversas',c:'#25D366'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
+          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'conversas',l:'💬 Conversas',c:'#128C7E'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
             <button key={a.id} onClick={()=>setAba(a.id)}
               style={{padding:'8px 16px',borderRadius:7,border:'none',
                 background:aba===a.id?(a.c||'#e84393'):'#ecf0f1',
@@ -17654,7 +17740,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
       {aba==='campanhas'&&<PainelCampanhas leads={leadsDoResp}/>}
 
-      {aba==='conversas'&&<AbaConversas leads={leads}/>}
+      {aba==='conversas'&&<AbaConversas leads={leads} leadInicial={leadParaConversa} onConsumirInicial={()=>setLeadParaConversa('')}/>}
 
       {aba==='kanban'&&(
         <div>
@@ -17671,7 +17757,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
           </div>
           <KanbanLeads leads={leadsDoResp} usuarios={usuarios} busca={busca}
             etapas={filtroStatus==='todos'?etapasLead:etapasLead.filter(e=>e.id===filtroStatus)}
-            onAbrir={l=>{setSel(l);setObsEdit('');}}/>
+            onAbrir={l=>{setSel(l);setObsEdit('');}}
+            onConversar={assumirEConversar}/>
         </div>
       )}
 
@@ -17763,12 +17850,12 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                 </div>
                 {/* WhatsApp direto do card */}
                 {lead.telefone&&(
-                  <a href={linkWaLead(lead)} target="_blank" rel="noopener noreferrer"
-                    onClick={e=>{e.stopPropagation();registrarEventoLead(lead,'whatsapp','Contato via WhatsApp');}}
-                    title={`Chamar ${lead.nome||''} no WhatsApp`}
-                    style={{flexShrink:0,width:34,height:34,borderRadius:'50%',background:'#25D366',display:'flex',alignItems:'center',justifyContent:'center',textDecoration:'none',boxShadow:'0 1px 4px rgba(37,211,102,.4)'}}>
+                  <button
+                    onClick={e=>{e.stopPropagation();assumirEConversar(lead);}}
+                    title={`Assumir ${lead.nome||''} e conversar aqui`}
+                    style={{flexShrink:0,width:34,height:34,borderRadius:'50%',background:'#1EA952',border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 1px 4px rgba(30,169,82,.45)'}}>
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="#fff"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-                  </a>
+                  </button>
                 )}
                 <div style={{textAlign:'right',flexShrink:0}}>
                   <span style={{background:st.color+'22',color:st.color,padding:'2px 10px',borderRadius:10,fontSize:10,fontWeight:700,display:'block',marginBottom:3}}>{st.label}</span>
