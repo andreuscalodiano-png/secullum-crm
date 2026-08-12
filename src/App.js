@@ -17000,6 +17000,7 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
   const [link,setLink]=useState('');
   const [publicando,setPublicando]=useState(false);
   const [enviandoZap,setEnviandoZap]=useState(false);
+  const [enviandoMail,setEnviandoMail]=useState(false);
   const [avisoEnvio,setAvisoEnvio]=useState('');
 
   const t=totaisOrcamento(linhas);
@@ -17119,21 +17120,27 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
     }
   }
 
+  // Dispara pelo SMTP da empresa, sem abrir o programa de e-mail do vendedor.
   async function enviarEmail(){
     const id=await registrar('email');
     if(!id)return;
     const url=await publicar();
     if(!url)return;
-    const assunto=encodeURIComponent(`Proposta ${numero} — Guion Informática`);
-    const corpo=encodeURIComponent(
-      `Olá, ${String(lead.nome||'').split(' ')[0]}!\n\n`+
-      `Segue a proposta que conversamos, no valor de ${moeda(t.total)}.\n\n`+
-      `${url}\n\n`+
-      `A proposta é válida até ${validade}. Qualquer dúvida é só me chamar.\n\n`+
-      `Atenciosamente,\n${vend.nome}\nGuion Informática e Relógio de Ponto`
-    );
-    window.open(`mailto:${lead.email||''}?subject=${assunto}&body=${corpo}`);
-    setAvisoEnvio('E-mail aberto no seu programa de e-mail, já preenchido.');
+    setEnviandoMail(true);setAvisoEnvio('');setErro('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/propostaEmail`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          para:lead.email,cliente:lead.nome,valor:t.total,validade,link:url,numero,
+          vendedorNome:vend.nome,vendedorEmail:vend.email,leadId:lead.id,
+          itens:linhas.map(l=>({nome:l.nome,total:numVal(l.valor)*(parseInt(l.qtd,10)||1)-numVal(l.desconto)})),
+        }),
+      });
+      const d=await r.json();
+      if(d.error)setErro('E-mail: '+d.error);
+      else setAvisoEnvio(`Proposta enviada para ${lead.email}.`);
+    }catch(e){setErro('E-mail: '+e.message);}
+    setEnviandoMail(false);
   }
 
   async function enviarWhats(){
@@ -17290,12 +17297,12 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
 
           <div style={{width:1,height:26,background:'#e8eaed'}}/>
 
-          <button onClick={enviarEmail} disabled={salvando||publicando||!lead.email}
-            title={lead.email?`Enviar para ${lead.email}`:'Este lead está sem e-mail'}
+          <button onClick={enviarEmail} disabled={salvando||publicando||enviandoMail||!lead.email}
+            title={lead.email?`Enviar direto para ${lead.email}`:'Este lead está sem e-mail'}
             style={{padding:'10px 16px',borderRadius:7,border:'none',
               background:lead.email?'#f5a623':'#e8eaed',color:lead.email?'#fff':'#aaa',
               fontWeight:700,cursor:lead.email?'pointer':'default',fontSize:12}}>
-            ✉️ E-mail
+            {enviandoMail?'Enviando...':'✉️ E-mail'}
           </button>
           <button onClick={enviarWhats} disabled={salvando||publicando||enviandoZap||!lead.telefone}
             title={lead.telefone?`Enviar para ${lead.telefone}`:'Este lead está sem telefone'}

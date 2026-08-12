@@ -39,7 +39,7 @@ async function getSmtpConfig() {
   }
 }
 
-async function enviarEmail({ to, subject, html }) {
+async function enviarEmail({ to, subject, html, remetente, replyTo, texto }) {
   if (!to) {
     console.log('[email] destinatário vazio, ignorando envio');
     return;
@@ -56,10 +56,14 @@ async function enviarEmail({ to, subject, html }) {
   });
   try {
     await transporter.sendMail({
-      from: `"Secullum CRM" <${cfg.user}>`,
+      // Proposta sai no nome da empresa, não do CRM. E a resposta do cliente
+      // vai para o vendedor, não para a caixa de sistema.
+      from: `"${remetente || 'Secullum CRM'}" <${cfg.user}>`,
+      ...(replyTo ? { replyTo } : {}),
       to,
       subject,
       html,
+      ...(texto ? { text: texto } : {}),
     });
     console.log('[email] enviado com sucesso para:', to, '-', subject);
   } catch (err) {
@@ -4752,3 +4756,164 @@ exports.respostaRapidaEnviar = functions
       res.status(500).json({ error: err.message });
     }
   });
+
+// ─── E-MAIL DA PROPOSTA ──────────────────────────────────────────────────────
+// Dispara direto pelo SMTP já configurado em Configurações › Email, sem passar
+// pelo programa de e-mail do vendedor. O cliente recebe uma capa com o valor em
+// destaque e um botão para abrir a proposta.
+//
+// Layout feito com tabelas e estilo em linha de propósito: Outlook e Gmail
+// descartam <style> no topo e ignoram flex/grid. Tabela é o que chega igual
+// nos dois.
+
+function escHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function reaisEmail(v) {
+  return 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function corpoPropostaEmail({ cliente, valor, validade, link, numero, vendedor, empresa, capa, itens }) {
+  const primeiro = String(cliente || '').trim().split(/\s+/)[0] || '';
+  const linhas = (itens || []).slice(0, 6).map(i =>
+    `<tr>
+       <td style="padding:7px 0;border-bottom:1px solid #eee;font-size:14px;color:#333;">${escHtml(i.nome)}</td>
+       <td style="padding:7px 0;border-bottom:1px solid #eee;font-size:14px;color:#333;text-align:right;white-space:nowrap;">${escHtml(reaisEmail(i.total))}</td>
+     </tr>`).join('');
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Proposta ${escHtml(numero)}</title></head>
+<body style="margin:0;padding:0;background:#f4f6f8;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:24px 12px;">
+ <tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+    style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;box-shadow:0 2px 12px rgba(0,0,0,.07);">
+
+    ${capa ? `<tr><td><img src="${escHtml(capa)}" alt="${escHtml(empresa.razao || '')}" width="560"
+      style="display:block;width:100%;max-width:560px;height:auto;border:0;"/></td></tr>` : ''}
+
+    <tr><td style="padding:28px 30px 0;">
+      <p style="margin:0 0 14px;font-size:17px;color:#111;">Olá${primeiro ? ', ' + escHtml(primeiro) : ''}!</p>
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.65;color:#444;">
+        Segue a proposta que conversamos, com o sistema de controle de ponto e o equipamento
+        para a sua empresa.
+      </p>
+    </td></tr>
+
+    <tr><td style="padding:0 30px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+        style="background:#fafbfc;border:1px solid #eceff1;border-radius:10px;">
+        <tr><td style="padding:18px 20px;">
+          <div style="font-size:11px;color:#8a949c;text-transform:uppercase;letter-spacing:1px;">Investimento total</div>
+          <div style="font-size:30px;font-weight:bold;color:#111;padding:4px 0 2px;">${escHtml(reaisEmail(valor))}</div>
+          <div style="font-size:13px;color:#8a949c;">Proposta ${escHtml(numero)} · válida até ${escHtml(validade)}</div>
+          ${linhas ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;">${linhas}</table>` : ''}
+        </td></tr>
+      </table>
+    </td></tr>
+
+    <tr><td align="center" style="padding:26px 30px 6px;">
+      <a href="${escHtml(link)}"
+        style="display:inline-block;background:#f5a623;color:#ffffff;text-decoration:none;
+               font-size:16px;font-weight:bold;padding:15px 40px;border-radius:8px;">
+        Ver a proposta completa
+      </a>
+    </td></tr>
+    <tr><td align="center" style="padding:0 30px 22px;">
+      <div style="font-size:12px;color:#a8b0b7;">Abre no celular, sem precisar baixar nada.</div>
+    </td></tr>
+
+    <tr><td style="padding:0 30px 26px;">
+      <p style="margin:0;font-size:15px;line-height:1.65;color:#444;">
+        Qualquer dúvida é só responder este e-mail que eu te ajudo.
+      </p>
+      <p style="margin:16px 0 0;font-size:15px;line-height:1.5;color:#111;">
+        Atenciosamente,<br/>
+        <strong>${escHtml(vendedor.nome || '')}</strong><br/>
+        <span style="color:#8a949c;font-size:13px;">${escHtml(empresa.razao || '')}</span>
+      </p>
+    </td></tr>
+
+    <tr><td style="background:#fafbfc;padding:16px 30px;border-top:1px solid #eceff1;">
+      <div style="font-size:11px;color:#a8b0b7;line-height:1.6;">
+        ${escHtml(empresa.razao || '')}${empresa.cnpj ? ' · CNPJ ' + escHtml(empresa.cnpj) : ''}<br/>
+        ${escHtml(empresa.endereco || '')}${empresa.email ? ' · ' + escHtml(empresa.email) : ''}
+      </div>
+    </td></tr>
+
+  </table>
+ </td></tr>
+</table>
+</body></html>`;
+}
+
+exports.propostaEmail = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const {
+      para, cliente, valor, validade, link, numero,
+      vendedorNome, vendedorEmail, leadId, itens,
+    } = req.body || {};
+
+    if (!para) throw new Error('Este contato está sem e-mail.');
+    if (!link) throw new Error('A proposta ainda não foi publicada.');
+
+    const snap = await db.collection('config').doc('orcamento_modelo').get();
+    const cfg = snap.exists ? snap.data() : {};
+    const empresa = cfg.empresa || {};
+    const capa = (cfg.imagens || {}).topo || '';
+
+    const html = corpoPropostaEmail({
+      cliente, valor, validade, link, numero, itens,
+      vendedor: { nome: vendedorNome || '', email: vendedorEmail || '' },
+      empresa, capa,
+    });
+
+    // Versão em texto para quem lê e-mail sem imagens, e porque a ausência de
+    // alternativa em texto puxa a mensagem para a aba de promoções.
+    const texto = [
+      `Olá${cliente ? ', ' + String(cliente).split(' ')[0] : ''}!`, '',
+      `Segue a proposta que conversamos, no valor de ${reaisEmail(valor)}.`,
+      `Proposta ${numero} — válida até ${validade}.`, '',
+      link, '',
+      'Qualquer dúvida é só responder este e-mail.', '',
+      `Atenciosamente,`, vendedorNome || '', empresa.razao || '',
+    ].filter(x => x !== undefined).join('\n');
+
+    await enviarEmail({
+      to: para,
+      subject: `Proposta ${numero} — ${empresa.razao || 'Guion Informática'}`,
+      html, texto,
+      remetente: empresa.razao || 'Guion Informática',
+      replyTo: vendedorEmail || undefined,
+    });
+
+    if (leadId) {
+      const ls = await db.collection('leads').doc(leadId).get();
+      if (ls.exists) {
+        const lead = ls.data();
+        await db.collection('leads').doc(leadId).set({
+          historico: [...(lead.historico || []), {
+            evento: 'email',
+            detalhe: `Proposta ${numero} enviada por e-mail para ${para}`,
+            data: new Date().toISOString(),
+            usuario: vendedorEmail || '—',
+          }],
+          atualizadoEm: new Date().toISOString(),
+        }, { merge: true });
+      }
+    }
+
+    res.status(200).json({ ok: true, para });
+  } catch (err) {
+    console.error('[proposta-email] erro:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
