@@ -2279,9 +2279,10 @@ async function enviarDaCampanha(campanha, lead, token) {
     .replace(/\{\{funcionarios\}\}/g, lead.funcionarios || '');
 
   if (campanha.tipo === 'imagem' && campanha.midia) {
+    // Campos soltos, não { image: { link } } — ver corpoMidiaDatafy.
     return chamarDatafy({
       token, path: '/messages/send/image', method: 'POST',
-      body: { to: destino, image: { link: campanha.midia, caption: texto } },
+      body: { to: destino, url: campanha.midia, caption: texto },
     });
   }
   if (campanha.tipo === 'cta' && campanha.linkUrl) {
@@ -4561,28 +4562,28 @@ function aplicarVariaveisResposta(texto, lead, usuario) {
 
 const dormir = ms => new Promise(r => setTimeout(r, Math.max(0, ms)));
 
-// Envia mídia pela Datafy. `voice: true` faz o áudio chegar como mensagem de
-// voz (ícone de microfone) em vez de arquivo — exige OGG/OPUS mono do outro lado.
-async function enviarMidiaWhats({ token, destino, tipo, url, caption, voice }) {
-  if (tipo === 'imagem') {
-    return chamarDatafy({
-      token, path: '/messages/send/image', method: 'POST',
-      body: { to: destino, image: { link: url, caption: caption || '' } },
-    });
-  }
-  if (tipo === 'audio') {
-    return chamarDatafy({
-      token, path: '/messages/send/audio', method: 'POST',
-      body: { to: destino, audio: { link: url, voice: voice !== false }, voice: voice !== false },
-    });
-  }
-  if (tipo === 'documento') {
-    return chamarDatafy({
-      token, path: '/messages/send/document', method: 'POST',
-      body: { to: destino, document: { link: url, caption: caption || '', filename: caption || 'arquivo.pdf' } },
-    });
-  }
-  throw new Error('Tipo de mídia desconhecido: ' + tipo);
+// A Datafy espera os campos de mídia SOLTOS no corpo — `url` na raiz, não
+// aninhado em { image: { link } } como na API da Meta. Mandar aninhado devolve
+// 400: "`url` ou `media_id` é obrigatório". Mesmo tropeço do botão CTA.
+const CAMINHO_MIDIA = { imagem: 'image', audio: 'audio', documento: 'document', video: 'video' };
+
+function corpoMidiaDatafy({ destino, tipo, url, caption, filename, voice }) {
+  const body = { to: destino, url };
+  if (caption) body.caption = caption;
+  if (tipo === 'documento') body.filename = filename || 'arquivo.pdf';
+  // voice: true faz o áudio chegar como nota de voz (ícone de microfone) em vez
+  // de arquivo. Exige OGG/OPUS mono do outro lado.
+  if (tipo === 'audio') body.voice = voice !== false;
+  return body;
+}
+
+async function enviarMidiaWhats({ token, destino, tipo, url, caption, filename, voice }) {
+  const rota = CAMINHO_MIDIA[tipo];
+  if (!rota) throw new Error('Tipo de mídia desconhecido: ' + tipo);
+  return chamarDatafy({
+    token, path: `/messages/send/${rota}`, method: 'POST',
+    body: corpoMidiaDatafy({ destino, tipo, url, caption, filename, voice }),
+  });
 }
 
 // Executa a sequência de uma resposta rápida em um lead
@@ -4647,8 +4648,8 @@ exports.respostaRapidaEnviar = functions
           if (!a.url) { falhas.push(`${a.tipo} sem arquivo`); continue; }
           const legenda = aplicarVariaveisResposta(a.texto || '', lead, usuario);
           r = await enviarMidiaWhats({
-            token: numero.token, destino, tipo: a.tipo,
-            url: a.url, caption: legenda, voice: a.voz !== false,
+            token: numero.token, destino, tipo: a.tipo, url: a.url,
+            caption: legenda, filename: a.arquivo, voice: a.voz !== false,
           });
           registro = a.tipo === 'imagem' ? `🖼️ ${legenda || 'imagem'}`
                    : a.tipo === 'audio' ? '🎤 áudio'

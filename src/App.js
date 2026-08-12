@@ -14410,15 +14410,15 @@ function EditorResposta({resposta,etapas,onFechar}){
     if(num.length<10){setErro('Digite o número com DDD para o teste.');return;}
     if(!a.url){setErro('Envie o arquivo antes de testar.');return;}
     setTestando(a.uid);setTesteRes(null);setErro('');
-    const corpo=a.tipo==='imagem'
-      ?{to:num,image:{link:a.url,caption:a.texto||''}}
-      :a.tipo==='audio'
-        ?{to:num,audio:{link:a.url,voice:a.voz!==false},voice:a.voz!==false}
-        :{to:num,document:{link:a.url,caption:a.texto||'',filename:a.arquivo||'arquivo.pdf'}};
+    // Campos soltos: a Datafy quer `url` na raiz, não aninhado no estilo da Meta
+    const corpo={to:num,url:a.url};
+    if(a.texto)corpo.caption=a.texto;
+    if(a.tipo==='documento')corpo.filename=a.arquivo||'arquivo.pdf';
+    if(a.tipo==='audio')corpo.voice=a.voz!==false;
     try{
       const rp=await fetch(`${FUNCTIONS_URL}/datafyProxy`,{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({finalidade:'comercial',path:`/messages/send/${a.tipo==='imagem'?'image':a.tipo}`,method:'POST',body:corpo}),
+        body:JSON.stringify({finalidade:'comercial',path:`/messages/send/${{imagem:'image',audio:'audio',documento:'document'}[a.tipo]}`,method:'POST',body:corpo}),
       });
       const d=await rp.json();
       const ok=rp.ok&&!d.error;
