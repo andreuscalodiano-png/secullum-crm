@@ -17488,8 +17488,13 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {/* Abas + Ações */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
         <div style={{display:'flex',gap:6}}>
-          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'conversas',l:'💬 Conversas'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
-            <button key={a.id} onClick={()=>setAba(a.id)} style={{padding:'8px 16px',borderRadius:7,border:'none',background:aba===a.id?'#e84393':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>{a.l}</button>
+          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'conversas',l:'💬 Conversas',c:'#25D366'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
+            <button key={a.id} onClick={()=>setAba(a.id)}
+              style={{padding:'8px 16px',borderRadius:7,border:'none',
+                background:aba===a.id?(a.c||'#e84393'):'#ecf0f1',
+                color:aba===a.id?'#fff':(a.c||'#7f8c8d'),
+                cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:(a.c?600:400),
+                boxShadow:aba===a.id&&a.c?`0 2px 8px ${a.c}55`:'none'}}>{a.l}</button>
           ))}
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
