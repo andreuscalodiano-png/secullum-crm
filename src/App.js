@@ -14656,11 +14656,90 @@ function EditorResposta({resposta,etapas,onFechar}){
   );
 }
 
+// ─── COPILOTO DA CONVERSA ────────────────────────────────────────────────────
+// Sugestão pronta para o vendedor: as de abertura saem dos dados do lead (nome,
+// porte, solução buscada) e não custam nada. A contextual chama a mesma IA do
+// atendimento, com a base de conhecimento e a tabela de preços já embutidas.
+// Quem envia é sempre uma pessoa — a IA propõe, o vendedor decide.
+function SugestaoConversa({lead,onUsar,onEnviar}){
+  const [i,setI]=useState(0);
+  const [daIA,setDaIA]=useState('');
+  const [gerando,setGerando]=useState(false);
+  const [erro,setErro]=useState('');
+
+  const prontas=useMemo(()=>sugestoesMensagem(lead),[lead.nome,lead.funcionarios,lead.solucao]);
+  const conversa=lead.conversa||[];
+  const jaFalamos=conversa.some(m=>m.de==='humano'||m.de==='ia');
+  const ultimaCliente=[...conversa].reverse().find(m=>m.de==='cliente');
+  const texto=daIA||prontas[i%prontas.length];
+
+  useEffect(()=>{setDaIA('');setErro('');setI(0);},[lead.id]);
+
+  async function gerar(){
+    if(!ultimaCliente?.texto){setErro('O cliente ainda não escreveu nada para a IA responder.');return;}
+    setGerando(true);setErro('');
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/iaSimular`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          mensagem:ultimaCliente.texto,
+          historico:conversa.slice(-10).map(m=>({de:m.de,texto:m.texto||''})),
+          leadExemplo:{nome:lead.nome,funcionarios:lead.funcionarios,solucao:lead.solucao,sistema_ponto:lead.sistema_ponto},
+        }),
+      });
+      const d=await r.json();
+      if(d.error)setErro(d.error);
+      else setDaIA(String(d.resposta||'').replace(/\[ESCALAR\]/g,'').trim());
+    }catch(e){setErro(e.message);}
+    setGerando(false);
+  }
+
+  return(
+    <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:10,padding:'12px 16px',marginTop:12}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:8}}>
+        <span style={{fontSize:9,color:'#276749',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,flex:1,minWidth:150}}>
+          {daIA?'✨ Sugestão da IA':jaFalamos?'💡 Sugestão de abertura':'💡 Sugestão de primeira mensagem'}
+        </span>
+        {!daIA&&(
+          <button onClick={()=>setI(x=>x+1)}
+            style={{background:'none',border:'none',cursor:'pointer',color:'#276749',fontSize:11,fontWeight:600}}>↻ outra versão</button>
+        )}
+        <button onClick={daIA?()=>setDaIA(''):gerar} disabled={gerando}
+          style={{padding:'5px 12px',borderRadius:6,border:'1px solid #9ae6b4',background:'#fff',color:'#276749',cursor:'pointer',fontSize:11,fontWeight:700}}>
+          {gerando?'Pensando...':daIA?'← sugestões prontas':'✨ Responder com IA'}
+        </button>
+      </div>
+
+      <div onClick={()=>onUsar(texto)} title="Clique para jogar no campo de resposta"
+        style={{fontSize:13,color:'#22543d',lineHeight:1.6,cursor:'pointer',background:'#fff',borderRadius:7,padding:'10px 12px',border:'1px solid #c6f6d5'}}>
+        {texto}
+      </div>
+
+      {erro&&<div style={{fontSize:11,color:'#c53030',marginTop:7}}>{erro}</div>}
+
+      <div style={{display:'flex',gap:7,marginTop:9,flexWrap:'wrap',alignItems:'center'}}>
+        <button onClick={()=>onUsar(texto)}
+          style={{padding:'7px 15px',borderRadius:7,border:'1px solid #9ae6b4',background:'#fff',color:'#276749',cursor:'pointer',fontSize:12,fontWeight:700}}>
+          ✎ Editar antes
+        </button>
+        <button onClick={()=>onEnviar(texto)}
+          style={{padding:'7px 17px',borderRadius:7,border:'none',background:'#1EA952',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>
+          Enviar assim
+        </button>
+        <span style={{fontSize:10,color:'#68a683'}}>
+          {daIA?'Gerada com a base de conhecimento e a tabela de preços do sistema.':'Montada com o nome, o porte e a solução que ele buscou.'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function AbaConversas({leads,leadInicial,onConsumirInicial}){
   const [sel,setSel]=useState(null);
   const [texto,setTexto]=useState('');
   const [enviando,setEnviando]=useState(false);
   const fimRef=useRef(null);
+  const caixaRef=useRef(null);
 
   // Inclui quem já tem conversa OU já foi contatado por aqui: lead novo sem
   // mensagem nenhuma não polui a lista, mas some se você abriu ele pelo botão.
@@ -14679,13 +14758,16 @@ function AbaConversas({leads,leadInicial,onConsumirInicial}){
 
   useEffect(()=>{fimRef.current?.scrollIntoView({behavior:'smooth'});},[lead?.conversa?.length]);
 
-  async function enviar(){
-    if(!texto.trim()||!lead)return;
+  // Aceita texto avulso (vindo da sugestão). O onClick do botão passa o evento,
+  // por isso a checagem de tipo em vez de um simples valor padrão.
+  async function enviar(direto){
+    const msg=(typeof direto==='string'?direto:texto).trim();
+    if(!msg||!lead)return;
     setEnviando(true);
     try{
       const r=await fetch(`${FUNCTIONS_URL}/conversaEnviar`,{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({leadId:lead.id,texto:texto.trim(),usuario:auth.currentUser?.email}),
+        body:JSON.stringify({leadId:lead.id,texto:msg,usuario:auth.currentUser?.email}),
       });
       const d=await r.json();
       if(d.error)alert('❌ '+d.error);
@@ -14766,7 +14848,7 @@ function AbaConversas({leads,leadInicial,onConsumirInicial}){
         })()}
 
         <div style={{padding:'12px 18px',borderTop:'1px solid #e8eaed',display:'flex',gap:8,alignItems:'flex-end'}}>
-          <textarea value={texto} onChange={e=>setTexto(e.target.value)}
+          <textarea ref={caixaRef} value={texto} onChange={e=>setTexto(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}}}
             placeholder="Escreva sua resposta... (Enter envia)"
             style={{flex:1,padding:'9px 12px',borderRadius:8,border:'1px solid #dde1e7',fontSize:13,minHeight:42,maxHeight:110,resize:'vertical',fontFamily:'inherit'}}/>
@@ -14778,6 +14860,12 @@ function AbaConversas({leads,leadInicial,onConsumirInicial}){
         </div>
         <div style={{padding:'0 18px 12px',fontSize:10,color:'#95a5a6'}}>
           Ao responder por aqui, o atendimento passa para você e a IA para de responder este contato.
+        </div>
+
+        <div style={{padding:'0 18px 16px'}}>
+          <SugestaoConversa lead={lead}
+            onUsar={t=>{setTexto(t);setTimeout(()=>caixaRef.current?.focus(),0);}}
+            onEnviar={t=>enviar(t)}/>
         </div>
       </div>
 
@@ -17879,7 +17967,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
       </>}
 
-      {/* Info webhook */}
+      {/* Info webhook — fora da tela de conversa, onde o espaço vale mais para a sugestão */}
+      {aba!=='conversas'&&
       <div style={{background:'#f0f7ff',borderRadius:10,padding:'14px 18px',marginTop:20,border:'1px solid #bee3f8'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
           <div style={{flex:1,minWidth:240}}>
@@ -17913,7 +18002,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
