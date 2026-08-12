@@ -9437,7 +9437,7 @@ function OrcConfigTemplates({templates}){
 // --- CONFIG ORÇAMENTO (agrupado) ----------------------------------------------
 function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
   const [aba,setAba]=useState('servicos');
-  const abas=[{id:'servicos',l:'Serviços',c:'#3498db'},{id:'formas',l:'Formas de pagamento',c:'#9b59b6'},{id:'templates',l:'Templates',c:'#e74c3c'}];
+  const abas=[{id:'servicos',l:'Serviços',c:'#3498db'},{id:'formas',l:'Formas de pagamento',c:'#9b59b6'},{id:'templates',l:'Templates',c:'#e74c3c'},{id:'modelo',l:'Modelo padrão',c:'#f5a623'}];
   return(
     <div>
       <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap'}}>
@@ -9447,6 +9447,7 @@ function OrcConfigView({orcServicos,orcFormas,orcTemplates}){
         {aba==='servicos'&&<OrcConfigServicos servicos={orcServicos}/>}
         {aba==='formas'&&<OrcConfigFormas formas={orcFormas}/>}
         {aba==='templates'&&<OrcConfigTemplates templates={orcTemplates}/>}
+        {aba==='modelo'&&<ConfigOrcamentoModelo/>}
       </div>
     </div>
   );
@@ -16055,7 +16056,554 @@ function BlocoAgendamentoLead({lead,usuarios}){
 // ═══════════════════════════════════════════════════════════════════════════
 // Componente no escopo do modulo: se ficasse dentro do render, o React
 // remontaria os inputs a cada tecla e o campo perderia o foco.
-function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
+// ─── ORÇAMENTO GERADO A PARTIR DO LEAD ───────────────────────────────────────
+// O vendedor monta os itens no bloco "Proposta ao cliente" (equipamentos e
+// serviços vêm do catálogo de Configurações). Com pelo menos um equipamento e
+// um serviço, o botão libera, gera o documento em Word ou PDF e grava o
+// orçamento em `orcamentos` já amarrado ao lead pelo campo _leadId.
+//
+// O texto fixo do documento fica em config/orcamento_modelo, editável em
+// Configurações › Orçamentos › Modelo padrão — mesma ideia do contrato.
+
+const MODELO_ORCAMENTO_PADRAO={
+  tipoProposta:'SOFTWARE DE PONTO E EQUIPAMENTO',
+  validadeDias:15,
+  tituloInstitucional:'CONHEÇA NOSSA EMPRESA E TECNOLOGIA',
+  formaPagamento:'Pix ou Cartão de crédito. Envio: Frete grátis.',
+  envio:'Após confirmação do pagamento.',
+  observacoes:'',
+  empresa:{
+    razao:'Guion Informática e Relógio de Ponto',
+    cnpj:'07.334.645/0001-00',
+    endereco:'Ibaiti / PR',
+    email:'andreus@guionstore.com.br',
+    tel:'',
+  },
+  imagens:{topo:'',institucional1:'',institucional2:''},
+};
+
+function useOrcModelo(){
+  const [cfg,setCfg]=useState(MODELO_ORCAMENTO_PADRAO);
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'config','orcamento_modelo'),s=>{
+      const d=s.exists()?s.data():{};
+      setCfg({
+        ...MODELO_ORCAMENTO_PADRAO,
+        ...d,
+        empresa:{...MODELO_ORCAMENTO_PADRAO.empresa,...(d.empresa||{})},
+        imagens:{...MODELO_ORCAMENTO_PADRAO.imagens,...(d.imagens||{})},
+      });
+    });
+    return()=>u();
+  },[]);
+  return cfg;
+}
+
+// Escapa o que vai para dentro do HTML do documento
+function esc(v){
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// "De 6 a 10 funcionários" → 10. Usa o topo da faixa, que é o que dimensiona a licença.
+function funcDoLead(l){
+  const nums=String(l.funcionarios||'').match(/\d+/g);
+  if(!nums||!nums.length)return '';
+  return String(Math.max(...nums.map(Number)));
+}
+
+function reaisDoc(v){
+  return 'R$ '+(Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+// Calcula os totais a partir das linhas já com desconto aplicado pelo vendedor
+function totaisOrcamento(linhas){
+  let bruto=0,desc=0;
+  linhas.forEach(l=>{
+    const q=parseInt(l.qtd,10)||1;
+    bruto+=(numVal(l.valor)*q);
+    desc+=numVal(l.desconto);
+  });
+  return {bruto,desconto:desc,total:Math.max(0,bruto-desc)};
+}
+
+// ─── DOCUMENTO ───────────────────────────────────────────────────────────────
+// Feito com tabelas e sem flex/grid de propósito: é o único layout que o Word
+// abre igual ao que aparece na tela.
+function htmlOrcamento({linhas,cliente,vendedor,cfg,numero,validade}){
+  const t=totaisOrcamento(linhas);
+  const emp=cfg.empresa||{};
+  const img=cfg.imagens||{};
+
+  const linhasHtml=linhas.map(l=>{
+    const q=parseInt(l.qtd,10)||1;
+    const tot=numVal(l.valor)*q;
+    const d=numVal(l.desconto);
+    return `<tr>
+      <td class="item">${esc(l.nome)}${l.descricao?`<div class="sub">${esc(l.descricao)}</div>`:''}</td>
+      <td class="num">${reaisDoc(numVal(l.valor))}</td>
+      <td class="cen">${q}</td>
+      <td class="num">${reaisDoc(tot)}</td>
+      <td class="num">${reaisDoc(d)}</td>
+      <td class="num forte">${reaisDoc(tot-d)}</td>
+    </tr>`;
+  }).join('\n');
+
+  const paginaImg=(src,alt)=>src
+    ? `<div class="pagina"><img src="${esc(src)}" alt="${esc(alt)}" width="700"/></div>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"/>
+<title>Proposta ${esc(numero)} — ${esc(cliente.nome||'cliente')}</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm; }
+  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 11pt; color: #222; margin:0; padding:0; }
+  .folha { max-width: 186mm; margin: 0 auto; }
+  .topo img { width: 100%; max-width: 700px; }
+  h1 { font-size: 15pt; text-transform: uppercase; letter-spacing:.5px; color:#111;
+       margin: 14pt 0 10pt; padding-bottom: 5pt; border-bottom: 2px solid #f5a623; }
+  h2 { font-size: 12pt; text-transform: uppercase; letter-spacing:.4px; color:#111;
+       margin: 16pt 0 7pt; page-break-after: avoid; }
+  .dados { width:100%; border-collapse:collapse; margin: 8pt 0 4pt; }
+  .dados td { vertical-align: top; padding: 4pt 10pt 4pt 0; font-size: 10.5pt; }
+  .rot { font-size: 8.5pt; text-transform: uppercase; letter-spacing:.6px; color:#888; display:block; margin-bottom:2pt; }
+  .val { font-weight: bold; color:#111; }
+  .pagina { margin: 12pt 0; page-break-inside: avoid; text-align:center; }
+  .pagina img { width: 100%; max-width: 700px; }
+  table.itens { width:100%; border-collapse: collapse; margin-top: 6pt; font-size: 10pt; }
+  table.itens th { background:#f5f6fa; text-align:left; padding:7pt 8pt; font-size:8.5pt;
+                   text-transform:uppercase; letter-spacing:.5px; color:#666;
+                   border-bottom: 1.5px solid #ddd; }
+  table.itens td { padding:8pt; border-bottom:1px solid #eee; vertical-align: top; }
+  table.itens td.num, table.itens th.num { text-align: right; white-space: nowrap; }
+  table.itens td.cen, table.itens th.cen { text-align: center; }
+  table.itens td.item { font-weight: bold; }
+  table.itens td .sub { font-weight: normal; font-size: 9pt; color:#777; margin-top:2pt; }
+  table.itens td.forte { font-weight: bold; color:#111; }
+  .totais { width: 78mm; margin-left: auto; margin-top: 10pt; border-collapse: collapse; }
+  .totais td { padding: 5pt 8pt; font-size: 10.5pt; }
+  .totais td.r { text-align: right; white-space: nowrap; }
+  .totais tr.final td { border-top: 2px solid #f5a623; font-size: 12.5pt; font-weight: bold;
+                        color:#111; padding-top: 7pt; }
+  .cond p { margin: 0 0 5pt; font-size: 10.5pt; }
+  .rodape { margin-top: 20pt; padding-top: 7pt; border-top:1px solid #ddd;
+            font-size: 8pt; color:#888; text-align:center; }
+</style></head>
+<body><div class="folha">
+
+${img.topo?`<div class="topo"><img src="${esc(img.topo)}" alt="Guion Informática"/></div>`:''}
+
+<table class="dados"><tr>
+  <td width="34%"><span class="rot">Proposta enviada por</span><span class="val">${esc(vendedor.nome||'—')}</span>${vendedor.email?`<br/>${esc(vendedor.email)}`:''}</td>
+  <td width="34%"><span class="rot">Para</span><span class="val">${esc(cliente.nome||'—')}</span>${cliente.email?`<br/>${esc(cliente.email)}`:''}${cliente.tel?`<br/>${esc(cliente.tel)}`:''}</td>
+  <td width="32%"><span class="rot">Proposta nº</span><span class="val">${esc(numero)}</span><br/>${new Date().toLocaleDateString('pt-BR')}</td>
+</tr></table>
+
+<h1>${esc(cfg.tipoProposta||'')}</h1>
+
+${(img.institucional1||img.institucional2)?`<h2>${esc(cfg.tituloInstitucional||'')}</h2>`:''}
+${paginaImg(img.institucional1,'Nossa empresa')}
+${paginaImg(img.institucional2,'Nossa tecnologia')}
+
+<h2>Produtos e serviços</h2>
+<table class="itens">
+  <thead><tr>
+    <th>Item</th><th class="num">Preço unitário</th><th class="cen">Quantidade</th>
+    <th class="num">Total</th><th class="num">Desconto</th><th class="num">Total com desconto</th>
+  </tr></thead>
+  <tbody>
+${linhasHtml}
+  </tbody>
+</table>
+
+<table class="totais">
+  <tr><td>Valor</td><td class="r">${reaisDoc(t.bruto)}</td></tr>
+  <tr><td>Valor do desconto</td><td class="r">- ${reaisDoc(t.desconto)}</td></tr>
+  <tr class="final"><td>Valor total</td><td class="r">${reaisDoc(t.total)}</td></tr>
+</table>
+
+<h2>Detalhes e forma de pagamento</h2>
+<div class="cond">
+  <p>Validade da proposta até dia <b>${esc(validade)}</b>.</p>
+  <p>Forma de pagamento: ${esc(cfg.formaPagamento||'')}</p>
+  <p>Envio: ${esc(cfg.envio||'')}</p>
+  ${cfg.observacoes?`<p>${esc(cfg.observacoes)}</p>`:''}
+</div>
+
+<div class="rodape">
+  ${esc(emp.razao||'')} | ${esc(emp.cnpj||'')}${emp.endereco?` | ${esc(emp.endereco)}`:''}<br/>
+  Proposta ${esc(numero)} · gerada em ${new Date().toLocaleString('pt-BR')}
+</div>
+
+</div></body></html>`;
+}
+
+// ─── MODAL: PRÉVIA, DESCONTO E DOWNLOAD ──────────────────────────────────────
+function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
+  const cfg=useOrcModelo();
+  const [linhas,setLinhas]=useState(()=>(itens||lead.itens||[]).map(i=>({
+    uid:i.uid||('l_'+Math.random().toString(36).slice(2)),
+    tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',descricao:'',
+    valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,desconto:0,
+  })));
+  const [salvando,setSalvando]=useState(false);
+  const [gerado,setGerado]=useState(null);   // {id, formato}
+  const [erro,setErro]=useState('');
+
+  const t=totaisOrcamento(linhas);
+  const numero=useMemo(()=>'ORC-'+new Date().getFullYear()+'-'+String(lead.id||'').slice(-6).toUpperCase(),[lead.id]);
+  const validade=useMemo(()=>{
+    const d=new Date();
+    d.setDate(d.getDate()+(parseInt(cfg.validadeDias,10)||15));
+    return d.toLocaleDateString('pt-BR');
+  },[cfg.validadeDias]);
+
+  const vend=useMemo(()=>{
+    const u=(usuarios||[]).find(x=>x.id===lead.responsavelId);
+    if(u)return {nome:u.nome||u.email||'—',email:u.email||''};
+    return {nome:auth.currentUser?.displayName||auth.currentUser?.email||'—',email:auth.currentUser?.email||''};
+  },[usuarios,lead.responsavelId]);
+
+  const cliente={
+    nome:lead.nome||'',email:lead.email||'',tel:lead.telefone||'',
+  };
+
+  const html=useMemo(()=>htmlOrcamento({linhas,cliente,vendedor:vend,cfg,numero,validade}),
+    [linhas,cliente.nome,cliente.email,cliente.tel,vend,cfg,numero,validade]);
+
+  const arquivo=`Proposta_${String(lead.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
+  const upLinha=(uid,k,v)=>setLinhas(ls=>ls.map(l=>l.uid===uid?{...l,[k]:v}:l));
+
+  // Grava na coleção de orçamentos no formato que as telas de Orçamentos já leem
+  async function registrar(formato){
+    if(gerado)return gerado.id;
+    setSalvando(true);setErro('');
+    try{
+      const id='orc_'+Date.now();
+      await setDoc(doc(db,'orcamentos',id),{
+        id,
+        cliente:{
+          nome:lead.nome||'',empresa:lead.empresa||lead.nome||'',cnpj:lead.cnpj||'',
+          email:lead.email||'',tel:lead.telefone||'',func:funcDoLead(lead),
+          equipTipo:(linhas.find(l=>l.tipo==='equipamento')||{}).nome||'',
+          plano:lead.plano||'',nfe:'Não',
+        },
+        itens:linhas.map(l=>({
+          id:l.uid,tipo:l.tipo,nome:l.nome,descricao:l.descricao||'',
+          preco:numVal(l.valor),qtd:parseInt(l.qtd,10)||1,desconto:numVal(l.desconto),
+          refId:l.refId||'',liberado:false,
+        })),
+        detalhes:{
+          vendedor:vend.nome,validade:'',forma:cfg.formaPagamento||'',
+          obs:lead.obs||'',templateId:'',
+          vE:linhas.filter(l=>l.tipo==='equipamento').reduce((s,l)=>s+numVal(l.valor)*(parseInt(l.qtd,10)||1),0),
+          vS:linhas.filter(l=>l.tipo==='servico').reduce((s,l)=>s+numVal(l.valor)*(parseInt(l.qtd,10)||1),0),
+        },
+        numero,
+        formato,
+        status:'rascunho',
+        subtotal:t.total,
+        _leadId:lead.id||'',
+        leadNome:lead.nome||'',
+        geradoPor:auth.currentUser?.email||'—',
+        criadoEm:new Date().toISOString(),
+        atualizadoEm:new Date().toISOString(),
+      });
+      await registrarEventoLead(lead,'orcamento',`Orçamento ${numero} gerado — ${moeda(t.total)}`);
+      await setDoc(doc(db,'leads',lead.id),{
+        orcamentoId:id,orcamentoNumero:numero,orcamentoEm:new Date().toISOString(),
+      },{merge:true});
+      setGerado({id,formato});
+      setSalvando(false);
+      return id;
+    }catch(e){
+      setErro('Não foi possível salvar o orçamento: '+e.message);
+      setSalvando(false);
+      return null;
+    }
+  }
+
+  async function baixarPDF(){
+    const w=window.open('','_blank','width=900,height=700');
+    if(!w){setErro('O navegador bloqueou a janela. Libere os pop-ups para este site.');return;}
+    w.document.write(html);w.document.close();w.focus();
+    setTimeout(()=>{w.print();},500);
+    await registrar('pdf');
+  }
+  async function baixarWord(){
+    const doc0='﻿<html xmlns:o="urn:schemas-microsoft-com:office:office" '+
+      'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'+
+      html.replace(/^[\s\S]*?<head>/,'<head>');
+    const blob=new Blob([doc0],{type:'application/msword'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=arquivo+'.doc';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    await registrar('word');
+  }
+
+  const fi={padding:'6px 8px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+
+  // Sugestão de etapa: só aparece depois de gerar, e só se ainda não estiver lá
+  const etapaQualificado=(etapasLead||[]).find(e=>e.id==='qualificado');
+  const podeSugerir=!!gerado&&!!etapaQualificado&&lead.status!=='qualificado'&&lead.status!=='convertido';
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={onFechar}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{background:'#fff',borderRadius:12,width:'100%',maxWidth:900,maxHeight:'92vh',display:'flex',flexDirection:'column',boxShadow:'0 20px 60px rgba(0,0,0,.35)'}}>
+
+        <div style={{padding:'16px 22px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontWeight:700,fontSize:15,color:'#2c3e50'}}>Orçamento do lead</div>
+            <div style={{fontSize:11,color:'#7f8c8d'}}>
+              {lead.nome} · proposta {numero} · válida até {validade}
+            </div>
+          </div>
+          <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',fontSize:20,color:'#95a5a6',lineHeight:1}}>×</button>
+        </div>
+
+        <div style={{flex:1,overflow:'auto',padding:'16px 22px'}}>
+
+          {/* Ajuste de quantidade e desconto antes de gerar */}
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Itens da proposta</div>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginBottom:12}}>
+            <thead><tr style={{background:'#f5f6fa'}}>
+              {['Item','Preço unit.','Qtd','Desconto','Total'].map((h,i)=>(
+                <th key={h} style={{padding:'6px 8px',textAlign:i>0?'right':'left',fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.4,borderBottom:'1px solid #e8eaed'}}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {linhas.map(l=>{
+                const q=parseInt(l.qtd,10)||1;
+                const tot=numVal(l.valor)*q-numVal(l.desconto);
+                return(
+                  <tr key={l.uid}>
+                    <td style={{padding:'6px 8px',borderBottom:'1px solid #f2f4f6'}}>
+                      <div style={{fontWeight:600,color:'#2c3e50'}}>{l.nome}</div>
+                      <div style={{fontSize:9,color:'#aaa',textTransform:'uppercase'}}>{l.tipo}</div>
+                    </td>
+                    <td style={{padding:'6px 8px',borderBottom:'1px solid #f2f4f6',textAlign:'right',width:110}}>
+                      <input style={{...fi,textAlign:'right'}} type="number" step="0.01" min="0" value={l.valor}
+                        onChange={e=>upLinha(l.uid,'valor',e.target.value)}/>
+                    </td>
+                    <td style={{padding:'6px 8px',borderBottom:'1px solid #f2f4f6',textAlign:'right',width:70}}>
+                      <input style={{...fi,textAlign:'right'}} type="number" min="1" value={l.qtd}
+                        onChange={e=>upLinha(l.uid,'qtd',e.target.value)}/>
+                    </td>
+                    <td style={{padding:'6px 8px',borderBottom:'1px solid #f2f4f6',textAlign:'right',width:110}}>
+                      <input style={{...fi,textAlign:'right'}} type="number" step="0.01" min="0" value={l.desconto}
+                        onChange={e=>upLinha(l.uid,'desconto',e.target.value)}/>
+                    </td>
+                    <td style={{padding:'6px 8px',borderBottom:'1px solid #f2f4f6',textAlign:'right',fontWeight:700,color:'#27ae60',whiteSpace:'nowrap'}}>{moeda(tot)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          <div style={{display:'flex',justifyContent:'flex-end',gap:22,fontSize:12,color:'#7f8c8d',marginBottom:14,flexWrap:'wrap'}}>
+            <span>Valor: <strong style={{color:'#2c3e50'}}>{moeda(t.bruto)}</strong></span>
+            <span>Desconto: <strong style={{color:'#e74c3c'}}>- {moeda(t.desconto)}</strong></span>
+            <span style={{fontSize:14}}>Total: <strong style={{color:'#27ae60'}}>{moeda(t.total)}</strong></span>
+          </div>
+
+          {/* Prévia do documento */}
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Como o cliente vai receber</div>
+          <iframe title="Prévia da proposta" srcDoc={html}
+            style={{width:'100%',height:420,border:'1px solid #e8eaed',borderRadius:8,background:'#fff'}}/>
+
+          {!cfg.imagens?.topo&&!cfg.imagens?.institucional1&&(
+            <div style={{fontSize:11,color:'#b45309',background:'#fff8ee',borderRadius:7,padding:'9px 12px',marginTop:10,lineHeight:1.6}}>
+              As imagens do modelo ainda não foram enviadas. Suba em <strong>Configurações › Orçamentos › Modelo padrão</strong> e
+              a proposta passa a sair com o material institucional.
+            </div>
+          )}
+
+          {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'9px 12px',marginTop:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+
+          {gerado&&(
+            <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:8,padding:'12px 14px',marginTop:12}}>
+              <div style={{fontSize:12,color:'#276749',fontWeight:700,marginBottom:podeSugerir?7:0}}>
+                ✓ Orçamento {numero} salvo — já está em Orçamentos, como rascunho.
+              </div>
+              {podeSugerir&&(
+                <div>
+                  <div style={{fontSize:11,color:'#2c3e50',marginBottom:8,lineHeight:1.6}}>
+                    Este lead pediu orçamento. Normalmente é a hora de movê-lo para <strong>{etapaQualificado.label}</strong>. Quer mover agora?
+                  </div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    <button onClick={async()=>{
+                        await setDoc(doc(db,'leads',lead.id),{status:'qualificado',atualizadoEm:new Date().toISOString()},{merge:true});
+                        await registrarEventoLead(lead,'status',`Movido para ${etapaQualificado.label} após gerar orçamento`);
+                        onFechar();
+                      }}
+                      style={{padding:'8px 16px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                      Sim, mover para {etapaQualificado.label}
+                    </button>
+                    <button onClick={onFechar}
+                      style={{padding:'8px 16px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:'pointer',fontSize:12}}>
+                      Agora não
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{padding:'14px 22px',borderTop:'1px solid #e8eaed',display:'flex',gap:9,flexWrap:'wrap',alignItems:'center'}}>
+          <button onClick={baixarWord} disabled={salvando}
+            style={{padding:'10px 20px',borderRadius:7,border:'none',background:'#2b5797',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:13}}>
+            📄 Word
+          </button>
+          <button onClick={baixarPDF} disabled={salvando}
+            style={{padding:'10px 20px',borderRadius:7,border:'none',background:'#c0392b',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:13}}>
+            🖨️ PDF
+          </button>
+          <button onClick={()=>registrar('nenhum')} disabled={salvando||!!gerado}
+            style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:(salvando||gerado)?'default':'pointer',fontSize:12}}>
+            {gerado?'✓ Salvo':'Só salvar'}
+          </button>
+          <span style={{fontSize:10,color:'#aaa',flex:1,minWidth:160}}>
+            {salvando?'Salvando...':'Qualquer opção grava o orçamento no menu Orçamentos.'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONFIGURAÇÕES › ORÇAMENTOS › MODELO PADRÃO ──────────────────────────────
+function ConfigOrcamentoModelo(){
+  const cfg=useOrcModelo();
+  const [f,setF]=useState(null);
+  const [salvo,setSalvo]=useState(false);
+  const [enviando,setEnviando]=useState('');
+  const [erro,setErro]=useState('');
+
+  useEffect(()=>{if(f===null)setF(cfg);},[cfg,f]);
+  if(f===null)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando modelo...</div>;
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setF(x=>({...x,[k]:v}));setSalvo(false);};
+  const upEmp=(k,v)=>{setF(x=>({...x,empresa:{...(x.empresa||{}),[k]:v}}));setSalvo(false);};
+
+  async function enviarImagem(campo,file){
+    if(!file)return;
+    setEnviando(campo);setErro('');
+    try{
+      const path=`config/orcamento/${campo}_${Date.now()}_${file.name.replace(/[^\w.]+/g,'_')}`;
+      const r=storageRef(storage,path);
+      await uploadBytes(r,file);
+      const url=await getDownloadURL(r);
+      setF(x=>({...x,imagens:{...(x.imagens||{}),[campo]:url}}));
+      setSalvo(false);
+    }catch(e){setErro('Erro ao enviar a imagem: '+e.message);}
+    setEnviando('');
+  }
+
+  async function salvar(){
+    try{
+      await setDoc(doc(db,'config','orcamento_modelo'),{
+        ...f,atualizadoEm:new Date().toISOString(),
+        atualizadoPor:auth.currentUser?.email||'—',
+      },{merge:true});
+      setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+    }catch(e){setErro('Erro ao salvar: '+e.message);}
+  }
+
+  const CAMPOS_IMG=[
+    {id:'topo',l:'Banner do topo',d:'Faixa que abre a proposta.'},
+    {id:'institucional1',l:'Página institucional 1',d:'"Conheça nossa empresa".'},
+    {id:'institucional2',l:'Página institucional 2',d:'"...e tecnologia".'},
+  ];
+
+  return(
+    <div>
+      <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,marginBottom:14,maxWidth:640}}>
+        Este é o texto fixo que sai em toda proposta gerada a partir de um lead. Os dados do cliente, os itens
+        e os valores entram automaticamente — aqui você mexe só no que não muda.
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:10,marginBottom:10}}>
+        <div><label style={lbl}>Título da proposta</label>
+          <input style={fi} value={f.tipoProposta||''} onChange={e=>up('tipoProposta',e.target.value.toUpperCase())}/></div>
+        <div><label style={lbl}>Validade (dias)</label>
+          <input style={fi} type="number" min="1" value={f.validadeDias||15} onChange={e=>up('validadeDias',Number(e.target.value)||15)}/>
+          <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>A data é calculada na hora de gerar.</div></div>
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Título da parte institucional</label>
+        <input style={fi} value={f.tituloInstitucional||''} onChange={e=>up('tituloInstitucional',e.target.value.toUpperCase())}/>
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Forma de pagamento</label>
+        <input style={fi} value={f.formaPagamento||''} onChange={e=>up('formaPagamento',e.target.value)}/>
+      </div>
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Envio</label>
+        <input style={fi} value={f.envio||''} onChange={e=>up('envio',e.target.value)}/>
+      </div>
+      <div style={{marginBottom:14}}>
+        <label style={lbl}>Observação extra (opcional)</label>
+        <textarea style={{...fi,minHeight:60,resize:'vertical'}} value={f.observacoes||''} onChange={e=>up('observacoes',e.target.value)}
+          placeholder="Ex: Instalação e treinamento inclusos."/>
+      </div>
+
+      <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Imagens do documento</div>
+      <div style={{fontSize:10,color:'#95a5a6',marginBottom:9,lineHeight:1.6,maxWidth:640}}>
+        Ficam no Storage, não dentro do documento — por isso não há limite de tamanho aqui. Ainda assim,
+        prefira imagens abaixo de 400 KB: a proposta abre bem mais rápido no celular do cliente.
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:10,marginBottom:16}}>
+        {CAMPOS_IMG.map(c=>(
+          <div key={c.id} style={{background:'#f8f9fa',borderRadius:8,padding:'12px',border:'1px solid #e8eaed'}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#2c3e50',marginBottom:2}}>{c.l}</div>
+            <div style={{fontSize:10,color:'#95a5a6',marginBottom:8}}>{c.d}</div>
+            {f.imagens?.[c.id]
+              ? <img src={f.imagens[c.id]} alt={c.l} style={{width:'100%',borderRadius:6,marginBottom:8,border:'1px solid #e8eaed'}}/>
+              : <div style={{background:'#fff',border:'1px dashed #dde1e7',borderRadius:6,padding:'18px',textAlign:'center',fontSize:11,color:'#bbb',marginBottom:8}}>sem imagem</div>}
+            <label style={{display:'block',padding:'7px 12px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#3498db',fontWeight:700,textAlign:'center'}}>
+              {enviando===c.id?'Enviando...':(f.imagens?.[c.id]?'Trocar imagem':'Enviar imagem')}
+              <input type="file" accept="image/*" style={{display:'none'}}
+                onChange={e=>{enviarImagem(c.id,e.target.files[0]);e.target.value='';}}/>
+            </label>
+            {f.imagens?.[c.id]&&(
+              <button onClick={()=>{setF(x=>({...x,imagens:{...(x.imagens||{}),[c.id]:''}}));setSalvo(false);}}
+                style={{width:'100%',marginTop:5,padding:'5px',borderRadius:6,border:'none',background:'transparent',color:'#e74c3c',cursor:'pointer',fontSize:10,fontWeight:600}}>
+                remover
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Rodapé — dados da empresa</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:10,marginBottom:16}}>
+        <div><label style={lbl}>Razão social</label><input style={fi} value={f.empresa?.razao||''} onChange={e=>upEmp('razao',e.target.value)}/></div>
+        <div><label style={lbl}>CNPJ</label><input style={fi} value={f.empresa?.cnpj||''} onChange={e=>upEmp('cnpj',e.target.value)}/></div>
+        <div><label style={lbl}>Endereço</label><input style={fi} value={f.empresa?.endereco||''} onChange={e=>upEmp('endereco',e.target.value)}/></div>
+        <div><label style={lbl}>E-mail</label><input style={fi} value={f.empresa?.email||''} onChange={e=>upEmp('email',e.target.value)}/></div>
+      </div>
+
+      {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'9px 12px',marginBottom:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+
+      <button onClick={salvar}
+        style={{padding:'10px 22px',borderRadius:7,border:'none',background:salvo?'#27ae60':'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+        {salvo?'✓ Salvo!':'💾 Salvar modelo'}
+      </button>
+    </div>
+  );
+}
+
+function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil,usuarios,etapasLead}){
   // Converte o formato antigo (servicos[] + equipTipo) para a lista unificada
   function montarItens(l){
     if(Array.isArray(l.itens)&&l.itens.length)return l.itens;
@@ -16077,6 +16625,7 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
   });
   const [salvo,setSalvo]=useState(false);
   const [salvando,setSalvando]=useState(false);
+  const [modalOrc,setModalOrc]=useState(false);
 
   // Recarrega quando muda de lead
   useEffect(()=>{
@@ -16181,8 +16730,38 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil}){
           {salvando?'Salvando...':salvo?'✓ Salvo!':'💾 Salvar proposta'}
         </button>
 
+        {(()=>{
+          // Só libera com equipamento E serviço: é o que o documento precisa para
+          // fazer sentido, e evita proposta pela metade indo para o cliente.
+          const temEquip=(p.itens||[]).some(i=>i.tipo==='equipamento');
+          const temServ=(p.itens||[]).some(i=>i.tipo==='servico');
+          const ok=temEquip&&temServ;
+          const falta=!temEquip&&!temServ?'inclua um equipamento e um serviço'
+                     :!temEquip?'falta incluir um equipamento'
+                     :'falta incluir um serviço';
+          return(
+            <>
+              <button
+                onClick={async()=>{await salvar();setModalOrc(true);}}
+                disabled={!ok||salvando}
+                title={ok?'Gerar a proposta em Word ou PDF':falta}
+                style={{padding:'9px 20px',borderRadius:7,border:'none',
+                  background:ok?'#f5a623':'#e8eaed',color:ok?'#fff':'#aaa',
+                  fontWeight:700,cursor:ok&&!salvando?'pointer':'default',fontSize:12}}>
+                📋 Gerar Orçamento
+              </button>
+              {!ok&&<span style={{fontSize:10,color:'#e67e22',fontWeight:600}}>Para gerar o orçamento, {falta}.</span>}
+            </>
+          );
+        })()}
+
         <span style={{fontSize:10,color:'#aaa'}}>Estes dados vão preenchidos ao converter em cliente.</span>
       </div>
+
+      {modalOrc&&(
+        <ModalOrcamentoLead lead={lead} itens={p.itens} usuarios={usuarios}
+          etapasLead={etapasLead} onFechar={()=>setModalOrc(false)}/>
+      )}
     </div>
   );
 }
@@ -16201,6 +16780,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const etapasLead=useEtapasLead();
   const [pedirRespLista,setPedirRespLista]=useState(null);
   const [filtroResp,setFiltroResp]=useState('todos');
+  const [modalOrcTopo,setModalOrcTopo]=useState(false);
 
   // Acompanha o log de sincronizacao para mostrar a ultima atualizacao
   useEffect(()=>{
@@ -16347,7 +16927,28 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                 );
               })()}
               <button onClick={()=>onConverterCliente(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#27ae60',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>👤 Converter em Cliente</button>
-              <button onClick={()=>onConverterOrcamento(lead)} style={{padding:'8px 14px',borderRadius:6,border:'none',background:'#f5a623',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>📋 Gerar Orçamento</button>
+              {(()=>{
+                // Mesmo botão do bloco de proposta. Sem os itens montados ele não
+                // gera nada — então leva o vendedor até onde se monta.
+                const its=lead.itens||[];
+                const ok=its.some(i=>i.tipo==='equipamento')&&its.some(i=>i.tipo==='servico');
+                return(
+                  <button
+                    onClick={()=>{
+                      if(ok)setModalOrcTopo(true);
+                      else{
+                        const el=document.getElementById('bloco-proposta-lead');
+                        if(el)el.scrollIntoView({behavior:'smooth',block:'center'});
+                      }
+                    }}
+                    title={ok?'Gerar a proposta em Word ou PDF':'Monte o equipamento e o serviço na Proposta ao cliente'}
+                    style={{padding:'8px 14px',borderRadius:6,border:'none',
+                      background:ok?'#f5a623':'#fdf1dc',color:ok?'#fff':'#b8860b',
+                      fontWeight:700,cursor:'pointer',fontSize:12}}>
+                    📋 Gerar Orçamento
+                  </button>
+                );
+              })()}
               <button onClick={()=>excluir(lead.id)} style={{padding:'8px 10px',borderRadius:6,border:'none',background:'#fee2e2',color:'#e74c3c',fontWeight:700,cursor:'pointer',fontSize:12}}>🗑️</button>
             </div>
           </div>
@@ -16373,7 +16974,12 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
         <BlocoAgendamentoLead lead={lead} usuarios={usuarios}/>
 
         {/* Proposta: plano, serviços e valores */}
-        <BlocoPropostaLead lead={lead} orcServicos={orcServicos} equipamentosCad={equipamentosCad} perfil={perfil}/>
+        <div id="bloco-proposta-lead"/>
+        {modalOrcTopo&&(
+          <ModalOrcamentoLead lead={lead} itens={lead.itens||[]} usuarios={usuarios}
+            etapasLead={etapasLead} onFechar={()=>setModalOrcTopo(false)}/>
+        )}
+        <BlocoPropostaLead lead={lead} orcServicos={orcServicos} equipamentosCad={equipamentosCad} perfil={perfil} usuarios={usuarios} etapasLead={etapasLead}/>
 
         {/* Tempo de resposta + histórico */}
         <div style={estiloSecao('historico',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
@@ -17065,8 +17671,8 @@ export default function App(){
   }
 
   function converterLeadEmOrcamento(lead){
-    // Abre o módulo de orçamentos com dados pré-preenchidos
-    if(lead.id) setDoc(doc(db,'leads',lead.id),{status:'qualificado',atualizadoEm:new Date().toISOString()},{merge:true});
+    // A etapa NÃO muda mais sozinha aqui: quem sugere mover para Qualificado é o
+    // modal de orçamento, depois de o documento ficar pronto.
     setPage('orcamentos');
   }
 
