@@ -9961,9 +9961,9 @@ function PainelLateral({painelOrc,orcamentos,currentUser,nomeVendedor,followInpu
   );
 }
 
-function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM,currentUser}){
+function OrcamentosView({orcamentos,orcServicos,orcFormas,orcTemplates,equipamentosCad,vendedoresCad,onImportarCRM,onAbrirLead,currentUser}){
   const [subAba,setSubAba]=useState('lista');
-  const [visao,setVisao]=useState('lista'); // 'lista' | 'kanban'
+  const [visao,setVisao]=useState('kanban'); // 'lista' | 'kanban'
   const [orcSel,setOrcSel]=useState(null);
   const [editando,setEditando]=useState(false);
   const [modalVenda,setModalVenda]=useState(null);
@@ -10317,7 +10317,13 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
         setIaAberta={setIaAberta}
         onFechar={()=>{setPainelOrc(null);setIaResposta('');setIaAberta(false);}}
         onAbrirVenda={abrirModalVenda}
-        onEditar={orc=>{setEditando(true);setOrcSel(orc);setPainelOrc(null);}}
+        onEditar={orc=>{
+          // Orçamento que nasceu de um lead se corrige no lead: é lá que estão
+          // os itens, o porte e o contato. Editar o orçamento solto deixaria os
+          // dois com versões diferentes da mesma proposta.
+          if(orc._leadId&&onAbrirLead){setPainelOrc(null);onAbrirLead(orc._leadId);return;}
+          setEditando(true);setOrcSel(orc);setPainelOrc(null);
+        }}
         registrarFollowup={registrarFollowup}
         consultarIA={consultarIA}
         diasDesde={diasDesde}
@@ -16887,6 +16893,10 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
   const [salvando,setSalvando]=useState(false);
   const [gerado,setGerado]=useState(null);   // {id, formato}
   const [erro,setErro]=useState('');
+  const [link,setLink]=useState('');
+  const [publicando,setPublicando]=useState(false);
+  const [enviandoZap,setEnviandoZap]=useState(false);
+  const [avisoEnvio,setAvisoEnvio]=useState('');
 
   const t=totaisOrcamento(linhas);
   const numero=useMemo(()=>'ORC-'+new Date().getFullYear()+'-'+String(lead.id||'').slice(-6).toUpperCase(),[lead.id]);
@@ -16981,6 +16991,67 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
     await registrar('word');
   }
 
+  // Publica a proposta como página no Storage para poder mandar o endereço por
+  // e-mail ou WhatsApp. Link em vez de anexo de propósito: abre na hora no
+  // celular do cliente, sem baixar nada, e funciona em qualquer aparelho.
+  // Fica em config/ porque é a pasta que as regras do Storage já liberam.
+  async function publicar(){
+    if(link)return link;
+    setPublicando(true);setErro('');
+    try{
+      const id=gerado?.id||('orc_'+Date.now());
+      const ref=storageRef(storage,`config/propostas/${id}.html`);
+      await uploadBytes(ref,new Blob([html],{type:'text/html;charset=utf-8'}),
+        {contentType:'text/html; charset=utf-8',contentDisposition:'inline'});
+      const url=await getDownloadURL(ref);
+      setLink(url);
+      if(gerado?.id)await setDoc(doc(db,'orcamentos',gerado.id),{linkProposta:url},{merge:true});
+      setPublicando(false);
+      return url;
+    }catch(e){
+      setErro('Não consegui publicar a proposta: '+e.message);
+      setPublicando(false);
+      return '';
+    }
+  }
+
+  async function enviarEmail(){
+    const id=await registrar('email');
+    if(!id)return;
+    const url=await publicar();
+    if(!url)return;
+    const assunto=encodeURIComponent(`Proposta ${numero} — Guion Informática`);
+    const corpo=encodeURIComponent(
+      `Olá, ${String(lead.nome||'').split(' ')[0]}!\n\n`+
+      `Segue a proposta que conversamos, no valor de ${moeda(t.total)}.\n\n`+
+      `${url}\n\n`+
+      `A proposta é válida até ${validade}. Qualquer dúvida é só me chamar.\n\n`+
+      `Atenciosamente,\n${vend.nome}\nGuion Informática e Relógio de Ponto`
+    );
+    window.open(`mailto:${lead.email||''}?subject=${assunto}&body=${corpo}`);
+    setAvisoEnvio('E-mail aberto no seu programa de e-mail, já preenchido.');
+  }
+
+  async function enviarWhats(){
+    const id=await registrar('whatsapp');
+    if(!id)return;
+    const url=await publicar();
+    if(!url)return;
+    setEnviandoZap(true);setAvisoEnvio('');
+    const msg=`Olá ${String(lead.nome||'').split(' ')[0]}! Segue a proposta que conversamos, `
+      +`no valor de ${moeda(t.total)}. Válida até ${validade}.\n\n${url}`;
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/conversaEnviar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({leadId:lead.id,texto:msg,usuario:auth.currentUser?.email}),
+      });
+      const d=await r.json();
+      if(d.error)setErro('WhatsApp: '+d.error+'  — se a janela de 24h fechou, mande pelo WhatsApp Web.');
+      else setAvisoEnvio('Proposta enviada no WhatsApp e registrada na conversa.');
+    }catch(e){setErro('WhatsApp: '+e.message);}
+    setEnviandoZap(false);
+  }
+
   const fi={padding:'6px 8px',borderRadius:5,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
 
   // Sugestão de etapa: só aparece depois de gerar, e só se ainda não estiver lá
@@ -17067,6 +17138,13 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
               <div style={{fontSize:12,color:'#276749',fontWeight:700,marginBottom:podeSugerir?7:0}}>
                 ✓ Orçamento {numero} salvo — já está em Orçamentos, como rascunho.
               </div>
+              {link&&(
+                <div style={{fontSize:11,marginBottom:podeSugerir?8:0,wordBreak:'break-all'}}>
+                  <a href={link} target="_blank" rel="noopener noreferrer" style={{color:'#276749',fontWeight:600}}>
+                    🔗 Abrir a proposta como o cliente vê
+                  </a>
+                </div>
+              )}
               {podeSugerir&&(
                 <div>
                   <div style={{fontSize:11,color:'#2c3e50',marginBottom:8,lineHeight:1.6}}>
@@ -17105,8 +17183,26 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
             style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:(salvando||gerado)?'default':'pointer',fontSize:12}}>
             {gerado?'✓ Salvo':'Só salvar'}
           </button>
+
+          <div style={{width:1,height:26,background:'#e8eaed'}}/>
+
+          <button onClick={enviarEmail} disabled={salvando||publicando||!lead.email}
+            title={lead.email?`Enviar para ${lead.email}`:'Este lead está sem e-mail'}
+            style={{padding:'10px 16px',borderRadius:7,border:'none',
+              background:lead.email?'#f5a623':'#e8eaed',color:lead.email?'#fff':'#aaa',
+              fontWeight:700,cursor:lead.email?'pointer':'default',fontSize:12}}>
+            ✉️ E-mail
+          </button>
+          <button onClick={enviarWhats} disabled={salvando||publicando||enviandoZap||!lead.telefone}
+            title={lead.telefone?`Enviar para ${lead.telefone}`:'Este lead está sem telefone'}
+            style={{padding:'10px 16px',borderRadius:7,border:'none',
+              background:lead.telefone?'#1EA952':'#e8eaed',color:lead.telefone?'#fff':'#aaa',
+              fontWeight:700,cursor:lead.telefone?'pointer':'default',fontSize:12}}>
+            {enviandoZap?'Enviando...':'💬 WhatsApp'}
+          </button>
+
           <span style={{fontSize:10,color:'#aaa',flex:1,minWidth:160}}>
-            {salvando?'Salvando...':'Qualquer opção grava o orçamento no menu Orçamentos.'}
+            {salvando?'Salvando...':publicando?'Publicando a proposta...':avisoEnvio||'Qualquer opção grava o orçamento no menu Orçamentos.'}
           </span>
         </div>
       </div>
@@ -17403,7 +17499,7 @@ function BlocoPropostaLead({lead,orcServicos,equipamentosCad,perfil,usuarios,eta
   );
 }
 
-function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,equipamentosCad,vendedoresCad,perfil,usuarios}){
+function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,equipamentosCad,vendedoresCad,perfil,usuarios,leadInicial,onConsumirInicial}){
   const [sel,setSel]=useState(null);
   const [filtroStatus,setFiltroStatus]=useState('todos');
   const [busca,setBusca]=useState('');
@@ -17419,6 +17515,13 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const [filtroResp,setFiltroResp]=useState('todos');
   const [modalOrcTopo,setModalOrcTopo]=useState(false);
   const [leadParaConversa,setLeadParaConversa]=useState('');
+
+  // Chegou de outra tela pedindo um lead específico (ex: editar um orçamento)
+  useEffect(()=>{
+    if(!leadInicial)return;
+    const l=(leads||[]).find(x=>x.id===leadInicial);
+    if(l){setAba('lista');setSel(l);setObsEdit('');onConsumirInicial?.();}
+  },[leadInicial,leads]);
 
   // Clique no ícone do WhatsApp: assume o lead e abre a conversa AQUI, em vez de
   // jogar o vendedor no WhatsApp Web. Dentro da janela de 24h não há motivo
@@ -18029,6 +18132,7 @@ export default function App(){
   const [equipamentosCad,setEquipamentosCad]=useState([]);
   const [solicitacoes,setSolicitacoes]=useState([]);
   const [orcamentos,setOrcamentos]=useState([]);
+  const [leadParaAbrir,setLeadParaAbrir]=useState('');
   const [orcServicos,setOrcServicos]=useState([]);
   const [orcFormas,setOrcFormas]=useState([]);
   const [orcTemplates,setOrcTemplates]=useState([]);
@@ -18795,6 +18899,7 @@ export default function App(){
             vendedoresCad={vendedoresCad} perfil={perfil}
             currentUser={userProfile}
             onImportarCRM={dados=>{setDadosImportados(dados);setPage('novo');}}
+            onAbrirLead={id=>{setLeadParaAbrir(id);setPage('leads');}}
           />}
 
           {/* SOLICITAÇÕES */}
@@ -18811,6 +18916,8 @@ export default function App(){
             usuarios={usuarios}
             onConverterCliente={converterLeadEmCliente}
             onConverterOrcamento={converterLeadEmOrcamento}
+            leadInicial={leadParaAbrir}
+            onConsumirInicial={()=>setLeadParaAbrir('')}
           />}
 
           {!clienteSel&&page==='solicitacoes'&&<SolicitacoesView solicitacoes={solicitacoes} usuarios={usuarios} todos={todos} currentUser={userProfile} onAbrirCliente={c=>setClienteSel(c)} buscaGlobal={busca}/>}
