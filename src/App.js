@@ -14225,6 +14225,16 @@ const TIPOS_ARQUIVO=['imagem','audio','video','documento'];
 // Teto da Meta por tipo. Passar disso a mensagem é recusada no envio, não no upload.
 const LIMITE_MB={imagem:5,audio:16,video:16,documento:100};
 
+// Uma linha descrevendo a ação, para o vendedor reconhecer o que vai mandar
+function resumoAcao(a){
+  const t=String(a.texto||'').replace(/\s+/g,' ').trim();
+  if(a.tipo==='texto')   return t.slice(0,70)+(t.length>70?'...':'');
+  if(a.tipo==='youtube') return t?`${t.slice(0,40)} — ${a.url}`:String(a.url||'');
+  if(a.tipo==='link')    return `[${a.rotulo||'Saiba mais'}] ${t.slice(0,45)}`;
+  const nome=a.arquivo||'arquivo';
+  return t?`${nome} · "${t.slice(0,40)}"`:nome;
+}
+
 function useRespostasRapidas(){
   const [lista,setLista]=useState([]);
   useEffect(()=>{
@@ -14245,6 +14255,16 @@ function PainelRespostas({lead,onFechar}){
   const [editando,setEditando]=useState(null);
   const [enviando,setEnviando]=useState('');
   const [aviso,setAviso]=useState(null);
+  const [aberta,setAberta]=useState('');   // resposta com a lista de seleção aberta
+  const [marcadas,setMarcadas]=useState([]);// índices escolhidos, só para este envio
+
+  // Abre a lista já com tudo marcado: o caso comum continua sendo mandar tudo
+  function abrirSelecao(r){
+    if(aberta===r.id){setAberta('');return;}
+    setAberta(r.id);
+    setMarcadas((r.acoes||[]).map((_,i)=>i));
+  }
+  const alternar=i=>setMarcadas(m=>m.includes(i)?m.filter(x=>x!==i):[...m,i].sort((a,b)=>a-b));
 
   const filtradas=useMemo(()=>{
     const b=busca.trim().toLowerCase();
@@ -14256,10 +14276,16 @@ function PainelRespostas({lead,onFechar}){
     });
   },[respostas,busca]);
 
-  async function disparar(r){
+  async function disparar(r,indices){
     if(!lead?.id)return;
-    const qtd=(r.acoes||[]).length;
-    if(!window.confirm(`Enviar "${r.nome}" para ${lead.nome}?\n\n${qtd} mensagem(ns) em sequência.`))return;
+    const total=(r.acoes||[]).length;
+    const sel=Array.isArray(indices)?indices:null;
+    const qtd=sel?sel.length:total;
+    if(!qtd){setAviso({erro:true,txt:'Marque ao menos uma mensagem.'});return;}
+    const detalhe=sel&&qtd<total
+      ? `${qtd} de ${total} mensagens — as não marcadas ficam de fora só desta vez.`
+      : `${qtd} mensagem(ns) em sequência.`;
+    if(!window.confirm(`Enviar "${r.nome}" para ${lead.nome}?\n\n${detalhe}`))return;
     setEnviando(r.id);setAviso(null);
     // Sequência longa demora de propósito (as esperas entre mensagens). Mas sem
     // um teto o botão fica em "Enviando..." para sempre se a Datafy travar.
@@ -14268,7 +14294,8 @@ function PainelRespostas({lead,onFechar}){
     try{
       const rp=await fetch(`${FUNCTIONS_URL}/respostaRapidaEnviar`,{
         method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,
-        body:JSON.stringify({leadId:lead.id,respostaId:r.id,usuario:auth.currentUser?.email}),
+        body:JSON.stringify({leadId:lead.id,respostaId:r.id,usuario:auth.currentUser?.email,
+          apenas:(sel&&sel.length<total)?sel:null}),
       });
       const d=await rp.json();
       if(d.error)setAviso({erro:true,txt:d.error});
@@ -14285,6 +14312,7 @@ function PainelRespostas({lead,onFechar}){
     }
     clearTimeout(corta);
     setEnviando('');
+    setAberta('');
   }
 
   if(editando)return(
@@ -14328,6 +14356,10 @@ function PainelRespostas({lead,onFechar}){
               style={{border:'1px solid #e8eaed',borderRadius:7,padding:'9px 11px',marginBottom:6,background:'#fff'}}>
               <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
                 <span style={{fontWeight:700,fontSize:12,color:'#2c3e50',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.nome||'(sem nome)'}</span>
+                <button onClick={()=>abrirSelecao(r)} title="Escolher o que mandar desta vez"
+                  style={{background:'none',border:'none',cursor:'pointer',color:aberta===r.id?'#1EA952':'#95a5a6',fontSize:12,padding:'0 3px'}}>
+                  {aberta===r.id?'▾':'▶'}
+                </button>
                 <button onClick={()=>setEditando(r)} title="Editar"
                   style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:12,padding:'0 3px'}}>✏️</button>
               </div>
@@ -14340,11 +14372,44 @@ function PainelRespostas({lead,onFechar}){
                 {et&&<span style={{fontSize:8,background:et.color+'18',color:et.color,padding:'1px 6px',borderRadius:8,fontWeight:700}}>→ {et.label}</span>}
                 {Number(r.usos)>0&&<span style={{fontSize:9,color:'#c5c5c5'}}>· {r.usos}x</span>}
               </div>
-              <button onClick={()=>disparar(r)} disabled={!!enviando}
+              {aberta===r.id&&(
+                <div style={{background:'#f8f9fa',borderRadius:6,padding:'7px 8px',marginBottom:7,border:'1px solid #e8eaed'}}>
+                  <div style={{fontSize:9,color:'#7f8c8d',marginBottom:6,lineHeight:1.5}}>
+                    Desmarque o que não quer mandar agora. <strong>Nada é apagado</strong> — a resposta continua inteira para a próxima vez.
+                  </div>
+                  {(r.acoes||[]).map((a,i)=>{
+                    const T=TIPOS_ACAO.find(x=>x.id===a.tipo)||TIPOS_ACAO[0];
+                    const on=marcadas.includes(i);
+                    return(
+                      <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6,padding:'4px 0',borderBottom:'1px solid #eef1f3'}}>
+                        <input type="checkbox" checked={on} onChange={()=>alternar(i)} style={{cursor:'pointer',marginTop:2}}/>
+                        <div style={{flex:1,minWidth:0,opacity:on?1:.4}}>
+                          <div style={{fontSize:9,color:T.cor,fontWeight:700}}>{T.l}</div>
+                          <div style={{fontSize:10,color:'#5a6570',lineHeight:1.4,wordBreak:'break-word'}}>{resumoAcao(a)}</div>
+                        </div>
+                        <button onClick={()=>disparar(r,[i])} disabled={!!enviando} title="Mandar só esta"
+                          style={{background:'none',border:'none',cursor:'pointer',color:'#1EA952',fontSize:9,fontWeight:700,whiteSpace:'nowrap',padding:'2px 0'}}>
+                          só esta
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div style={{display:'flex',gap:6,marginTop:6}}>
+                    <button onClick={()=>setMarcadas((r.acoes||[]).map((_,i)=>i))}
+                      style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:9,fontWeight:600}}>marcar todas</button>
+                    <button onClick={()=>setMarcadas([])}
+                      style={{background:'none',border:'none',cursor:'pointer',color:'#95a5a6',fontSize:9,fontWeight:600}}>limpar</button>
+                  </div>
+                </div>
+              )}
+
+              <button onClick={()=>disparar(r,aberta===r.id?marcadas:null)} disabled={!!enviando}
                 style={{width:'100%',padding:'6px',borderRadius:6,border:'none',
                   background:enviando===r.id?'#dde1e7':'#25D366',color:'#fff',fontWeight:700,
                   cursor:enviando?'default':'pointer',fontSize:11}}>
-                {enviando===r.id?'Enviando...':'Enviar'}
+                {enviando===r.id?'Enviando...'
+                  :aberta===r.id?`Enviar ${marcadas.length} de ${(r.acoes||[]).length}`
+                  :'Enviar'}
               </button>
             </div>
           );

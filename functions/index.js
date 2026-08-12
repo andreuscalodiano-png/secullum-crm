@@ -4593,7 +4593,7 @@ exports.respostaRapidaEnviar = functions
     setCors(req, res);
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
     try {
-      const { leadId, respostaId, usuario } = req.body || {};
+      const { leadId, respostaId, usuario, apenas } = req.body || {};
       if (!leadId || !respostaId) throw new Error('Informe o lead e a resposta.');
 
       const [ls, rs] = await Promise.all([
@@ -4605,7 +4605,12 @@ exports.respostaRapidaEnviar = functions
 
       const lead = ls.data();
       const resp = rs.data();
-      const acoes = (resp.acoes || []).filter(a => a && a.tipo);
+      const todas = (resp.acoes || []).filter(a => a && a.tipo);
+      // `apenas` são índices escolhidos na hora do envio. Serve para mandar só o
+      // vídeo de uma sequência de oito, sem alterar o que está cadastrado.
+      const acoes = (Array.isArray(apenas) && apenas.length)
+        ? todas.filter((_, i) => apenas.map(Number).includes(i))
+        : todas;
       if (!acoes.length) throw new Error('Esta resposta não tem nenhuma ação cadastrada.');
       if (!lead.telefone) throw new Error('Este lead está sem telefone.');
 
@@ -4723,7 +4728,7 @@ exports.respostaRapidaEnviar = functions
           ...(lead.historico || []),
           {
             evento: 'resposta_rapida',
-            detalhe: `Resposta "${resp.nome}" enviada (${novas.length} mensagem(ns))`
+            detalhe: `Resposta "${resp.nome}" enviada (${novas.length} de ${todas.length} mensagem(ns))`
               + (moveu ? ` — movido para ${moveu}` : ''),
             data: new Date().toISOString(),
             usuario: usuario || '—',
