@@ -12952,7 +12952,6 @@ function AnunciosView({leads,usuarios,perfil}){
     {id:'campanhas',  l:'📢 Campanhas',  cor:'#c2185b'},
     {id:'recorrentes',l:'🔁 Recorrentes', cor:'#ad1457'},
     {id:'templates',  l:'📄 Templates',  cor:'#3498db'},
-    {id:'conversas',  l:'💬 Conversas',  cor:'#25D366'},
     {id:'ia',         l:'🤖 Atendimento IA', cor:'#8e44ad'},
     {id:'treino',     l:'🎓 Treinar a IA',   cor:'#6b21a8'},
   ];
@@ -12976,7 +12975,6 @@ function AnunciosView({leads,usuarios,perfil}){
       {aba==='campanhas'&&<AbaCampanhas leads={leads}/>}
       {aba==='recorrentes'&&<AbaRecorrentes leads={leads} usuarios={usuarios}/>}
       {aba==='templates'&&<AbaTemplates/>}
-      {aba==='conversas'&&<AbaConversas leads={leads}/>}
       {aba==='ia'&&<AbaAtendimentoIA usuarios={usuarios}/>}
       {aba==='treino'&&<AbaTreino/>}
     </div>
@@ -14171,6 +14169,377 @@ function NovaCampanha({leads,onFechar}){
   );
 }
 
+// ─── RESPOSTAS RÁPIDAS ───────────────────────────────────────────────────────
+// Biblioteca de sequências prontas, usada de dentro da conversa. Cada resposta
+// dispara várias mensagens em ordem (texto, imagem, áudio), com espera entre
+// elas, e pode mover o lead de etapa ao terminar.
+//
+// Só funciona dentro da janela de 24 horas da Meta — o que não é limitação na
+// prática, porque resposta rápida se usa quando o cliente acabou de escrever.
+
+const VARIAVEIS_RESPOSTA=[
+  {tag:'#primeiroNome',d:'João'},
+  {tag:'#nome',        d:'João da Silva'},
+  {tag:'#saudacao',    d:'Bom dia'},
+  {tag:'#periodo-dia', d:'manhã'},
+  {tag:'#funcionarios',d:'De 6 a 10 funcionários'},
+  {tag:'#solucao',     d:'Relógio de ponto fixo'},
+  {tag:'#email',       d:'joao@empresa.com'},
+  {tag:'#numero',      d:'5543999999999'},
+  {tag:'#vendedor',    d:'andreus'},
+];
+
+const TIPOS_ACAO=[
+  {id:'texto',     l:'💬 Texto',     cor:'#3498db'},
+  {id:'imagem',    l:'🖼️ Imagem',    cor:'#8e44ad'},
+  {id:'audio',     l:'🎤 Áudio',     cor:'#e67e22'},
+  {id:'documento', l:'📎 Documento', cor:'#16a085'},
+];
+
+function useRespostasRapidas(){
+  const [lista,setLista]=useState([]);
+  useEffect(()=>{
+    const u=onSnapshot(collection(db,'respostas_rapidas'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setLista(a.sort((x,y)=>String(x.nome||'').localeCompare(String(y.nome||''))));
+    });
+    return()=>u();
+  },[]);
+  return lista;
+}
+
+// ─── PAINEL DENTRO DA CONVERSA ───────────────────────────────────────────────
+function PainelRespostas({lead,onFechar}){
+  const respostas=useRespostasRapidas();
+  const etapas=useEtapasLead();
+  const [busca,setBusca]=useState('');
+  const [editando,setEditando]=useState(null);
+  const [enviando,setEnviando]=useState('');
+  const [aviso,setAviso]=useState(null);
+
+  const filtradas=useMemo(()=>{
+    const b=busca.trim().toLowerCase();
+    const base=[...respostas].sort((x,y)=>(Number(y.usos)||0)-(Number(x.usos)||0)||String(x.nome||'').localeCompare(String(y.nome||'')));
+    if(!b)return base;
+    return base.filter(r=>{
+      const alvo=[r.nome,...(r.acoes||[]).map(a=>a.texto||'')].join(' ').toLowerCase();
+      return alvo.includes(b);
+    });
+  },[respostas,busca]);
+
+  async function disparar(r){
+    if(!lead?.id)return;
+    const qtd=(r.acoes||[]).length;
+    if(!window.confirm(`Enviar "${r.nome}" para ${lead.nome}?\n\n${qtd} mensagem(ns) em sequência.`))return;
+    setEnviando(r.id);setAviso(null);
+    try{
+      const rp=await fetch(`${FUNCTIONS_URL}/respostaRapidaEnviar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({leadId:lead.id,respostaId:r.id,usuario:auth.currentUser?.email}),
+      });
+      const d=await rp.json();
+      if(d.error)setAviso({erro:true,txt:d.error});
+      else setAviso({
+        erro:(d.falhas||[]).length>0,
+        txt:`${d.enviadas} de ${d.total} enviada(s)`
+          +(d.moveu?` · lead movido para ${(etapas.find(e=>e.id===d.moveu)||{}).label||d.moveu}`:'')
+          +((d.falhas||[]).length?`\n\n${d.falhas.join('\n')}`:''),
+      });
+    }catch(e){setAviso({erro:true,txt:e.message});}
+    setEnviando('');
+  }
+
+  if(editando)return(
+    <EditorResposta resposta={editando} etapas={etapas} onFechar={()=>setEditando(null)}/>
+  );
+
+  return(
+    <div style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden',display:'flex',flexDirection:'column',maxHeight:'70vh'}}>
+      <div style={{padding:'12px 14px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:8}}>
+        <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',flex:1}}>⚡ Respostas rápidas</div>
+        <button onClick={()=>setEditando({nova:true})} title="Nova resposta"
+          style={{padding:'5px 11px',borderRadius:6,border:'none',background:'#25D366',color:'#fff',cursor:'pointer',fontSize:11,fontWeight:700}}>＋</button>
+        {onFechar&&<button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',fontSize:16,color:'#bbb',lineHeight:1}}>×</button>}
+      </div>
+
+      <div style={{padding:'9px 14px',borderBottom:'1px solid #f2f4f6'}}>
+        <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar resposta..."
+          style={{width:'100%',padding:'7px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,boxSizing:'border-box'}}/>
+      </div>
+
+      {aviso&&(
+        <div style={{margin:'9px 14px 0',padding:'8px 10px',borderRadius:6,fontSize:11,whiteSpace:'pre-wrap',lineHeight:1.5,
+          background:aviso.erro?'#fff5f5':'#f0fff4',border:`1px solid ${aviso.erro?'#feb2b2':'#9ae6b4'}`,color:aviso.erro?'#c53030':'#276749'}}>
+          {aviso.txt}
+        </div>
+      )}
+
+      <div style={{flex:1,overflowY:'auto',padding:'8px 10px'}}>
+        {filtradas.length===0&&(
+          <div style={{textAlign:'center',padding:'22px 10px',fontSize:11,color:'#95a5a6',lineHeight:1.6}}>
+            {respostas.length===0
+              ?<>Nenhuma resposta cadastrada.<br/>Use o ＋ para criar a primeira.</>
+              :'Nada encontrado com essa busca.'}
+          </div>
+        )}
+        {filtradas.map(r=>{
+          const et=etapas.find(e=>e.id===r.etapaDestino);
+          const tipos=[...new Set((r.acoes||[]).map(a=>a.tipo))];
+          return(
+            <div key={r.id}
+              style={{border:'1px solid #e8eaed',borderRadius:7,padding:'9px 11px',marginBottom:6,background:'#fff'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+                <span style={{fontWeight:700,fontSize:12,color:'#2c3e50',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.nome||'(sem nome)'}</span>
+                <button onClick={()=>setEditando(r)} title="Editar"
+                  style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:12,padding:'0 3px'}}>✏️</button>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:5,flexWrap:'wrap',marginBottom:7}}>
+                <span style={{fontSize:9,color:'#95a5a6'}}>{(r.acoes||[]).length} msg</span>
+                {tipos.map(t=>{
+                  const T=TIPOS_ACAO.find(x=>x.id===t);
+                  return T?<span key={t} style={{fontSize:9,color:T.cor}}>{T.l.split(' ')[0]}</span>:null;
+                })}
+                {et&&<span style={{fontSize:8,background:et.color+'18',color:et.color,padding:'1px 6px',borderRadius:8,fontWeight:700}}>→ {et.label}</span>}
+                {Number(r.usos)>0&&<span style={{fontSize:9,color:'#c5c5c5'}}>· {r.usos}x</span>}
+              </div>
+              <button onClick={()=>disparar(r)} disabled={!!enviando}
+                style={{width:'100%',padding:'6px',borderRadius:6,border:'none',
+                  background:enviando===r.id?'#dde1e7':'#25D366',color:'#fff',fontWeight:700,
+                  cursor:enviando?'default':'pointer',fontSize:11}}>
+                {enviando===r.id?'Enviando...':'Enviar'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── EDITOR DA SEQUÊNCIA ─────────────────────────────────────────────────────
+function EditorResposta({resposta,etapas,onFechar}){
+  const nova=resposta?.nova;
+  const [r,setR]=useState(nova
+    ?{nome:'',etapaDestino:'',acoes:[{uid:'a1',tipo:'texto',texto:'',esperaAntes:3,esperaDepois:2}]}
+    :{...resposta,acoes:(resposta.acoes||[]).map((a,i)=>({uid:a.uid||('a'+i),...a}))});
+  const [salvando,setSalvando]=useState(false);
+  const [enviandoArq,setEnviandoArq]=useState('');
+  const [erro,setErro]=useState('');
+  const [testeNum,setTesteNum]=useState('');
+  const [testando,setTestando]=useState('');
+  const [testeRes,setTesteRes]=useState(null);
+
+  const fi={padding:'7px 9px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.4,display:'block',marginBottom:2};
+  const up=(k,v)=>setR(x=>({...x,[k]:v}));
+  const upA=(uid,k,v)=>setR(x=>({...x,acoes:x.acoes.map(a=>a.uid===uid?{...a,[k]:v}:a)}));
+  const remA=uid=>setR(x=>({...x,acoes:x.acoes.filter(a=>a.uid!==uid)}));
+  const addA=tipo=>setR(x=>({...x,acoes:[...x.acoes,
+    {uid:'a'+Date.now(),tipo,texto:'',url:'',esperaAntes:tipo==='texto'?3:0,esperaDepois:2,voz:true}]}));
+  const moverA=(uid,dir)=>setR(x=>{
+    const i=x.acoes.findIndex(a=>a.uid===uid);const j=i+dir;
+    if(i<0||j<0||j>=x.acoes.length)return x;
+    const arr=[...x.acoes];[arr[i],arr[j]]=[arr[j],arr[i]];
+    return {...x,acoes:arr};
+  });
+
+  async function enviarArquivo(uid,file){
+    if(!file)return;
+    setEnviandoArq(uid);setErro('');
+    try{
+      const path=`config/respostas/${Date.now()}_${file.name.replace(/[^\w.]+/g,'_')}`;
+      const ref=storageRef(storage,path);
+      await uploadBytes(ref,file);
+      const url=await getDownloadURL(ref);
+      setR(x=>({...x,acoes:x.acoes.map(a=>a.uid===uid?{...a,url,arquivo:file.name}:a)}));
+    }catch(e){setErro('Erro ao enviar o arquivo: '+e.message);}
+    setEnviandoArq('');
+  }
+
+  // Confere se a Datafy aceita este tipo de mídia, mandando de verdade para um
+  // número. Usa o proxy que já existe, sem função nova no backend.
+  async function testar(a){
+    const num=String(testeNum||'').replace(/\D/g,'');
+    if(num.length<10){setErro('Digite o número com DDD para o teste.');return;}
+    if(!a.url){setErro('Envie o arquivo antes de testar.');return;}
+    setTestando(a.uid);setTesteRes(null);setErro('');
+    const corpo=a.tipo==='imagem'
+      ?{to:num,image:{link:a.url,caption:a.texto||''}}
+      :a.tipo==='audio'
+        ?{to:num,audio:{link:a.url,voice:a.voz!==false},voice:a.voz!==false}
+        :{to:num,document:{link:a.url,caption:a.texto||'',filename:a.arquivo||'arquivo.pdf'}};
+    try{
+      const rp=await fetch(`${FUNCTIONS_URL}/datafyProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({finalidade:'comercial',path:`/messages/send/${a.tipo==='imagem'?'image':a.tipo}`,method:'POST',body:corpo}),
+      });
+      const d=await rp.json();
+      const ok=rp.ok&&!d.error;
+      setTesteRes({uid:a.uid,ok,txt:ok
+        ?'✅ A Datafy aceitou. Confira se chegou no seu WhatsApp — e como chegou.'
+        :`❌ ${d.error?.message||d.error||JSON.stringify(d).slice(0,200)}`});
+    }catch(e){setTesteRes({uid:a.uid,ok:false,txt:'❌ '+e.message});}
+    setTestando('');
+  }
+
+  async function salvar(){
+    setErro('');
+    if(!String(r.nome||'').trim()){setErro('Dê um nome à resposta.');return;}
+    const validas=(r.acoes||[]).filter(a=>a.tipo==='texto'?String(a.texto||'').trim():a.url);
+    if(!validas.length){setErro('Cadastre ao menos uma mensagem com conteúdo.');return;}
+    setSalvando(true);
+    try{
+      const id=r.id||'rr_'+Date.now();
+      const {nova:_n,...dados}=r;
+      await setDoc(doc(db,'respostas_rapidas',id),{
+        ...dados,id,acoes:validas,
+        atualizadoEm:new Date().toISOString(),
+        criadaPor:r.criadaPor||auth.currentUser?.email||'—',
+      },{merge:true});
+      onFechar();
+    }catch(e){setErro(e.message);setSalvando(false);}
+  }
+
+  async function remover(){
+    if(!r.id)return;
+    if(!window.confirm(`Remover a resposta "${r.nome}"?`))return;
+    await deleteDoc(doc(db,'respostas_rapidas',r.id));
+    onFechar();
+  }
+
+  return(
+    <div style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden',display:'flex',flexDirection:'column',maxHeight:'78vh'}}>
+      <div style={{padding:'11px 14px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:8}}>
+        <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:12,padding:0}}>← Voltar</button>
+        <div style={{flex:1}}/>
+        {!nova&&<button onClick={remover} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:12}}>Excluir</button>}
+      </div>
+
+      <div style={{flex:1,overflowY:'auto',padding:'12px 14px'}}>
+        <div style={{marginBottom:9}}>
+          <label style={lbl}>Nome da resposta</label>
+          <input style={fi} value={r.nome||''} onChange={e=>up('nome',e.target.value)}
+            placeholder="Ex: 02 - Qualificação do cliente"/>
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <label style={lbl}>Ao terminar, mover o lead para</label>
+          <select style={fi} value={r.etapaDestino||''} onChange={e=>up('etapaDestino',e.target.value)}>
+            <option value="">— não mover —</option>
+            {(etapas||[]).filter(e=>e.ativo!==false).map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
+          </select>
+        </div>
+
+        <div style={{background:'#f8f9fa',borderRadius:7,padding:'8px 10px',marginBottom:12,fontSize:10,color:'#7f8c8d',lineHeight:1.7}}>
+          <strong style={{color:'#2c3e50'}}>Variáveis</strong> — clique para copiar:
+          <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:5}}>
+            {VARIAVEIS_RESPOSTA.map(v=>(
+              <button key={v.tag} title={'Ex: '+v.d}
+                onClick={()=>{navigator.clipboard?.writeText(v.tag);}}
+                style={{padding:'2px 7px',borderRadius:10,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#3498db',fontFamily:'monospace'}}>
+                {v.tag}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {(r.acoes||[]).map((a,idx)=>{
+          const T=TIPOS_ACAO.find(x=>x.id===a.tipo)||TIPOS_ACAO[0];
+          return(
+            <div key={a.uid} style={{border:`1px solid ${T.cor}33`,borderLeft:`3px solid ${T.cor}`,borderRadius:7,padding:'10px',marginBottom:8,background:'#fff'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:7}}>
+                <span style={{fontSize:10,fontWeight:700,color:T.cor}}>{idx+1}. {T.l}</span>
+                <div style={{flex:1}}/>
+                <button onClick={()=>moverA(a.uid,-1)} disabled={idx===0} title="Subir"
+                  style={{background:'none',border:'none',cursor:idx===0?'default':'pointer',color:idx===0?'#e8eaed':'#95a5a6',fontSize:11}}>▲</button>
+                <button onClick={()=>moverA(a.uid,1)} disabled={idx===r.acoes.length-1} title="Descer"
+                  style={{background:'none',border:'none',cursor:idx===r.acoes.length-1?'default':'pointer',color:idx===r.acoes.length-1?'#e8eaed':'#95a5a6',fontSize:11}}>▼</button>
+                <button onClick={()=>remA(a.uid)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
+              </div>
+
+              {a.tipo!=='texto'&&(
+                <div style={{marginBottom:7}}>
+                  {a.url
+                    ?(a.tipo==='imagem'
+                      ?<img src={a.url} alt="" style={{maxWidth:'100%',maxHeight:130,borderRadius:6,border:'1px solid #e8eaed',display:'block',marginBottom:5}}/>
+                      :a.tipo==='audio'
+                        ?<audio controls src={a.url} style={{width:'100%',marginBottom:5}}/>
+                        :<div style={{fontSize:11,color:'#16a085',marginBottom:5}}>📎 {a.arquivo||'arquivo enviado'}</div>)
+                    :null}
+                  <label style={{display:'block',padding:'6px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fafbfc',cursor:'pointer',fontSize:10,color:T.cor,fontWeight:700,textAlign:'center'}}>
+                    {enviandoArq===a.uid?'Enviando...':(a.url?'Trocar arquivo':'Enviar arquivo')}
+                    <input type="file" style={{display:'none'}}
+                      accept={a.tipo==='imagem'?'image/*':a.tipo==='audio'?'audio/*':'*'}
+                      onChange={e=>{enviarArquivo(a.uid,e.target.files[0]);e.target.value='';}}/>
+                  </label>
+                </div>
+              )}
+
+              {a.tipo==='audio'&&(
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:10,color:'#7f8c8d',marginBottom:7,cursor:'pointer'}}>
+                  <input type="checkbox" checked={a.voz!==false} onChange={()=>upA(a.uid,'voz',a.voz===false)} style={{cursor:'pointer'}}/>
+                  Enviar como mensagem de voz (exige OGG/OPUS mono)
+                </label>
+              )}
+
+              <textarea style={{...fi,minHeight:a.tipo==='texto'?64:38,resize:'vertical',lineHeight:1.5}}
+                value={a.texto||''} onChange={e=>upA(a.uid,'texto',e.target.value)}
+                placeholder={a.tipo==='texto'?'#saudacao #primeiroNome! Aqui é da Guion...':'Legenda (opcional)'}/>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginTop:7}}>
+                <div>
+                  <label style={lbl}>{a.tipo==='texto'?'Digitando... (s)':'Esperar antes (s)'}</label>
+                  <input style={fi} type="number" min="0" max="60" value={a.esperaAntes??0}
+                    onChange={e=>upA(a.uid,'esperaAntes',Number(e.target.value)||0)}/>
+                </div>
+                <div>
+                  <label style={lbl}>Esperar depois (s)</label>
+                  <input style={fi} type="number" min="0" max="60" value={a.esperaDepois??0}
+                    onChange={e=>upA(a.uid,'esperaDepois',Number(e.target.value)||0)}/>
+                </div>
+              </div>
+
+              {a.tipo!=='texto'&&a.url&&(
+                <div style={{marginTop:8,paddingTop:8,borderTop:'1px dashed #e8eaed'}}>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+                    <input style={{...fi,flex:1,minWidth:120}} value={testeNum}
+                      onChange={e=>setTesteNum(e.target.value)} placeholder="Seu número com DDD"/>
+                    <button onClick={()=>testar(a)} disabled={testando===a.uid}
+                      style={{padding:'7px 12px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',color:T.cor,cursor:'pointer',fontSize:10,fontWeight:700,whiteSpace:'nowrap'}}>
+                      {testando===a.uid?'Testando...':'▶ Testar envio'}
+                    </button>
+                  </div>
+                  {testeRes?.uid===a.uid&&(
+                    <div style={{marginTop:6,fontSize:10,lineHeight:1.5,color:testeRes.ok?'#276749':'#c53030'}}>{testeRes.txt}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <div style={{display:'flex',gap:5,flexWrap:'wrap',marginTop:4}}>
+          {TIPOS_ACAO.map(t=>(
+            <button key={t.id} onClick={()=>addA(t.id)}
+              style={{padding:'6px 11px',borderRadius:6,border:`1px dashed ${t.cor}66`,background:'#fff',cursor:'pointer',fontSize:10,color:t.cor,fontWeight:700}}>
+              + {t.l}
+            </button>
+          ))}
+        </div>
+
+        {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:6,padding:'8px 10px',marginTop:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+      </div>
+
+      <div style={{padding:'11px 14px',borderTop:'1px solid #e8eaed'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{width:'100%',padding:'9px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#25D366',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
+          {salvando?'Salvando...':(nova?'Criar resposta':'Salvar')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AbaConversas({leads}){
   const [sel,setSel]=useState(null);
   const [texto,setTexto]=useState('');
@@ -14208,7 +14577,8 @@ function AbaConversas({leads}){
     <div>
       <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:12,padding:0}}>← Todas as conversas</button>
 
-      <div style={{background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden'}}>
+      <div style={{display:'flex',gap:12,alignItems:'flex-start',flexWrap:'wrap'}}>
+      <div style={{flex:'1 1 420px',minWidth:300,background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden'}}>
         <div style={{padding:'12px 18px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <div style={{width:34,height:34,borderRadius:'50%',background:'#25D36618',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0}}>💬</div>
           <div style={{flex:1,minWidth:130}}>
@@ -14256,6 +14626,11 @@ function AbaConversas({leads}){
         <div style={{padding:'0 18px 12px',fontSize:10,color:'#95a5a6'}}>
           Ao responder por aqui, o atendimento passa para você e a IA para de responder este contato.
         </div>
+      </div>
+
+      <div style={{flex:'0 1 310px',minWidth:270}}>
+        <PainelRespostas lead={lead}/>
+      </div>
       </div>
     </div>
   );
@@ -17060,7 +17435,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       {/* Abas + Ações */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
         <div style={{display:'flex',gap:6}}>
-          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
+          {[{id:'lista',l:'🎯 Leads'},{id:'kanban',l:'🗂️ Kanban'},{id:'conversas',l:'💬 Conversas'},{id:'campanhas',l:'📊 Campanhas'}].map(a=>(
             <button key={a.id} onClick={()=>setAba(a.id)} style={{padding:'8px 16px',borderRadius:7,border:'none',background:aba===a.id?'#e84393':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>{a.l}</button>
           ))}
         </div>
@@ -17157,6 +17532,8 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
       </div>
 
       {aba==='campanhas'&&<PainelCampanhas leads={leadsDoResp}/>}
+
+      {aba==='conversas'&&<AbaConversas leads={leads}/>}
 
       {aba==='kanban'&&(
         <div>
