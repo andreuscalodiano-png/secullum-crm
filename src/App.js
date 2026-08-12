@@ -17580,7 +17580,9 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const [ultimoSync,setUltimoSync]=useState(null);
   const etapasLead=useEtapasLead();
   const [pedirRespLista,setPedirRespLista]=useState(null);
-  const [filtroResp,setFiltroResp]=useState('todos');
+  // Abre em "sem responsável" de propósito: é a fila que precisa de alguém.
+  // Ver todos os leads logo de cara não diz o que fazer agora.
+  const [filtroResp,setFiltroResp]=useState('sem');
   const [modalOrcTopo,setModalOrcTopo]=useState(false);
   const [leadParaConversa,setLeadParaConversa]=useState('');
 
@@ -17698,6 +17700,10 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
   const leadsDoResp=leads.filter(l=>{
     if(filtroResp==='todos')return true;
     if(filtroResp==='sem')return !l.responsavelId;
+    if(filtroResp==='meus'){
+      const eu=(usuarios||[]).find(u=>u.email===auth.currentUser?.email);
+      return eu?l.responsavelId===eu.id:false;
+    }
     return l.responsavelId===filtroResp;
   });
 
@@ -17930,7 +17936,11 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
         </button>
         <button onClick={()=>{
             const alvo=leadsFiltrados.length?leadsFiltrados:leadsDoResp;
-            const quem=filtroResp==='todos'?'':(usuarios||[]).find(u=>u.id===filtroResp)?.nome||filtroResp;
+            const eu=(usuarios||[]).find(u=>u.email===auth.currentUser?.email);
+            const quem=filtroResp==='todos'?''
+              :filtroResp==='sem'?'sem responsável'
+              :filtroResp==='meus'?(eu?.nome||'você')
+              :(usuarios||[]).find(u=>u.id===filtroResp)?.nome||filtroResp;
             if(!window.confirm(`Exportar ${alvo.length} lead(s) do recorte atual para o painel da Datafy?\n\nO arquivo sai no formato que a campanha deles espera, sem repetidos e sem quem pediu para não receber.`))return;
             exportarCsvDatafy(alvo,quem||filtroStatus);
           }}
@@ -17961,13 +17971,21 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
 
       {/* Filtro por responsável — vale para lista, Kanban e campanhas */}
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap',
-        background:filtroResp!=='todos'?'#faf5ff':'#f8f9fa',borderRadius:8,padding:'9px 12px',
-        border:`1px solid ${filtroResp!=='todos'?'#e9d5ff':'#e8eaed'}`}}>
-        <span style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>Responsável</span>
+        background:filtroResp==='sem'?'#fff5f5':filtroResp!=='todos'?'#faf5ff':'#f8f9fa',borderRadius:8,padding:'9px 12px',
+        border:`1px solid ${filtroResp==='sem'?'#feb2b2':filtroResp!=='todos'?'#e9d5ff':'#e8eaed'}`}}>
+        <span style={{fontSize:10,color:filtroResp==='sem'?'#c53030':'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>Responsável</span>
         <select value={filtroResp} onChange={e=>setFiltroResp(e.target.value)}
-          style={{padding:'6px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',cursor:'pointer',fontWeight:filtroResp!=='todos'?700:400,minWidth:200}}>
-          <option value="todos">Todos os responsáveis ({leads.length})</option>
+          style={{padding:'6px 10px',borderRadius:6,fontSize:12,cursor:'pointer',minWidth:210,background:'#fff',
+            border:`1px solid ${filtroResp==='sem'?'#feb2b2':'#dde1e7'}`,
+            color:filtroResp==='sem'?'#c53030':'#2c3e50',
+            fontWeight:filtroResp!=='todos'?700:400}}>
           <option value="sem">❗ Sem responsável ({porResponsavel.sem||0})</option>
+          {(()=>{
+            const eu=(usuarios||[]).find(u=>u.email===auth.currentUser?.email);
+            return eu?<option value="meus">🙋 Meus leads ({porResponsavel[eu.id]||0})</option>:null;
+          })()}
+          <option value="todos">Todos os responsáveis ({leads.length})</option>
+          <option disabled>──────────</option>
           {(usuarios||[]).filter(u=>u.id&&u.status!=='revogado').map(u=>(
             <option key={u.id} value={u.id}>{u.nome||u.email} ({porResponsavel[u.id]||0})</option>
           ))}
@@ -17990,12 +18008,14 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
         <span style={{fontSize:11,color:'#7f8c8d'}}>
           {filtroResp==='todos'&&filtroStatus==='todos'
             ?`${leads.length} lead(s)`
-            :<strong style={{color:'#6b21a8'}}>{leadsDoResp.length} lead(s) neste recorte</strong>}
+            :<strong style={{color:filtroResp==='sem'?'#c53030':'#6b21a8'}}>
+               {leadsDoResp.length} lead(s){filtroResp==='sem'?' esperando alguém assumir':' neste recorte'}
+             </strong>}
         </span>
         {(filtroResp!=='todos'||filtroStatus!=='todos')&&(
           <button onClick={()=>{setFiltroResp('todos');setFiltroStatus('todos');}}
             style={{padding:'4px 12px',borderRadius:6,border:'1px solid #e9d5ff',background:'#fff',cursor:'pointer',fontSize:11,color:'#6b21a8',fontWeight:700}}>
-            ✕ Limpar
+            ✕ Ver todos
           </button>
         )}
       </div>
