@@ -12601,10 +12601,355 @@ function ModalCuidadosEnvio({total,onConfirmar,onCancelar}){
   );
 }
 
+// ─── CAMPANHAS RECORRENTES ───────────────────────────────────────────────────
+// Repete no horário escolhido com público dinâmico: os filtros são avaliados a
+// cada execução, então lead que entrou hoje já participa do próximo disparo.
+const DIAS_SEMANA=[{id:0,l:'Dom'},{id:1,l:'Seg'},{id:2,l:'Ter'},{id:3,l:'Qua'},{id:4,l:'Qui'},{id:5,l:'Sex'},{id:6,l:'Sáb'}];
+
+function AbaRecorrentes({leads,usuarios}){
+  const [lista,setLista]=useState([]);
+  const [editando,setEditando]=useState(null);
+  const etapas=useEtapasLead();
+
+  useEffect(()=>{
+    const u=onSnapshot(collection(db,'campanhas_recorrentes'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setLista(a.sort((x,y)=>String(x.nome||'').localeCompare(String(y.nome||''))));
+    });
+    return()=>u();
+  },[]);
+
+  async function alternar(c){
+    await setDoc(doc(db,'campanhas_recorrentes',c.id),{ativa:c.ativa===false},{merge:true});
+  }
+  async function remover(c){
+    if(!window.confirm(`Remover a campanha recorrente "${c.nome}"?`))return;
+    await deleteDoc(doc(db,'campanhas_recorrentes',c.id));
+  }
+
+  if(editando)return <EditorRecorrente campanha={editando} etapas={etapas} usuarios={usuarios}
+    onFechar={()=>setEditando(null)}/>;
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:10}}>
+        <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,maxWidth:620}}>
+          Repete no dia e hora que você escolher. <strong>O público é recalculado a cada disparo</strong> — lead novo
+          entra sozinho, lead que ganhou responsável sai sozinho. Ninguém recebe de novo antes do intervalo mínimo.
+        </div>
+        <button onClick={()=>setEditando({novo:true})}
+          style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#c2185b',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700}}>
+          ＋ Nova recorrente
+        </button>
+      </div>
+
+      {lista.length===0&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'34px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:32,marginBottom:8}}>🔁</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:5}}>Nenhuma campanha recorrente</div>
+          <div style={{fontSize:12,color:'#7f8c8d'}}>Crie uma para falar com os leads novos todo dia, sem montar lista na mão.</div>
+        </div>
+      )}
+
+      {lista.map(c=>{
+        const r=c.ultimoResultado;
+        const ativa=c.ativa!==false;
+        return(
+          <div key={c.id} style={{background:'#fff',borderRadius:10,padding:'14px 18px',marginBottom:9,boxShadow:'0 1px 4px rgba(0,0,0,.07)',
+            borderLeft:`4px solid ${ativa?'#c2185b':'#bdc3c7'}`,opacity:ativa?1:.7}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+              <span style={{fontWeight:700,fontSize:13,color:'#2c3e50',flex:1,minWidth:140}}>{c.nome||'(sem nome)'}</span>
+              <span style={{fontSize:9,background:ativa?'#f0fff4':'#f5f6fa',color:ativa?'#276749':'#95a5a6',border:`1px solid ${ativa?'#9ae6b4':'#e8eaed'}`,padding:'2px 9px',borderRadius:10,fontWeight:700,textTransform:'uppercase'}}>
+                {ativa?'Ativa':'Pausada'}
+              </span>
+              <button onClick={()=>setEditando(c)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:11,fontWeight:700}}>Editar</button>
+              <button onClick={()=>alternar(c)} style={{background:'none',border:'none',cursor:'pointer',color:ativa?'#e67e22':'#27ae60',fontSize:11,fontWeight:700}}>
+                {ativa?'Pausar':'Ativar'}
+              </button>
+              <button onClick={()=>remover(c)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+            </div>
+            <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7}}>
+              {c.frequencia==='diario'?'Todo dia':c.frequencia==='dias_uteis'?'Dias úteis':`${(c.diasSemana||[]).map(d=>DIAS_SEMANA.find(x=>x.id===Number(d))?.l).filter(Boolean).join(', ')}`}
+              {' às '}{(c.horarios||[]).join(', ')}
+              {' · '}até {c.limitePorExecucao||30} por disparo
+              {' · '}mesma pessoa a cada {c.intervaloMinimoDias||7} dia(s)
+              {c.canal==='qr'&&' · canal QR'}
+            </div>
+            {r&&(
+              <div style={{fontSize:10,color:r.falhas?'#c53030':'#276749',marginTop:5}}>
+                Último disparo {new Date(r.em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}:
+                {' '}{r.enviados} enviado(s){r.falhas?`, ${r.falhas} falha(s)`:''} de {r.elegiveis} elegível(is)
+                {(r.erros||[]).length>0&&<div style={{color:'#c53030',marginTop:2}}>{r.erros.slice(0,2).map((e,i)=><div key={i}>• {e}</div>)}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EditorRecorrente({campanha,etapas,usuarios,onFechar}){
+  const novo=campanha?.novo;
+  const [c,setC]=useState(novo?{
+    nome:'',ativa:true,frequencia:'dias_uteis',diasSemana:[1,3,5],horarios:['09:00'],
+    filtros:{somenteSemResponsavel:true,etapas:[],origem:'todas',porte:'todos',diasNaBaseMax:''},
+    intervaloMinimoDias:7,limitePorExecucao:30,canal:'oficial',finalidade:'comercial',
+    intervaloSegundos:4,intervaloMin:30,intervaloMax:75,
+    mensagens:[''],
+  }:{...campanha});
+  const [salvando,setSalvando]=useState(false);
+  const [previa,setPrevia]=useState(null);
+  const [carregandoPrevia,setCarregandoPrevia]=useState(false);
+  const [erro,setErro]=useState('');
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>setC(x=>({...x,[k]:v}));
+  const upF=(k,v)=>setC(x=>({...x,filtros:{...(x.filtros||{}),[k]:v}}));
+
+  async function verPrevia(){
+    setCarregandoPrevia(true);setPrevia(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/recorrentePrevia`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filtros:c.filtros,intervaloMinimoDias:c.intervaloMinimoDias,enviosPorLead:c.enviosPorLead||{}}),
+      });
+      const d=await r.json();
+      if(d.error)setErro(d.error);else setPrevia(d);
+    }catch(e){setErro(e.message);}
+    setCarregandoPrevia(false);
+  }
+
+  async function salvar(){
+    setErro('');
+    if(!c.nome?.trim()){setErro('Dê um nome à campanha.');return;}
+    if(!(c.mensagens||[]).some(m=>String(m||'').trim())){setErro('Escreva ao menos uma mensagem.');return;}
+    if(!(c.horarios||[]).length){setErro('Escolha ao menos um horário.');return;}
+    if(c.frequencia==='semanal'&&!(c.diasSemana||[]).length){setErro('Escolha os dias da semana.');return;}
+    setSalvando(true);
+    try{
+      const id=c.id||'rec_'+Date.now();
+      const {id:_i,novo:_n,...dados}=c;
+      await setDoc(doc(db,'campanhas_recorrentes',id),{
+        ...dados,
+        mensagens:(c.mensagens||[]).filter(m=>String(m||'').trim()),
+        atualizadoEm:new Date().toISOString(),
+        criadaPor:c.criadaPor||auth.currentUser?.email||'—',
+      },{merge:true});
+      onFechar();
+    }catch(e){setErro(e.message);setSalvando(false);}
+  }
+
+  const toggleDia=d=>up('diasSemana',(c.diasSemana||[]).includes(d)?(c.diasSemana||[]).filter(x=>x!==d):[...(c.diasSemana||[]),d]);
+  const toggleEtapa=id=>upF('etapas',(c.filtros?.etapas||[]).includes(id)?(c.filtros.etapas||[]).filter(x=>x!==id):[...(c.filtros?.etapas||[]),id]);
+
+  return(
+    <div>
+      <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:14,padding:0}}>← Voltar</button>
+
+      <div style={{marginBottom:12}}>
+        <label style={lbl}>Nome da campanha</label>
+        <input style={fi} value={c.nome||''} onChange={e=>up('nome',e.target.value)} placeholder="Ex: Retomada dos leads sem responsável"/>
+      </div>
+
+      {/* 1 · Quando repete */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #c2185b'}}>
+        <div style={{fontSize:10,color:'#c2185b',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>1 · Quando repete</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:9}}>
+          <div>
+            <label style={lbl}>Frequência</label>
+            <select style={fi} value={c.frequencia} onChange={e=>up('frequencia',e.target.value)}>
+              <option value="diario">Todo dia</option>
+              <option value="dias_uteis">Dias úteis (seg a sex)</option>
+              <option value="semanal">Dias específicos</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Máximo por disparo</label>
+            <input style={fi} type="number" min="1" value={c.limitePorExecucao} onChange={e=>up('limitePorExecucao',Number(e.target.value)||1)}/>
+          </div>
+        </div>
+
+        {c.frequencia==='semanal'&&(
+          <div style={{marginBottom:9}}>
+            <label style={lbl}>Dias da semana</label>
+            <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+              {DIAS_SEMANA.map(d=>{
+                const on=(c.diasSemana||[]).includes(d.id);
+                return(
+                  <button key={d.id} onClick={()=>toggleDia(d.id)}
+                    style={{padding:'6px 13px',borderRadius:16,cursor:'pointer',fontSize:11,fontWeight:700,
+                      border:`1px solid ${on?'#c2185b':'#dde1e7'}`,background:on?'#c2185b':'#fff',color:on?'#fff':'#7f8c8d'}}>
+                    {d.l}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <label style={lbl}>Horários do dia</label>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          {(c.horarios||[]).map((h,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:3,background:'#fff',border:'1px solid #dde1e7',borderRadius:6,padding:'3px 5px 3px 8px'}}>
+              <input type="time" value={h} onChange={e=>up('horarios',c.horarios.map((x,j)=>j===i?e.target.value:x))}
+                style={{border:'none',outline:'none',fontSize:12,color:'#2c3e50',background:'transparent'}}/>
+              <button onClick={()=>up('horarios',c.horarios.filter((_,j)=>j!==i))}
+                style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14,padding:'0 3px'}}>×</button>
+            </div>
+          ))}
+          <button onClick={()=>up('horarios',[...(c.horarios||[]),'14:00'])}
+            style={{padding:'6px 13px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+            + Horário
+          </button>
+        </div>
+      </div>
+
+      {/* 2 · Para quem */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #3498db'}}>
+        <div style={{fontSize:10,color:'#3498db',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>2 · Para quem</div>
+        <div style={{fontSize:10,color:'#95a5a6',marginBottom:9,lineHeight:1.6}}>
+          Avaliado toda vez que a campanha roda. Quem virou cliente, foi perdido ou pediu para não receber fica sempre de fora.
+        </div>
+
+        <label style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:6,cursor:'pointer',marginBottom:9,
+          background:c.filtros?.somenteSemResponsavel?'#fff5f5':'#fff',border:`1px solid ${c.filtros?.somenteSemResponsavel?'#feb2b2':'#e8eaed'}`}}>
+          <input type="checkbox" checked={!!c.filtros?.somenteSemResponsavel} onChange={()=>upF('somenteSemResponsavel',!c.filtros?.somenteSemResponsavel)} style={{cursor:'pointer'}}/>
+          <span style={{fontSize:11,color:'#2c3e50',fontWeight:600}}>Só leads sem responsável</span>
+        </label>
+
+        <div style={{marginBottom:9}}>
+          <label style={lbl}>Etapas (vazio = todas)</label>
+          <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+            {(etapas||[]).filter(e=>e.ativo!==false).map(e=>{
+              const on=(c.filtros?.etapas||[]).includes(e.id);
+              return(
+                <button key={e.id} onClick={()=>toggleEtapa(e.id)}
+                  style={{padding:'5px 12px',borderRadius:16,cursor:'pointer',fontSize:11,fontWeight:700,
+                    border:`1px solid ${on?e.color:'#dde1e7'}`,background:on?e.color:'#fff',color:on?'#fff':'#7f8c8d'}}>
+                  {e.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          <div>
+            <label style={lbl}>Entrou na base há no máximo (dias)</label>
+            <input style={fi} type="number" value={c.filtros?.diasNaBaseMax||''} onChange={e=>upF('diasNaBaseMax',e.target.value)} placeholder="vazio = qualquer"/>
+          </div>
+          <div>
+            <label style={lbl}>Mesma pessoa a cada (dias)</label>
+            <input style={fi} type="number" min="1" value={c.intervaloMinimoDias} onChange={e=>up('intervaloMinimoDias',Number(e.target.value)||1)}/>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:'#b45309',marginTop:6,lineHeight:1.6,background:'#fff8ee',borderRadius:6,padding:'8px 10px'}}>
+          <strong>O intervalo mínimo é a proteção mais importante daqui.</strong> Sem ele, um filtro como "sem responsável"
+          reenviaria para as mesmas pessoas todo dia até alguém atribuir — caminho curto para bloqueio e denúncia.
+        </div>
+
+        <div style={{display:'flex',alignItems:'center',gap:9,marginTop:10,flexWrap:'wrap'}}>
+          <button onClick={verPrevia} disabled={carregandoPrevia}
+            style={{padding:'7px 15px',borderRadius:7,border:'1px solid #3498db',background:'#fff',color:'#3498db',cursor:'pointer',fontSize:11,fontWeight:700}}>
+            {carregandoPrevia?'Calculando...':'👁 Quantos entram agora?'}
+          </button>
+          {previa&&(
+            <span style={{fontSize:11,color:'#2c3e50'}}>
+              <strong style={{color:'#27ae60'}}>{previa.elegiveis}</strong> entrariam
+              {previa.bloqueadosPorIntervalo>0&&<> · {previa.bloqueadosPorIntervalo} aguardando o intervalo</>}
+              {previa.exemplos?.length>0&&<div style={{fontSize:10,color:'#95a5a6',marginTop:2}}>{previa.exemplos.join(', ')}</div>}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 3 · Mensagens */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:10,borderLeft:'3px solid #8e44ad'}}>
+        <div style={{fontSize:10,color:'#8e44ad',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>3 · Mensagens</div>
+        <div style={{fontSize:10,color:'#95a5a6',marginBottom:9,lineHeight:1.6}}>
+          Escreva mais de uma versão e o sistema alterna entre elas. Mandar sempre o mesmo texto é o que mais gera denúncia.
+          Variáveis: <code style={{fontSize:10}}>{'{{primeiro_nome}}'}</code> <code style={{fontSize:10}}>{'{{nome}}'}</code> <code style={{fontSize:10}}>{'{{solucao}}'}</code> <code style={{fontSize:10}}>{'{{funcionarios}}'}</code>
+        </div>
+        {(c.mensagens||['']).map((m,i)=>(
+          <div key={i} style={{display:'flex',gap:7,marginBottom:7,alignItems:'flex-start'}}>
+            <span style={{fontSize:10,color:'#8e44ad',fontWeight:700,marginTop:9,minWidth:16}}>{i+1}</span>
+            <textarea style={{...fi,minHeight:70,resize:'vertical',lineHeight:1.6}} value={m}
+              onChange={e=>up('mensagens',(c.mensagens||['']).map((x,j)=>j===i?e.target.value:x))}
+              placeholder={'Oi {{primeiro_nome}}, tudo bem? Aqui é da Guion...'}/>
+            {(c.mensagens||[]).length>1&&(
+              <button onClick={()=>up('mensagens',c.mensagens.filter((_,j)=>j!==i))}
+                style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:16,marginTop:6}}>×</button>
+            )}
+          </div>
+        ))}
+        <button onClick={()=>up('mensagens',[...(c.mensagens||['']),''])}
+          style={{padding:'5px 13px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>
+          + Outra versão
+        </button>
+      </div>
+
+      {/* 4 · Por onde */}
+      <div style={{background:'#f8f9fa',borderRadius:8,padding:'14px',marginBottom:12,borderLeft:'3px solid #25D366'}}>
+        <div style={{fontSize:10,color:'#1a9c4d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>4 · Por onde enviar</div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:9}}>
+          {[{id:'oficial',l:'✅ API oficial',d:'Só quem respondeu nas últimas 24h'},
+            {id:'qr',l:'📱 QR Code',d:'Chega em todos · risco de banimento'}].map(x=>(
+            <button key={x.id} onClick={()=>up('canal',x.id)}
+              style={{padding:'7px 13px',borderRadius:7,cursor:'pointer',fontSize:11,textAlign:'left',
+                border:`1px solid ${c.canal===x.id?(x.id==='qr'?'#e67e22':'#25D366'):'#dde1e7'}`,
+                background:c.canal===x.id?(x.id==='qr'?'#fff8ee':'#f0fff4'):'#fff',
+                color:c.canal===x.id?(x.id==='qr'?'#b45309':'#276749'):'#7f8c8d'}}>
+              <div style={{fontWeight:700}}>{x.l}</div>
+              <div style={{fontSize:9,opacity:.85}}>{x.d}</div>
+            </button>
+          ))}
+        </div>
+        {c.canal==='oficial'&&(
+          <div style={{fontSize:10,color:'#b45309',lineHeight:1.6,background:'#fff8ee',borderRadius:6,padding:'9px 11px'}}>
+            <strong>Mandar mensagem NÃO reabre a janela de 24 horas.</strong> Só a resposta do lead reabre.
+            Repetir todo dia pela API oficial não mantém o contato aberto: quem nunca respondeu vai continuar
+            caindo em "fora da janela". Para alcançar todo mundo, use <strong>template aprovado</strong> na campanha
+            avulsa, ou mude esta recorrente para o <strong>canal QR</strong>.
+          </div>
+        )}
+        {c.canal==='qr'&&(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div><label style={lbl}>Intervalo mínimo (s)</label><input style={fi} type="number" value={c.intervaloMin} onChange={e=>up('intervaloMin',e.target.value)}/></div>
+            <div><label style={lbl}>Intervalo máximo (s)</label><input style={fi} type="number" value={c.intervaloMax} onChange={e=>up('intervaloMax',e.target.value)}/></div>
+          </div>
+        )}
+      </div>
+
+      {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'9px 12px',marginBottom:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+
+      <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+        <button onClick={salvar} disabled={salvando}
+          style={{padding:'10px 22px',borderRadius:7,border:'none',background:salvando?'#dde1e7':'#c2185b',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          {salvando?'Salvando...':(novo?'Criar campanha':'Salvar alterações')}
+        </button>
+        {!novo&&c.id&&(
+          <button onClick={async()=>{
+              if(!window.confirm('Disparar agora, sem esperar o horário?\n\nO intervalo mínimo por pessoa continua valendo.'))return;
+              const r=await fetch(`${FUNCTIONS_URL}/recorrenteAgora`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.id})});
+              const d=await r.json();
+              alert(d.error?('❌ '+d.error):`✅ ${d.enviados||0} enviado(s)${d.falhas?`, ${d.falhas} falha(s)`:''}${d.motivo?`\n\n${d.motivo}`:''}`);
+            }}
+            style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            ▶ Disparar agora (teste)
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AnunciosView({leads,usuarios,perfil}){
   const [aba,setAba]=useState('campanhas');
   const abas=[
     {id:'campanhas',  l:'📢 Campanhas',  cor:'#c2185b'},
+    {id:'recorrentes',l:'🔁 Recorrentes', cor:'#ad1457'},
     {id:'templates',  l:'📄 Templates',  cor:'#3498db'},
     {id:'conversas',  l:'💬 Conversas',  cor:'#25D366'},
     {id:'ia',         l:'🤖 Atendimento IA', cor:'#8e44ad'},
@@ -12628,6 +12973,7 @@ function AnunciosView({leads,usuarios,perfil}){
         ))}
       </div>
       {aba==='campanhas'&&<AbaCampanhas leads={leads}/>}
+      {aba==='recorrentes'&&<AbaRecorrentes leads={leads} usuarios={usuarios}/>}
       {aba==='templates'&&<AbaTemplates/>}
       {aba==='conversas'&&<AbaConversas leads={leads}/>}
       {aba==='ia'&&<AbaAtendimentoIA usuarios={usuarios}/>}
