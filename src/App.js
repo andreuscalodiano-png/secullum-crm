@@ -14178,16 +14178,31 @@ function NovaCampanha({leads,onFechar}){
 // prática, porque resposta rápida se usa quando o cliente acabou de escrever.
 
 const VARIAVEIS_RESPOSTA=[
-  {tag:'#primeiroNome',d:'João'},
-  {tag:'#nome',        d:'João da Silva'},
   {tag:'#saudacao',    d:'Bom dia'},
+  {tag:'#primeiroNome',d:'João'},
   {tag:'#periodo-dia', d:'manhã'},
-  {tag:'#funcionarios',d:'De 6 a 10 funcionários'},
-  {tag:'#solucao',     d:'Relógio de ponto fixo'},
+  {tag:'#nome',        d:'João da Silva'},
+  {tag:'#funcionarios',d:'De 6 a 10'},
+  {tag:'#solucao',     d:'Relógio de ponto'},
   {tag:'#email',       d:'joao@empresa.com'},
   {tag:'#numero',      d:'5543999999999'},
   {tag:'#vendedor',    d:'andreus'},
 ];
+
+// A Datafy as vezes responde 200 com {error:true} — booleano, sem texto. Imprimir
+// o valor cru vira "❌ true" e nao ajuda ninguem: aqui a gente cava a mensagem
+// de verdade e, se nao houver, mostra o corpo inteiro da resposta.
+function erroDatafyFront(d,status){
+  if(!d)return `HTTP ${status||'?'} — resposta vazia`;
+  const txt=d?.error?.message||d?.error?.error_user_msg||d?.error_description
+    ||d?.message||(typeof d?.error==='string'?d.error:'')
+    ||(Array.isArray(d?.errors)?d.errors.map(e=>e.message||e).join(' | '):'')
+    ||d?.raw||'';
+  const cod=d?.error?.code?` [${d.error.code}]`:'';
+  if(txt)return `HTTP ${status||'?'}${cod}: ${txt}`;
+  let cru='';try{cru=JSON.stringify(d);}catch(_){cru=String(d);}
+  return `HTTP ${status||'?'} — a Datafy nao explicou. Resposta: ${cru.slice(0,300)}`;
+}
 
 const TIPOS_ACAO=[
   {id:'texto',     l:'💬 Texto',     cor:'#3498db'},
@@ -14232,9 +14247,13 @@ function PainelRespostas({lead,onFechar}){
     const qtd=(r.acoes||[]).length;
     if(!window.confirm(`Enviar "${r.nome}" para ${lead.nome}?\n\n${qtd} mensagem(ns) em sequência.`))return;
     setEnviando(r.id);setAviso(null);
+    // Sequência longa demora de propósito (as esperas entre mensagens). Mas sem
+    // um teto o botão fica em "Enviando..." para sempre se a Datafy travar.
+    const ctrl=new AbortController();
+    const corta=setTimeout(()=>ctrl.abort(),150000);
     try{
       const rp=await fetch(`${FUNCTIONS_URL}/respostaRapidaEnviar`,{
-        method:'POST',headers:{'Content-Type':'application/json'},
+        method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,
         body:JSON.stringify({leadId:lead.id,respostaId:r.id,usuario:auth.currentUser?.email}),
       });
       const d=await rp.json();
@@ -14245,7 +14264,12 @@ function PainelRespostas({lead,onFechar}){
           +(d.moveu?` · lead movido para ${(etapas.find(e=>e.id===d.moveu)||{}).label||d.moveu}`:'')
           +((d.falhas||[]).length?`\n\n${d.falhas.join('\n')}`:''),
       });
-    }catch(e){setAviso({erro:true,txt:e.message});}
+    }catch(e){
+      setAviso({erro:true,txt:e.name==='AbortError'
+        ?'Passou de 2min30 sem resposta. Confira no WhatsApp o que chegou antes de reenviar — pode ter enviado parte da sequência.'
+        :e.message});
+    }
+    clearTimeout(corta);
     setEnviando('');
   }
 
@@ -14328,6 +14352,29 @@ function EditorResposta({resposta,etapas,onFechar}){
   const [testeNum,setTesteNum]=useState('');
   const [testando,setTestando]=useState('');
   const [testeRes,setTesteRes]=useState(null);
+  const focoRef=useRef(null);   // {uid, el} da última caixa de texto tocada
+
+  // Insere a variável na posição do cursor. Copiar para a área de transferência
+  // obrigava o usuário a clicar, voltar e colar — três passos para uma tag.
+  function inserirVar(tag){
+    const foco=focoRef.current;
+    const alvo=foco?.uid||[...(r.acoes||[])].reverse().find(x=>x.tipo==='texto')?.uid;
+    if(!alvo)return;
+    const el=foco?.uid===alvo?foco.el:null;
+    setR(x=>({...x,acoes:x.acoes.map(a=>{
+      if(a.uid!==alvo)return a;
+      const t=String(a.texto||'');
+      const ini=el?el.selectionStart:t.length;
+      const fim=el?el.selectionEnd:t.length;
+      const antes=t.slice(0,ini), depois=t.slice(fim);
+      const espaco=(antes&&!/\s$/.test(antes))?' ':'';
+      return {...a,texto:antes+espaco+tag+depois};
+    })}));
+    if(el){
+      const pos=(el.selectionStart||0)+tag.length+1;
+      setTimeout(()=>{try{el.focus();el.setSelectionRange(pos,pos);}catch(_){}},0);
+    }
+  }
 
   const fi={padding:'7px 9px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
   const lbl={fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.4,display:'block',marginBottom:2};
@@ -14377,7 +14424,7 @@ function EditorResposta({resposta,etapas,onFechar}){
       const ok=rp.ok&&!d.error;
       setTesteRes({uid:a.uid,ok,txt:ok
         ?'✅ A Datafy aceitou. Confira se chegou no seu WhatsApp — e como chegou.'
-        :`❌ ${d.error?.message||d.error||JSON.stringify(d).slice(0,200)}`});
+        :'❌ '+erroDatafyFront(d,rp.status)});
     }catch(e){setTesteRes({uid:a.uid,ok:false,txt:'❌ '+e.message});}
     setTestando('');
   }
@@ -14434,12 +14481,15 @@ function EditorResposta({resposta,etapas,onFechar}){
           <strong style={{color:'#2c3e50'}}>Variáveis</strong> — clique para copiar:
           <div style={{display:'flex',gap:4,flexWrap:'wrap',marginTop:5}}>
             {VARIAVEIS_RESPOSTA.map(v=>(
-              <button key={v.tag} title={'Ex: '+v.d}
-                onClick={()=>{navigator.clipboard?.writeText(v.tag);}}
-                style={{padding:'2px 7px',borderRadius:10,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#3498db',fontFamily:'monospace'}}>
-                {v.tag}
+              <button key={v.tag} title={`Vira: ${v.d}`} onClick={()=>inserirVar(v.tag)}
+                style={{padding:'3px 8px',borderRadius:10,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',textAlign:'left',lineHeight:1.25}}>
+                <div style={{fontSize:10,color:'#3498db',fontFamily:'monospace'}}>{v.tag}</div>
+                <div style={{fontSize:8,color:'#b0b7bd'}}>{v.d}</div>
               </button>
             ))}
+          </div>
+          <div style={{marginTop:6,fontSize:9,color:'#b0b7bd'}}>
+            Clique para inserir no texto onde o cursor estiver. Sem cursor, entra na última mensagem de texto.
           </div>
         </div>
 
@@ -14484,6 +14534,9 @@ function EditorResposta({resposta,etapas,onFechar}){
 
               <textarea style={{...fi,minHeight:a.tipo==='texto'?64:38,resize:'vertical',lineHeight:1.5}}
                 value={a.texto||''} onChange={e=>upA(a.uid,'texto',e.target.value)}
+                onFocus={e=>{focoRef.current={uid:a.uid,el:e.target};}}
+                onClick={e=>{focoRef.current={uid:a.uid,el:e.target};}}
+                onKeyUp={e=>{focoRef.current={uid:a.uid,el:e.target};}}
                 placeholder={a.tipo==='texto'?'#saudacao #primeiroNome! Aqui é da Guion...':'Legenda (opcional)'}/>
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginTop:7}}>
@@ -14578,7 +14631,7 @@ function AbaConversas({leads}){
       <button onClick={()=>setSel(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,marginBottom:12,padding:0}}>← Todas as conversas</button>
 
       <div style={{display:'flex',gap:12,alignItems:'flex-start',flexWrap:'wrap'}}>
-      <div style={{flex:'1 1 420px',minWidth:300,background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden'}}>
+      <div style={{flex:'1 1 340px',minWidth:0,background:'#fff',borderRadius:10,boxShadow:'0 1px 4px rgba(0,0,0,.08)',overflow:'hidden'}}>
         <div style={{padding:'12px 18px',borderBottom:'1px solid #e8eaed',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <div style={{width:34,height:34,borderRadius:'50%',background:'#25D36618',display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,flexShrink:0}}>💬</div>
           <div style={{flex:1,minWidth:130}}>
@@ -14599,8 +14652,8 @@ function AbaConversas({leads}){
             const cor=m.de==='cliente'?'#fff':m.de==='ia'?'#e9d5ff':m.de==='sistema'?'#f0f0f0':'#dcf8c6';
             return(
               <div key={i} style={{display:'flex',justifyContent:meu?'flex-end':'flex-start',marginBottom:8}}>
-                <div style={{maxWidth:'76%',background:cor,borderRadius:meu?'10px 10px 2px 10px':'10px 10px 10px 2px',padding:'8px 12px',boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
-                  <div style={{fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5}}>{m.texto}</div>
+                <div style={{maxWidth:'76%',minWidth:0,background:cor,borderRadius:meu?'10px 10px 2px 10px':'10px 10px 10px 2px',padding:'8px 12px',boxShadow:'0 1px 2px rgba(0,0,0,.08)'}}>
+                  <div style={{fontSize:12,color:'#2c3e50',whiteSpace:'pre-wrap',lineHeight:1.5,overflowWrap:'anywhere',wordBreak:'break-word'}}>{m.texto}</div>
                   <div style={{fontSize:9,color:'#95a5a6',marginTop:3,textAlign:'right'}}>
                     {m.de==='ia'?'✨ IA · ':m.de==='humano'?(m.usuario?m.usuario.split('@')[0]+' · ':''):''}
                     {m.data?new Date(m.data).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):''}
@@ -14628,7 +14681,7 @@ function AbaConversas({leads}){
         </div>
       </div>
 
-      <div style={{flex:'0 1 310px',minWidth:270}}>
+      <div style={{flex:'1 1 280px',minWidth:0,maxWidth:340}}>
         <PainelRespostas lead={lead}/>
       </div>
       </div>
