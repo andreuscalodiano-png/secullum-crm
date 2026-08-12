@@ -4644,6 +4644,34 @@ exports.respostaRapidaEnviar = functions
             method: 'POST', body: { to: destino, text: t },
           });
           registro = t;
+        } else if (a.tipo === 'youtube') {
+          // Link de vídeo vai como TEXTO. É assim que o WhatsApp monta a
+          // pré-visualização com miniatura e título. Mandar pela rota de vídeo
+          // faria a Meta tentar baixar o arquivo do YouTube — e falhar.
+          const alvo = String(a.url || '').trim();
+          if (!alvo) { falhas.push('YouTube sem link'); continue; }
+          const t = [aplicarVariaveisResposta(a.texto || '', lead, usuario), alvo]
+            .filter(Boolean).join('\n').trim();
+          r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: destino, text: t },
+          });
+          registro = t;
+        } else if (a.tipo === 'link') {
+          // Botão de link: mensagem interativa. Só entrega dentro da janela de
+          // 24h, que é justamente onde a resposta rápida vive.
+          const alvo = String(a.url || '').trim();
+          const corpo = aplicarVariaveisResposta(a.texto || '', lead, usuario);
+          if (!alvo || !corpo.trim()) { falhas.push('Botão sem texto ou sem link'); continue; }
+          r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/cta', method: 'POST',
+            body: {
+              to: destino, body: corpo,
+              button_label: String(a.rotulo || 'Saiba mais').slice(0, 20),
+              button_url: alvo,
+            },
+          });
+          registro = `${corpo}\n🔗 ${a.rotulo || 'Saiba mais'} → ${alvo}`;
         } else {
           if (!a.url) { falhas.push(`${a.tipo} sem arquivo`); continue; }
           const legenda = aplicarVariaveisResposta(a.texto || '', lead, usuario);
@@ -4653,6 +4681,7 @@ exports.respostaRapidaEnviar = functions
           });
           registro = a.tipo === 'imagem' ? `🖼️ ${legenda || 'imagem'}`
                    : a.tipo === 'audio' ? '🎤 áudio'
+                   : a.tipo === 'video' ? `🎬 ${legenda || 'vídeo'}`
                    : `📎 ${legenda || 'documento'}`;
         }
 

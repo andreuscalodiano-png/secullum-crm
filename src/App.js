@@ -14208,8 +14208,16 @@ const TIPOS_ACAO=[
   {id:'texto',     l:'💬 Texto',     cor:'#3498db'},
   {id:'imagem',    l:'🖼️ Imagem',    cor:'#8e44ad'},
   {id:'audio',     l:'🎤 Áudio',     cor:'#e67e22'},
+  {id:'video',     l:'🎬 Vídeo',     cor:'#c0392b'},
+  {id:'youtube',   l:'▶️ YouTube',   cor:'#e52d27'},
+  {id:'link',      l:'🔗 Botão',     cor:'#2980b9'},
   {id:'documento', l:'📎 Documento', cor:'#16a085'},
 ];
+
+// Só estes sobem arquivo. YouTube é um link colado; botão é texto + destino.
+const TIPOS_ARQUIVO=['imagem','audio','video','documento'];
+// Teto da Meta por tipo. Passar disso a mensagem é recusada no envio, não no upload.
+const LIMITE_MB={imagem:5,audio:16,video:16,documento:100};
 
 function useRespostasRapidas(){
   const [lista,setLista]=useState([]);
@@ -14382,7 +14390,8 @@ function EditorResposta({resposta,etapas,onFechar}){
   const upA=(uid,k,v)=>setR(x=>({...x,acoes:x.acoes.map(a=>a.uid===uid?{...a,[k]:v}:a)}));
   const remA=uid=>setR(x=>({...x,acoes:x.acoes.filter(a=>a.uid!==uid)}));
   const addA=tipo=>setR(x=>({...x,acoes:[...x.acoes,
-    {uid:'a'+Date.now(),tipo,texto:'',url:'',esperaAntes:tipo==='texto'?3:0,esperaDepois:2,voz:true}]}));
+    {uid:'a'+Date.now(),tipo,texto:'',url:'',rotulo:tipo==='link'?'Saiba mais':'',
+     esperaAntes:tipo==='texto'?3:0,esperaDepois:2,voz:true}]}));
   const moverA=(uid,dir)=>setR(x=>{
     const i=x.acoes.findIndex(a=>a.uid===uid);const j=i+dir;
     if(i<0||j<0||j>=x.acoes.length)return x;
@@ -14390,8 +14399,13 @@ function EditorResposta({resposta,etapas,onFechar}){
     return {...x,acoes:arr};
   });
 
-  async function enviarArquivo(uid,file){
+  async function enviarArquivo(uid,file,tipo){
     if(!file)return;
+    const teto=LIMITE_MB[tipo]||16;
+    if(file.size>teto*1024*1024){
+      setErro(`Este arquivo tem ${(file.size/1048576).toFixed(1)} MB. O limite do WhatsApp para ${tipo} é ${teto} MB — acima disso a mensagem é recusada na hora de enviar.`);
+      return;
+    }
     setEnviandoArq(uid);setErro('');
     try{
       const path=`config/respostas/${Date.now()}_${file.name.replace(/[^\w.]+/g,'_')}`;
@@ -14408,17 +14422,29 @@ function EditorResposta({resposta,etapas,onFechar}){
   async function testar(a){
     const num=String(testeNum||'').replace(/\D/g,'');
     if(num.length<10){setErro('Digite o número com DDD para o teste.');return;}
-    if(!a.url){setErro('Envie o arquivo antes de testar.');return;}
+    if(!a.url){setErro(a.tipo==='youtube'?'Cole o link antes de testar.':a.tipo==='link'?'Informe o endereço antes de testar.':'Envie o arquivo antes de testar.');return;}
     setTestando(a.uid);setTesteRes(null);setErro('');
-    // Campos soltos: a Datafy quer `url` na raiz, não aninhado no estilo da Meta
-    const corpo={to:num,url:a.url};
-    if(a.texto)corpo.caption=a.texto;
-    if(a.tipo==='documento')corpo.filename=a.arquivo||'arquivo.pdf';
-    if(a.tipo==='audio')corpo.voice=a.voz!==false;
+
+    let rota,corpo;
+    if(a.tipo==='youtube'){
+      rota='text';
+      corpo={to:num,text:[a.texto,a.url].filter(Boolean).join('\n').trim()};
+    }else if(a.tipo==='link'){
+      if(!String(a.texto||'').trim()){setErro('O botão precisa de um texto acima dele.');setTestando('');return;}
+      rota='cta';
+      corpo={to:num,body:a.texto,button_label:String(a.rotulo||'Saiba mais').slice(0,20),button_url:a.url};
+    }else{
+      // Campos soltos: a Datafy quer `url` na raiz, não aninhado no estilo da Meta
+      rota={imagem:'image',audio:'audio',video:'video',documento:'document'}[a.tipo];
+      corpo={to:num,url:a.url};
+      if(a.texto)corpo.caption=a.texto;
+      if(a.tipo==='documento')corpo.filename=a.arquivo||'arquivo.pdf';
+      if(a.tipo==='audio')corpo.voice=a.voz!==false;
+    }
     try{
       const rp=await fetch(`${FUNCTIONS_URL}/datafyProxy`,{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({finalidade:'comercial',path:`/messages/send/${{imagem:'image',audio:'audio',documento:'document'}[a.tipo]}`,method:'POST',body:corpo}),
+        body:JSON.stringify({finalidade:'comercial',path:`/messages/send/${rota}`,method:'POST',body:corpo}),
       });
       const d=await rp.json();
       const ok=rp.ok&&!d.error;
@@ -14432,7 +14458,8 @@ function EditorResposta({resposta,etapas,onFechar}){
   async function salvar(){
     setErro('');
     if(!String(r.nome||'').trim()){setErro('Dê um nome à resposta.');return;}
-    const validas=(r.acoes||[]).filter(a=>a.tipo==='texto'?String(a.texto||'').trim():a.url);
+    const validas=(r.acoes||[]).filter(a=>a.tipo==='texto'?String(a.texto||'').trim()
+      :a.tipo==='link'?(a.url&&String(a.texto||'').trim()):a.url);
     if(!validas.length){setErro('Cadastre ao menos uma mensagem com conteúdo.');return;}
     setSalvando(true);
     try{
@@ -14507,21 +14534,55 @@ function EditorResposta({resposta,etapas,onFechar}){
                 <button onClick={()=>remA(a.uid)} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:14}}>×</button>
               </div>
 
-              {a.tipo!=='texto'&&(
+              {TIPOS_ARQUIVO.includes(a.tipo)&&(
                 <div style={{marginBottom:7}}>
                   {a.url
                     ?(a.tipo==='imagem'
                       ?<img src={a.url} alt="" style={{maxWidth:'100%',maxHeight:130,borderRadius:6,border:'1px solid #e8eaed',display:'block',marginBottom:5}}/>
                       :a.tipo==='audio'
                         ?<audio controls src={a.url} style={{width:'100%',marginBottom:5}}/>
-                        :<div style={{fontSize:11,color:'#16a085',marginBottom:5}}>📎 {a.arquivo||'arquivo enviado'}</div>)
+                        :a.tipo==='video'
+                          ?<video controls src={a.url} style={{width:'100%',maxHeight:150,borderRadius:6,marginBottom:5,background:'#000'}}/>
+                          :<div style={{fontSize:11,color:'#16a085',marginBottom:5}}>📎 {a.arquivo||'arquivo enviado'}</div>)
                     :null}
                   <label style={{display:'block',padding:'6px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fafbfc',cursor:'pointer',fontSize:10,color:T.cor,fontWeight:700,textAlign:'center'}}>
                     {enviandoArq===a.uid?'Enviando...':(a.url?'Trocar arquivo':'Enviar arquivo')}
                     <input type="file" style={{display:'none'}}
-                      accept={a.tipo==='imagem'?'image/*':a.tipo==='audio'?'audio/*':'*'}
-                      onChange={e=>{enviarArquivo(a.uid,e.target.files[0]);e.target.value='';}}/>
+                      accept={a.tipo==='imagem'?'image/*':a.tipo==='audio'?'audio/*':a.tipo==='video'?'video/mp4,video/3gpp':'*'}
+                      onChange={e=>{enviarArquivo(a.uid,e.target.files[0],a.tipo);e.target.value='';}}/>
                   </label>
+                  {a.tipo==='video'&&(
+                    <div style={{fontSize:9,color:'#b0b7bd',marginTop:4,lineHeight:1.5}}>
+                      MP4 até 16 MB, vídeo H.264 e áudio AAC. Fora disso o WhatsApp recusa no envio.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {a.tipo==='youtube'&&(
+                <div style={{marginBottom:7}}>
+                  <label style={lbl}>Link do vídeo</label>
+                  <input style={fi} value={a.url||''} onChange={e=>upA(a.uid,'url',e.target.value.trim())}
+                    placeholder="https://youtu.be/..."/>
+                  <div style={{fontSize:9,color:'#b0b7bd',marginTop:4,lineHeight:1.5}}>
+                    Vai como texto, e o WhatsApp monta sozinho a miniatura com o título. O cliente assiste no YouTube.
+                  </div>
+                </div>
+              )}
+
+              {a.tipo==='link'&&(
+                <div style={{marginBottom:7,display:'grid',gridTemplateColumns:'1fr 1fr',gap:7}}>
+                  <div>
+                    <label style={lbl}>Texto do botão</label>
+                    <input style={fi} maxLength={20} value={a.rotulo||''} onChange={e=>upA(a.uid,'rotulo',e.target.value)}
+                      placeholder="Saiba mais"/>
+                    <div style={{fontSize:9,color:'#b0b7bd',marginTop:3}}>Máx. 20 caracteres</div>
+                  </div>
+                  <div>
+                    <label style={lbl}>Endereço</label>
+                    <input style={fi} value={a.url||''} onChange={e=>upA(a.uid,'url',e.target.value.trim())}
+                      placeholder="https://guionstore.com.br"/>
+                  </div>
                 </div>
               )}
 
@@ -14537,7 +14598,9 @@ function EditorResposta({resposta,etapas,onFechar}){
                 onFocus={e=>{focoRef.current={uid:a.uid,el:e.target};}}
                 onClick={e=>{focoRef.current={uid:a.uid,el:e.target};}}
                 onKeyUp={e=>{focoRef.current={uid:a.uid,el:e.target};}}
-                placeholder={a.tipo==='texto'?'#saudacao #primeiroNome! Aqui é da Guion...':'Legenda (opcional)'}/>
+                placeholder={a.tipo==='texto'?'#saudacao #primeiroNome! Aqui é da Guion...'
+                  :a.tipo==='link'?'Texto que aparece acima do botão (obrigatório)'
+                  :a.tipo==='youtube'?'Texto antes do link (opcional)':'Legenda (opcional)'}/>
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:7,marginTop:7}}>
                 <div>
