@@ -16154,8 +16154,11 @@ function SeloMailchimp({lead,detalhado}){
 
 // ─── SELO DO RESPONSÁVEL ─────────────────────────────────────────────────────
 // Sem responsável vira alerta vermelho: é o estado que precisa incomodar.
-function SeloResponsavel({lead,compacto}){
-  const nome=lead.responsavelNome||'';
+function SeloResponsavel({lead,compacto,usuarios}){
+  // Prefere o nome já gravado no lead; se faltar (registro antigo, ou gravado
+  // por uma tela que só salvou o id), procura na lista de usuários.
+  const achado=lead.responsavelId&&(usuarios||[]).find(u=>u.id===lead.responsavelId);
+  const nome=lead.responsavelNome||achado?.nome||achado?.email||'';
   if(!nome)return(
     <span style={{display:'inline-flex',alignItems:'center',gap:4,background:'#fff5f5',color:'#c53030',
       border:'1px solid #feb2b2',borderRadius:10,padding:compacto?'1px 7px':'2px 9px',fontSize:compacto?9:10,fontWeight:700,whiteSpace:'nowrap'}}>
@@ -16285,7 +16288,7 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,onConversar,busca}){
                         {/* Responsável — sem dono é o que precisa incomodar */}
                         {semDono
                           ?<div style={{fontSize:10,color:'#e74c3c',fontWeight:700,marginBottom:2}}>❗ Sem responsável</div>
-                          :<div style={{fontSize:10,color:'#2b6cb0',fontWeight:700,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>🧑‍💼 {lead.responsavelNome}</div>}
+                          :<div style={{fontSize:10,color:'#2b6cb0',fontWeight:700,marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>🧑‍💼 {lead.responsavelNome||(usuarios||[]).find(u=>u.id===lead.responsavelId)?.nome||'atribuído'}</div>}
 
                         {lead.telefone&&(
                           <div style={{fontSize:10,color:'#7f8c8d',marginBottom:2,display:'flex',alignItems:'center',gap:2}}
@@ -17602,7 +17605,10 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
     if(vaiMover)linhas.push(`• O lead vai para "${etapaC.label}"`);
     if(!window.confirm(linhas.join('\n')))return;
     const patch={atualizadoEm:new Date().toISOString()};
-    if(!jaMeu&&eu)patch.responsavelId=eu.id;
+    // responsavelNome é denormalizado de propósito: as listas e o Kanban leem
+    // ele direto, sem cruzar com a coleção de usuários a cada card. Gravar só o
+    // id deixava o selo mostrando "Sem responsável" mesmo com o lead atribuído.
+    if(!jaMeu&&eu){patch.responsavelId=eu.id;patch.responsavelNome=eu.nome||eu.email||'';}
     if(vaiMover)patch.status=etapaC.id;
     try{
       await setDoc(doc(db,'leads',lead.id),patch,{merge:true});
@@ -18100,7 +18106,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
                       </span>
                     )}
                     {lead.funcionarios&&<span>👥 {lead.funcionarios}</span>}
-                    <SeloResponsavel lead={lead}/>
+                    <SeloResponsavel lead={lead} usuarios={usuarios}/>
                     <SeloMailchimp lead={lead}/>
                   </div>
                 </div>
