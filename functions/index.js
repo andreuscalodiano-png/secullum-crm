@@ -4272,3 +4272,448 @@ exports.qrTestar = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CAMPANHA RECORRENTE — repete no horário escolhido, com público dinâmico
+//
+// Diferente da campanha comum, que congela a lista no momento da criação, aqui
+// os filtros são avaliados A CADA EXECUÇÃO. Lead que entrou hoje de manhã
+// entra no disparo da tarde sem ninguém mexer em nada.
+//
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// A mesma pessoa NÃO pode receber todo dia. Sem um intervalo mínimo, um filtro
+// como "leads sem responsável" reenviaria para as mesmas pessoas diariamente
+// até alguém atribuir — o caminho mais rápido para bloqueio e denúncia.
+// Por isso todo envio fica registrado em enviosPorLead e respeita
+// intervaloMinimoDias antes de falar com a mesma pessoa de novo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function leadNaCampanhaRecorrente(l, f) {
+  if (!l.telefone) return false;
+  if (l.optout) return false;
+  if (['convertido', 'perdido'].includes(l.status)) return false;      // já fechou
+  if (f.somenteSemResponsavel && l.responsavelId) return false;
+  if (f.responsavelId && l.responsavelId !== f.responsavelId) return false;
+  if (Array.isArray(f.etapas) && f.etapas.length && !f.etapas.includes(l.status)) return false;
+  if (f.origem && f.origem !== 'todas' && (l.origem || '') !== f.origem) return false;
+  if (f.porte && f.porte !== 'todos' && !String(l.funcionarios || '').includes(f.porte)) return false;
+  if (f.diasNaBaseMax) {
+    const d = l.criadoEm ? Math.floor((Date.now() - new Date(l.criadoEm).getTime()) / 86400000) : 999;
+    if (d > Number(f.diasNaBaseMax)) return false;
+  }
+  return true;
+}
+
+// Já falamos com essa pessoa faz pouco tempo?
+function esperouOIntervalo(leadId, enviosPorLead, dias) {
+  const ultimo = (enviosPorLead || {})[leadId];
+  if (!ultimo) return true;
+  const passados = (Date.now() - new Date(ultimo).getTime()) / 86400000;
+  return passados >= (Number(dias) || 7);
+}
+
+function ehDiaDeRodar(c, agora) {
+  const dia = agora.getDay();
+  if (c.frequencia === 'diario') return true;
+  if (c.frequencia === 'dias_uteis') return dia >= 1 && dia <= 5;
+  if (c.frequencia === 'semanal') return (c.diasSemana || []).map(Number).includes(dia);
+  return false;
+}
+
+// Está na janela de algum dos horários marcados? Damos 20 minutos de folga,
+// porque a execução é a cada 15 e não bate no minuto exato.
+function horarioDaVez(c, agora, jaFeitos) {
+  const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, '0')}-${String(agora.getDate()).padStart(2, '0')}`;
+  const min = agora.getHours() * 60 + agora.getMinutes();
+  for (const h of (c.horarios || ['09:00'])) {
+    const [hh, mm] = String(h).split(':');
+    const alvo = (parseInt(hh, 10) || 0) * 60 + (parseInt(mm, 10) || 0);
+    const atraso = min - alvo;
+    if (atraso >= 0 && atraso <= 20 && !(jaFeitos || []).includes(`${hoje} ${h}`)) {
+      return { horario: h, marca: `${hoje} ${h}` };
+    }
+  }
+  return null;
+}
+
+async function rodarCampanhaRecorrente(c) {
+  const agora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  if (c.ativa === false) return { motivo: 'pausada' };
+  if (!ehDiaDeRodar(c, agora)) return { motivo: 'não é dia de rodar' };
+
+  const vez = horarioDaVez(c, agora, c.execucoes || []);
+  if (!vez) return { motivo: 'fora do horário' };
+
+  // Marca antes de enviar: se algo estourar no meio, não repete o lote inteiro
+  await db.collection('campanhas_recorrentes').doc(c.id).set({
+    execucoes: [...(c.execucoes || []), vez.marca].slice(-60),
+    ultimaExecucao: new Date().toISOString(),
+  }, { merge: true });
+
+  const snap = await db.collection('leads').get();
+  const candidatos = [];
+  snap.forEach(d => {
+    const l = { id: d.id, ...d.data() };
+    if (!leadNaCampanhaRecorrente(l, c.filtros || {})) return;
+    if (!esperouOIntervalo(l.id, c.enviosPorLead, c.intervaloMinimoDias)) return;
+    candidatos.push(l);
+  });
+
+  if (!candidatos.length) {
+    await db.collection('campanhas_recorrentes').doc(c.id).set({
+      ultimoResultado: { horario: vez.horario, elegiveis: 0, enviados: 0, em: new Date().toISOString() },
+    }, { merge: true });
+    return { motivo: 'ninguém elegível agora', enviados: 0 };
+  }
+
+  const numero = await obterNumeroDatafy({ numeroId: c.numeroId, finalidade: c.finalidade || 'comercial' });
+  const ehQR = c.canal === 'qr' || (numero.tipo || 'oficial') === 'qr';
+  const teto = Math.min(Number(c.limitePorExecucao) || 30, candidatos.length);
+  const lote = candidatos.slice(0, teto);
+
+  // Alterna entre as variações de texto para não sair sempre igual
+  const variacoes = (c.mensagens || []).filter(x => String(x || '').trim());
+  const base = variacoes.length ? variacoes : [c.texto || ''];
+
+  const envios = { ...(c.enviosPorLead || {}) };
+  let ok = 0, falhas = 0;
+  const errosVistos = [];
+
+  for (let i = 0; i < lote.length; i++) {
+    const l = lote[i];
+    const primeiroNome = String(l.nome || '').trim().split(' ')[0] || '';
+    const texto = String(base[(ok + falhas) % base.length] || '')
+      .replace(/\{\{nome\}\}/g, l.nome || '')
+      .replace(/\{\{primeiro_nome\}\}/g, primeiroNome)
+      .replace(/\{\{solucao\}\}/g, l.solucao || '')
+      .replace(/\{\{funcionarios\}\}/g, l.funcionarios || '');
+
+    try {
+      const r = ehQR
+        ? await enviarPorQR(numero, l.telefone, texto)
+        : await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: normalizarNumero(l.telefone), text: texto },
+          });
+      if (r.ok) {
+        ok++;
+        envios[l.id] = new Date().toISOString();
+        await db.collection('leads').doc(l.id).set({
+          ultimaCampanhaEm: new Date().toISOString(),
+          ultimaCampanhaNome: c.nome || '',
+        }, { merge: true });
+      } else {
+        falhas++;
+        const m = msgErroDatafy(r);
+        if (errosVistos.length < 5) errosVistos.push(`${l.nome || l.telefone}: ${m}`);
+      }
+    } catch (e) {
+      falhas++;
+      if (errosVistos.length < 5) errosVistos.push(`${l.nome || l.telefone}: ${e.message}`);
+    }
+
+    if (i < lote.length - 1) {
+      await new Promise(r => setTimeout(r,
+        ehQR ? intervaloSorteado(c.intervaloMin || 30, c.intervaloMax || 75)
+             : (Number(c.intervaloSegundos) || 4) * 1000));
+    }
+  }
+
+  await db.collection('campanhas_recorrentes').doc(c.id).set({
+    enviosPorLead: envios,
+    totalEnviado: (c.totalEnviado || 0) + ok,
+    ultimoResultado: {
+      horario: vez.horario, elegiveis: candidatos.length,
+      enviados: ok, falhas, erros: errosVistos,
+      em: new Date().toISOString(),
+    },
+  }, { merge: true });
+
+  await db.collection('sync_log').add({
+    tipo: 'campanha_recorrente', campanha: c.nome || c.id,
+    horario: vez.horario, elegiveis: candidatos.length, enviados: ok, falhas,
+    data: new Date().toISOString(),
+  });
+
+  console.log(`[recorrente] "${c.nome}" ${vez.horario}: ${ok} enviados, ${falhas} falhas, ${candidatos.length} elegíveis`);
+  return { enviados: ok, falhas, elegiveis: candidatos.length };
+}
+
+exports.campanhasRecorrentes = functions.runWith({ timeoutSeconds: 540 })
+  .pubsub.schedule('every 15 minutes')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    try {
+      const snap = await db.collection('campanhas_recorrentes').get();
+      for (const d of snap.docs) {
+        try {
+          await rodarCampanhaRecorrente({ id: d.id, ...d.data() });
+        } catch (e) {
+          console.error(`[recorrente] erro em ${d.id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error('[recorrente] erro geral:', e.message);
+    }
+    return null;
+  });
+
+// Prévia: quantos entrariam agora, sem enviar nada
+exports.recorrentePrevia = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { filtros = {}, intervaloMinimoDias = 7, enviosPorLead = {} } = req.body || {};
+    const snap = await db.collection('leads').get();
+    let elegiveis = 0, bloqueadosPorIntervalo = 0, foraDoFiltro = 0;
+    const exemplos = [];
+    snap.forEach(d => {
+      const l = { id: d.id, ...d.data() };
+      if (!leadNaCampanhaRecorrente(l, filtros)) { foraDoFiltro++; return; }
+      if (!esperouOIntervalo(l.id, enviosPorLead, intervaloMinimoDias)) { bloqueadosPorIntervalo++; return; }
+      elegiveis++;
+      if (exemplos.length < 8) exemplos.push(l.nome || l.telefone);
+    });
+    res.status(200).json({ ok: true, elegiveis, bloqueadosPorIntervalo, foraDoFiltro, exemplos });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Disparar agora, para testar sem esperar o horário
+exports.recorrenteAgora = functions.runWith({ timeoutSeconds: 540 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { id } = req.body || {};
+      if (!id) throw new Error('Informe a campanha.');
+      const d = await db.collection('campanhas_recorrentes').doc(id).get();
+      if (!d.exists) throw new Error('Campanha não encontrada.');
+      // Ignora dia e horário, mas mantém o intervalo mínimo por pessoa
+      const c = { id: d.id, ...d.data(), frequencia: 'diario', horarios: ['00:00'], execucoes: [] };
+      const agoraSP2 = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      c.horarios = [`${String(agoraSP2.getHours()).padStart(2, '0')}:${String(agoraSP2.getMinutes()).padStart(2, '0')}`];
+      const r = await rodarCampanhaRecorrente(c);
+      res.status(200).json({ ok: true, ...r });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ─── RESPOSTAS RÁPIDAS EM SEQUÊNCIA ──────────────────────────────────────────
+// Uma resposta rápida é uma lista de ações executadas em ordem: texto, imagem
+// ou áudio, com espera entre elas e o "digitando..." aparecendo antes do texto.
+// É usada quando o cliente ACABOU de escrever — ou seja, sempre dentro da
+// janela de 24 horas da Meta. Por isso vai por texto livre e não por template.
+//
+// Ao terminar, pode mover o lead de etapa e grava tudo no histórico.
+
+// Teto de espera somada. A função morre em 540s; parar antes disso, com aviso
+// no log, é melhor do que a sequência ser cortada no meio sem ninguém saber.
+const TETO_ESPERA_RESPOSTA = 300;
+
+function saudacaoDoDia(d) {
+  const h = Number(new Intl.DateTimeFormat('pt-BR', {
+    hour: 'numeric', hour12: false, timeZone: 'America/Sao_Paulo',
+  }).format(d || new Date()));
+  if (h < 12) return 'Bom dia';
+  if (h < 18) return 'Boa tarde';
+  return 'Boa noite';
+}
+
+function periodoDoDia(d) {
+  const h = Number(new Intl.DateTimeFormat('pt-BR', {
+    hour: 'numeric', hour12: false, timeZone: 'America/Sao_Paulo',
+  }).format(d || new Date()));
+  if (h < 12) return 'manhã';
+  if (h < 18) return 'tarde';
+  return 'noite';
+}
+
+// Aceita #tag e {{tag}} — o pessoal veio do WaSpeed acostumado com #
+function aplicarVariaveisResposta(texto, lead, usuario) {
+  const nome = String(lead.nome || '').trim();
+  const primeiro = nome.split(/\s+/)[0] || '';
+  const capitaliza = s => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : '';
+  const mapa = {
+    nome: nome,
+    primeironome: capitaliza(primeiro),
+    numero: String(lead.telefone || '').replace(/\D/g, ''),
+    email: lead.email || '',
+    empresa: lead.empresa || '',
+    saudacao: saudacaoDoDia(),
+    'periodo-dia': periodoDoDia(),
+    periodo: periodoDoDia(),
+    funcionarios: lead.funcionarios || '',
+    solucao: lead.solucao || '',
+    origem: lead.origem || '',
+    vendedor: String(usuario || '').split('@')[0] || '',
+  };
+  let out = String(texto || '');
+  Object.keys(mapa).forEach(k => {
+    const v = mapa[k];
+    out = out.replace(new RegExp('#' + k.replace(/[-]/g, '\\-') + '\\b', 'gi'), v);
+    out = out.replace(new RegExp('\\{\\{\\s*' + k.replace(/[-]/g, '\\-') + '\\s*\\}\\}', 'gi'), v);
+  });
+  return out;
+}
+
+const dormir = ms => new Promise(r => setTimeout(r, Math.max(0, ms)));
+
+// Envia mídia pela Datafy. `voice: true` faz o áudio chegar como mensagem de
+// voz (ícone de microfone) em vez de arquivo — exige OGG/OPUS mono do outro lado.
+async function enviarMidiaWhats({ token, destino, tipo, url, caption, voice }) {
+  if (tipo === 'imagem') {
+    return chamarDatafy({
+      token, path: '/messages/send/image', method: 'POST',
+      body: { to: destino, image: { link: url, caption: caption || '' } },
+    });
+  }
+  if (tipo === 'audio') {
+    return chamarDatafy({
+      token, path: '/messages/send/audio', method: 'POST',
+      body: { to: destino, audio: { link: url, voice: voice !== false }, voice: voice !== false },
+    });
+  }
+  if (tipo === 'documento') {
+    return chamarDatafy({
+      token, path: '/messages/send/document', method: 'POST',
+      body: { to: destino, document: { link: url, caption: caption || '', filename: caption || 'arquivo.pdf' } },
+    });
+  }
+  throw new Error('Tipo de mídia desconhecido: ' + tipo);
+}
+
+// Executa a sequência de uma resposta rápida em um lead
+exports.respostaRapidaEnviar = functions
+  .runWith({ timeoutSeconds: 540 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      const { leadId, respostaId, usuario } = req.body || {};
+      if (!leadId || !respostaId) throw new Error('Informe o lead e a resposta.');
+
+      const [ls, rs] = await Promise.all([
+        db.collection('leads').doc(leadId).get(),
+        db.collection('respostas_rapidas').doc(respostaId).get(),
+      ]);
+      if (!ls.exists) throw new Error('Lead não encontrado.');
+      if (!rs.exists) throw new Error('Resposta rápida não encontrada.');
+
+      const lead = ls.data();
+      const resp = rs.data();
+      const acoes = (resp.acoes || []).filter(a => a && a.tipo);
+      if (!acoes.length) throw new Error('Esta resposta não tem nenhuma ação cadastrada.');
+      if (!lead.telefone) throw new Error('Este lead está sem telefone.');
+
+      const numero = await obterNumeroDatafy({ finalidade: 'comercial' });
+      const destino = normalizarNumero(lead.telefone);
+
+      const novas = [];
+      const falhas = [];
+      let gastos = 0;
+
+      for (let i = 0; i < acoes.length; i++) {
+        const a = acoes[i];
+        const antes = Math.min(Number(a.esperaAntes) || 0, 60);
+        const depois = Math.min(Number(a.esperaDepois) || 0, 60);
+
+        // O "digitando..." só faz sentido antes de texto; antes de áudio a
+        // própria Datafy não tem equivalente de "gravando", então pulamos.
+        if (a.tipo === 'texto' && antes > 0) {
+          await chamarDatafy({
+            token: numero.token, path: '/messages/send/typing',
+            method: 'POST', body: { to: destino },
+          }).catch(() => {});
+        }
+        if (antes > 0 && gastos + antes <= TETO_ESPERA_RESPOSTA) {
+          await dormir(antes * 1000);
+          gastos += antes;
+        }
+
+        let r;
+        let registro = '';
+        if (a.tipo === 'texto') {
+          const t = aplicarVariaveisResposta(a.texto, lead, usuario);
+          if (!t.trim()) continue;
+          r = await chamarDatafy({
+            token: numero.token, path: '/messages/send/text',
+            method: 'POST', body: { to: destino, text: t },
+          });
+          registro = t;
+        } else {
+          if (!a.url) { falhas.push(`${a.tipo} sem arquivo`); continue; }
+          const legenda = aplicarVariaveisResposta(a.texto || '', lead, usuario);
+          r = await enviarMidiaWhats({
+            token: numero.token, destino, tipo: a.tipo,
+            url: a.url, caption: legenda, voice: a.voz !== false,
+          });
+          registro = a.tipo === 'imagem' ? `🖼️ ${legenda || 'imagem'}`
+                   : a.tipo === 'audio' ? '🎤 áudio'
+                   : `📎 ${legenda || 'documento'}`;
+        }
+
+        if (r && r.ok) {
+          novas.push({
+            de: 'humano', texto: registro, data: new Date().toISOString(),
+            usuario: usuario || '—', resposta: resp.nome || '',
+            midia: a.tipo === 'texto' ? '' : (a.url || ''), midiaTipo: a.tipo === 'texto' ? '' : a.tipo,
+          });
+        } else {
+          falhas.push(`${a.tipo}: ${msgErroDatafy(r)}`);
+          // Falhou o primeiro passo: quase sempre é janela fechada ou número
+          // inválido. Insistir nos outros só multiplica o erro.
+          if (i === 0) break;
+        }
+
+        if (depois > 0 && gastos + depois <= TETO_ESPERA_RESPOSTA) {
+          await dormir(depois * 1000);
+          gastos += depois;
+        }
+      }
+
+      const patch = {
+        conversa: [...(lead.conversa || []), ...novas],
+        atendimentoHumano: true,
+        aguardandoResposta: false,
+        atualizadoEm: new Date().toISOString(),
+      };
+
+      // Move a etapa só se a resposta define destino e o lead ainda não está lá
+      let moveu = '';
+      if (resp.etapaDestino && lead.status !== resp.etapaDestino && novas.length) {
+        patch.status = resp.etapaDestino;
+        moveu = resp.etapaDestino;
+      }
+
+      if (novas.length) {
+        patch.historico = [
+          ...(lead.historico || []),
+          {
+            evento: 'resposta_rapida',
+            detalhe: `Resposta "${resp.nome}" enviada (${novas.length} mensagem(ns))`
+              + (moveu ? ` — movido para ${moveu}` : ''),
+            data: new Date().toISOString(),
+            usuario: usuario || '—',
+          },
+        ];
+      }
+      await db.collection('leads').doc(leadId).set(patch, { merge: true });
+
+      // Contador de uso: alimenta a ordenação por "mais usadas" na tela
+      await db.collection('respostas_rapidas').doc(respostaId).set({
+        usos: (Number(resp.usos) || 0) + (novas.length ? 1 : 0),
+        ultimoUso: new Date().toISOString(),
+      }, { merge: true });
+
+      res.status(200).json({
+        ok: true, enviadas: novas.length, total: acoes.length,
+        falhas, moveu,
+      });
+    } catch (err) {
+      console.error('[resposta-rapida] erro:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
