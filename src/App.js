@@ -86,6 +86,7 @@ const NAV_ITEMS_BASE=[
   {id:'orcamentos',    icon:'ti-file-invoice',       label:'Orçamentos',     perfis:['admin','financeiro','colaborador']},
   {id:'leads',         icon:'ti-target',             label:'Leads',          perfis:['admin','colaborador']},
   {id:'anuncios',      icon:'ti-speakerphone',       label:'Anúncios',       perfis:['admin']},
+  {id:'secullum',      icon:'ti-database',           label:'Secullum',       perfis:['admin','colaborador']},
 ];
 // Config sempre fixo no final, só admin
 const NAV_CONFIG={id:'config',icon:'ti-settings',label:'Configurações',perfis:['admin']};
@@ -5501,6 +5502,368 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── PAINEL SECULLUM — CONFRONTO COM A LISTA DE DEMONSTRAÇÃO ─────────────────
+// O vendedor baixa do site da Secullum o CSV "Serviços Web em Demonstração",
+// sobe aqui, e o sistema cruza com a base de clientes pelo CNPJ.
+//
+// O cruzamento responde três perguntas que hoje custam ~40 min por semana:
+//   1. Quem já está faturado aqui e ainda em teste lá → pronto para ativar
+//   2. Quem está lá e não existe aqui → entrou por link, ninguém atendeu (venda)
+//   3. Quem está faturado aqui e não aparece lá → já ativado, ou faltou criar
+
+// Documento só com dígitos, com os zeros à esquerda de volta. O Excel come o
+// zero da frente ao salvar um CSV, e sem isso "00734615000141" nunca casaria
+// com o cadastro. Por isso normalizamos os dois lados pelo tamanho.
+function chaveDoc(v){
+  const n=String(v||'').replace(/\D/g,'');
+  if(!n)return '';
+  if(n.length>=12&&n.length<=14)return n.padStart(14,'0');
+  if(n.length>=9&&n.length<=11)return n.padStart(11,'0');
+  return n;
+}
+
+// dd/mm/aa da Secullum → Date
+function dataSec(v){
+  const m=String(v||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{2})/);
+  if(!m)return null;
+  const d=new Date(2000+Number(m[3]),Number(m[2])-1,Number(m[1]));
+  return isNaN(d.getTime())?null:d;
+}
+function dataHoraSec(v){
+  const m=String(v||'').trim().match(/^(\d{2})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+  if(!m)return null;
+  return new Date(2000+Number(m[3]),Number(m[2])-1,Number(m[1]),Number(m[4]),Number(m[5]));
+}
+const diasAte=d=>d?Math.ceil((d.getTime()-Date.now())/864e5):null;
+
+// Divide uma linha de CSV respeitando aspas
+function partirLinha(linha,delim){
+  const out=[];let atual='',aspas=false;
+  for(let i=0;i<linha.length;i++){
+    const c=linha[i];
+    if(c==='"'){ if(aspas&&linha[i+1]==='"'){atual+='"';i++;} else aspas=!aspas; continue; }
+    if(c===delim&&!aspas){out.push(atual);atual='';continue;}
+    atual+=c;
+  }
+  out.push(atual);
+  return out.map(x=>x.trim());
+}
+
+function lerCsvSecullum(texto){
+  const limpo=String(texto||'').replace(/^﻿/,'');
+  const linhas=limpo.split(/\r?\n/).filter(l=>l.trim());
+  if(linhas.length<2)throw new Error('O arquivo parece vazio.');
+  const delim=(linhas[0].match(/;/g)||[]).length>=(linhas[0].match(/,/g)||[]).length?';':',';
+  const cab=partirLinha(linhas[0],delim).map(h=>h.replace(/"/g,'').trim());
+  const pos={};cab.forEach((h,i)=>{pos[h.toLowerCase()]=i;});
+  const pega=(cols,nome)=>{const i=pos[nome.toLowerCase()];return i===undefined?'':String(cols[i]||'').replace(/^"|"$/g,'').trim();};
+  if(pos['cnpjcobranca']===undefined)
+    throw new Error('Não achei a coluna CnpjCobranca. Confira se é o arquivo "Serviços Web em Demonstração" da Secullum, sem passar pelo Excel.');
+  const linhasOk=[];
+  for(let i=1;i<linhas.length;i++){
+    const c=partirLinha(linhas[i],delim);
+    const codigo=pega(c,'Codigo');
+    if(!codigo)continue;
+    linhasOk.push({
+      codigo,
+      software:pega(c,'Software'),
+      nome:pega(c,'BancoNome'),
+      razao:pega(c,'BancoRazaoSocial'),
+      doc:pega(c,'CnpjCobranca'),
+      ultimoLogin:pega(c,'UltimoLogin'),
+      funcionarios:Number(pega(c,'Funcionarios'))||0,
+      equipamentos:Number(pega(c,'Equipamentos'))||0,
+      validade:pega(c,'DataValidade'),
+      limiteFunc:Number(pega(c,'LimiteFuncionarios'))||0,
+      plano:pega(c,'Plano'),
+      criadoEm:pega(c,'Data'),
+      ativadoEm:pega(c,'dataativado'),
+    });
+  }
+  if(!linhasOk.length)throw new Error('Nenhuma linha com código foi encontrada no arquivo.');
+  return linhasOk;
+}
+
+function SecullumView({todos,onAbrirCliente,perfil}){
+  const [dados,setDados]=useState(null);
+  const [carregando,setCarregando]=useState(true);
+  const [subindo,setSubindo]=useState(false);
+  const [erro,setErro]=useState('');
+  const [aba,setAba]=useState('ativar');
+  const [busca,setBusca]=useState('');
+
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'config','secullum_demo'),s=>{
+      setDados(s.exists()?s.data():null);
+      setCarregando(false);
+    });
+    return()=>u();
+  },[]);
+
+  async function subir(file){
+    if(!file)return;
+    setSubindo(true);setErro('');
+    try{
+      const texto=await file.text();
+      const registros=lerCsvSecullum(texto);
+      await setDoc(doc(db,'config','secullum_demo'),{
+        registros,
+        total:registros.length,
+        arquivo:file.name,
+        atualizadoEm:new Date().toISOString(),
+        atualizadoPor:auth.currentUser?.email||'—',
+      });
+    }catch(e){setErro(e.message);}
+    setSubindo(false);
+  }
+
+  // ── CRUZAMENTO ────────────────────────────────────────────────────────────
+  const cruz=useMemo(()=>{
+    const regs=(dados?.registros)||[];
+    const porDoc={};
+    (todos||[]).forEach(c=>{
+      const k=chaveDoc(c.cnpj);
+      if(k)porDoc[k]=c;
+    });
+    const vistos=new Set();
+    const ativar=[],negociando=[],oportunidade=[];
+    regs.forEach(r=>{
+      const k=chaveDoc(r.doc);
+      const cli=k?porDoc[k]:null;
+      if(cli){
+        vistos.add(k);
+        const item={...r,cliente:cli};
+        if(String(cli.status||'').trim()==='Faturado')ativar.push(item);
+        else negociando.push(item);
+      }else{
+        oportunidade.push(r);
+      }
+    });
+    const semDemo=(todos||[])
+      .filter(c=>String(c.status||'').trim()==='Faturado')
+      .filter(c=>{const k=chaveDoc(c.cnpj);return !k||!vistos.has(k);});
+    const ord=(a,b)=>(b.funcionarios||0)-(a.funcionarios||0);
+    return {ativar:ativar.sort(ord),negociando:negociando.sort(ord),oportunidade:oportunidade.sort(ord),semDemo};
+  },[dados,todos]);
+
+  const vencendo=useMemo(()=>{
+    const regs=(dados?.registros)||[];
+    return regs.map(r=>({r,d:dataSec(r.validade)}))
+      .filter(x=>x.d&&diasAte(x.d)<=7&&diasAte(x.d)>=-3)
+      .sort((a,b)=>a.d-b.d);
+  },[dados]);
+
+  if(carregando)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
+
+  const ABAS=[
+    {id:'ativar',      l:'⚡ Pode ativar',        n:cruz.ativar.length,      cor:'#27ae60'},
+    {id:'oportunidade',l:'🎯 Oportunidade',       n:cruz.oportunidade.length,cor:'#e84393'},
+    {id:'negociando',  l:'🤝 Em negociação',      n:cruz.negociando.length,  cor:'#f5a623'},
+    {id:'semdemo',     l:'📋 Sem demonstração',   n:cruz.semDemo.length,     cor:'#7f8c8d'},
+  ];
+
+  const filtra=lista=>{
+    const b=busca.trim().toLowerCase();
+    if(!b)return lista;
+    return lista.filter(x=>{
+      const alvo=[x.nome,x.razao,x.doc,x.codigo,x.cliente?.nome,x.cnpj].join(' ').toLowerCase();
+      return alvo.includes(b);
+    });
+  };
+
+  const Card=({cor,titulo,valor,sub})=>(
+    <div style={{background:'#fff',borderRadius:10,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${cor}`,flex:'1 1 150px',minWidth:140}}>
+      <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5}}>{titulo}</div>
+      <div style={{fontSize:26,fontWeight:700,color:cor,lineHeight:1.2}}>{valor}</div>
+      {sub&&<div style={{fontSize:10,color:'#95a5a6'}}>{sub}</div>}
+    </div>
+  );
+
+  return(
+    <div>
+      {/* Upload no topo, como pedido */}
+      <div style={{background:'#fff',borderRadius:10,padding:'16px 20px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',marginBottom:14}}>
+        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+          <div style={{flex:1,minWidth:240}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#2c3e50',marginBottom:3}}>Lista de demonstração da Secullum</div>
+            <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6}}>
+              Baixe no site da Secullum o relatório <strong>Serviços Web em Demonstração</strong> e suba aqui, do jeito que veio.
+              <span style={{color:'#b45309'}}> Não abra no Excel antes</span> — ele apaga o zero da frente dos CNPJs e a conferência erra.
+            </div>
+          </div>
+          <label style={{padding:'10px 20px',borderRadius:8,border:'none',background:subindo?'#dde1e7':'#2c3e50',color:'#fff',cursor:subindo?'default':'pointer',fontSize:13,fontWeight:700,whiteSpace:'nowrap'}}>
+            {subindo?'Lendo...':'⬆ Subir planilha'}
+            <input type="file" accept=".csv,text/csv" style={{display:'none'}} disabled={subindo}
+              onChange={e=>{subir(e.target.files[0]);e.target.value='';}}/>
+          </label>
+        </div>
+        <div style={{fontSize:11,color:'#95a5a6',marginTop:9,paddingTop:9,borderTop:'1px solid #f2f4f6'}}>
+          {dados?.atualizadoEm
+            ?<>Última atualização: <strong style={{color:'#2c3e50'}}>{new Date(dados.atualizadoEm).toLocaleString('pt-BR')}</strong>
+               {' '}· {dados.total} registro(s) · {dados.arquivo||''} · por {String(dados.atualizadoPor||'—').split('@')[0]}</>
+            :'Nenhuma planilha subida ainda.'}
+        </div>
+        {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'9px 12px',marginTop:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+      </div>
+
+      {!dados&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'40px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:36,marginBottom:10}}>📊</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:6}}>Suba a lista para começar</div>
+          <div style={{fontSize:12,color:'#7f8c8d',lineHeight:1.7,maxWidth:420,margin:'0 auto'}}>
+            O sistema cruza pelo CNPJ e te mostra quem já está faturado e pronto para ativar,
+            quem entrou por link e ainda não foi atendido, e quem está faturado sem aparecer na lista.
+          </div>
+        </div>
+      )}
+
+      {dados&&<>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:14}}>
+          <Card cor="#27ae60" titulo="Pode ativar"   valor={cruz.ativar.length}       sub="faturado aqui, em teste lá"/>
+          <Card cor="#e84393" titulo="Oportunidade"  valor={cruz.oportunidade.length} sub="testando sem atendimento"/>
+          <Card cor="#f5a623" titulo="Em negociação" valor={cruz.negociando.length}   sub="no CRM, ainda não faturado"/>
+          <Card cor="#e74c3c" titulo="Vencendo"      valor={vencendo.length}          sub="demonstração acaba em 7 dias"/>
+        </div>
+
+        {vencendo.length>0&&(
+          <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:10,padding:'12px 16px',marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#c53030',marginBottom:7,textTransform:'uppercase'}}>⏳ Demonstração acabando</div>
+            <div style={{display:'flex',gap:7,flexWrap:'wrap'}}>
+              {vencendo.slice(0,12).map(({r,d})=>{
+                const dias=diasAte(d);
+                return(
+                  <span key={r.codigo} title={`${r.nome} — vence ${r.validade}`}
+                    style={{background:'#fff',border:'1px solid #feb2b2',borderRadius:8,padding:'5px 10px',fontSize:10,color:'#c53030',fontWeight:600}}>
+                    {String(r.nome).slice(0,26)} · <strong>{dias<=0?'venceu':`${dias}d`}</strong>
+                  </span>
+                );
+              })}
+              {vencendo.length>12&&<span style={{fontSize:10,color:'#c53030',alignSelf:'center'}}>+{vencendo.length-12}</span>}
+            </div>
+          </div>
+        )}
+
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12,alignItems:'center'}}>
+          {ABAS.map(a=>(
+            <button key={a.id} onClick={()=>setAba(a.id)}
+              style={{padding:'8px 15px',borderRadius:8,border:'none',cursor:'pointer',fontSize:12,
+                background:aba===a.id?a.cor:'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',fontWeight:aba===a.id?700:500}}>
+              {a.l} ({a.n})
+            </button>
+          ))}
+          <div style={{flex:1}}/>
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar por nome ou CNPJ..."
+            style={{padding:'8px 12px',borderRadius:7,border:'1px solid #dde1e7',fontSize:12,minWidth:210}}/>
+        </div>
+
+        {aba==='ativar'&&(
+          <Lista vazio="Ninguém faturado aqui está em demonstração lá. Ou já ativou tudo, ou falta faturar."
+            itens={filtra(cruz.ativar)} render={r=>(
+            <LinhaSec key={r.codigo} r={r} cor="#27ae60"
+              extra={<span style={{fontSize:10,color:'#276749',fontWeight:700}}>✔ Faturado no CRM</span>}
+              onCliente={()=>onAbrirCliente&&onAbrirCliente(r.cliente)}/>
+          )}/>
+        )}
+
+        {aba==='oportunidade'&&(
+          <>
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:9,lineHeight:1.6,maxWidth:640}}>
+              Estão testando o sistema da Secullum e <strong>não existem no seu CRM</strong>. Entraram por link,
+              ninguém atendeu. É a lista onde tem venda parada.
+            </div>
+            <Lista vazio="Todo mundo que está em demonstração já tem cadastro aqui."
+              itens={filtra(cruz.oportunidade)} render={r=>(
+              <LinhaSec key={r.codigo} r={r} cor="#e84393"/>
+            )}/>
+          </>
+        )}
+
+        {aba==='negociando'&&(
+          <Lista vazio="Nenhum cliente em demonstração está sem faturar."
+            itens={filtra(cruz.negociando)} render={r=>(
+            <LinhaSec key={r.codigo} r={r} cor="#f5a623"
+              extra={<span style={{fontSize:10,color:'#b45309',fontWeight:700}}>Status no CRM: {r.cliente?.status||'—'}</span>}
+              onCliente={()=>onAbrirCliente&&onAbrirCliente(r.cliente)}/>
+          )}/>
+        )}
+
+        {aba==='semdemo'&&(
+          <>
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:9,lineHeight:1.6,maxWidth:640}}>
+              Faturados aqui que <strong>não aparecem</strong> na lista de demonstração. Normalmente já foram
+              ativados — mas se algum não foi, é banco que você faturou e o cliente não está usando.
+            </div>
+            <Lista vazio="Todos os faturados aparecem na lista."
+              itens={filtra(cruz.semDemo.map(c=>({cliente:c,nome:c.nome,doc:c.cnpj,codigo:c.id})))}
+              render={r=>(
+                <div key={r.codigo} onClick={()=>onAbrirCliente&&onAbrirCliente(r.cliente)}
+                  style={{background:'#fff',borderRadius:8,padding:'11px 15px',marginBottom:7,boxShadow:'0 1px 3px rgba(0,0,0,.06)',
+                    borderLeft:'3px solid #7f8c8d',cursor:'pointer',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                  <div style={{flex:1,minWidth:180}}>
+                    <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{r.cliente.nome}</div>
+                    <div style={{fontSize:10,color:'#95a5a6'}}>{r.cliente.cnpj||'sem CNPJ'} · {r.cliente.plano||''}</div>
+                  </div>
+                  {r.cliente.nrBanco&&<span style={{fontSize:10,color:'#2b6cb0',fontWeight:700}}>banco {r.cliente.nrBanco}</span>}
+                </div>
+              )}/>
+          </>
+        )}
+      </>}
+    </div>
+  );
+}
+
+function Lista({itens,render,vazio}){
+  if(!itens.length)return(
+    <div style={{background:'#fff',borderRadius:10,padding:'28px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.06)',fontSize:12,color:'#95a5a6',lineHeight:1.6}}>
+      {vazio}
+    </div>
+  );
+  return <div>{itens.map(render)}</div>;
+}
+
+function LinhaSec({r,cor,extra,onCliente}){
+  const venc=dataSec(r.validade);
+  const dias=diasAte(venc);
+  const login=dataHoraSec(r.ultimoLogin);
+  const nuncaLogou=!login;
+  const corPrazo=dias===null?'#95a5a6':dias<=3?'#c53030':dias<=7?'#b45309':'#95a5a6';
+  return(
+    <div onClick={onCliente} style={{background:'#fff',borderRadius:8,padding:'11px 15px',marginBottom:7,
+      boxShadow:'0 1px 3px rgba(0,0,0,.06)',borderLeft:`3px solid ${cor}`,cursor:onCliente?'pointer':'default',
+      display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+      <div style={{flex:1,minWidth:200}}>
+        <div style={{display:'flex',alignItems:'center',gap:7,flexWrap:'wrap'}}>
+          <span style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{r.nome}</span>
+          <span style={{fontSize:9,background:'#f0f7ff',color:'#2b6cb0',border:'1px solid #bee3f8',borderRadius:8,padding:'1px 7px',fontWeight:700}}>
+            banco {r.codigo}
+          </span>
+          {nuncaLogou&&(
+            <span style={{fontSize:9,background:'#f5f6fa',color:'#95a5a6',border:'1px solid #e8eaed',borderRadius:8,padding:'1px 7px',fontWeight:700}}>
+              nunca entrou
+            </span>
+          )}
+        </div>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:2}}>
+          {r.doc} · {r.plano} · {r.funcionarios} func · {r.equipamentos} equip
+        </div>
+        {extra&&<div style={{marginTop:3}}>{extra}</div>}
+      </div>
+      <div style={{textAlign:'right',flexShrink:0}}>
+        <div style={{fontSize:10,color:corPrazo,fontWeight:700}}>
+          {dias===null?'—':dias<=0?'demonstração venceu':`vence em ${dias}d`}
+        </div>
+        <div style={{fontSize:9,color:'#c5c5c5'}}>{r.validade}</div>
+      </div>
+      <button disabled title="Vai ativar o banco direto na Secullum — falta a integração com a API deles"
+        onClick={e=>e.stopPropagation()}
+        style={{padding:'7px 14px',borderRadius:7,border:'1px dashed #dde1e7',background:'#fafbfc',color:'#bbb',fontSize:11,fontWeight:700,cursor:'not-allowed',flexShrink:0}}>
+        Ativar
+      </button>
     </div>
   );
 }
@@ -18891,7 +19254,7 @@ export default function App(){
           <div style={{fontSize:9,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:1,padding:'0 8px',marginBottom:8}}>Menu</div>
           {sidebarItems.map(n=>{
             if(n.isSep)return <div key={n.id} style={{height:1,background:'rgba(255,255,255,.08)',margin:'6px 8px'}}/>;
-            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','leads':'#e84393','anuncios':'#c2185b','config':'#95a5a6'};
+            const iconColors={'dashboard':'#3498db','vendas':'#27ae60','financeiro':'#e67e22','asaas':'#27ae60','clientes':'#9b59b6','novo':'#2ecc71','implantacao':'#e74c3c','relatorios':'#1abc9c','solicitacoes':'#f39c12','orcamentos':'#2980b9','leads':'#e84393','anuncios':'#c2185b','secullum':'#0d9488','config':'#95a5a6'};
             const svgIcons={
               // Dashboard: monitor com gráfico
               dashboard:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/><line x1="12" y1="17" x2="12" y2="21"/><polyline points="6 10 9 7 12 10 16 6"/></svg>,
@@ -18916,6 +19279,7 @@ export default function App(){
               anuncios:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>,
               // Configurações: engrenagem
               config:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+              secullum:<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
             };
             const ativo=page===n.id;
             const cor=iconColors[n.id]||'#3498db';
@@ -19219,6 +19583,9 @@ export default function App(){
           {/* SOLICITAÇÕES */}
           {/* ANÚNCIOS */}
           {!clienteSel&&page==='anuncios'&&<AnunciosView leads={leads} usuarios={usuarios} perfil={perfil}/>}
+
+          {/* SECULLUM — confronto com a lista de demonstração */}
+          {!clienteSel&&page==='secullum'&&<SecullumView todos={todos} perfil={perfil} onAbrirCliente={c=>setClienteSel(c)}/>}
 
           {/* LEADS */}
           {!clienteSel&&page==='leads'&&<LeadsView
