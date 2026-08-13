@@ -4975,14 +4975,52 @@ const COLUNAS_FATURADOS = [
   'Etapa da implantação', 'Cobrança Asaas',
 ];
 
+// O Sheets só aceita texto, número ou booleano. Data no Firestore vem como
+// Timestamp ({_seconds,_nanoseconds}) e qualquer objeto que escape daqui derruba
+// a exportação inteira com "Invalid values[x][y]: struct_value".
+function celula(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number' || typeof v === 'boolean') return v;
+  if (typeof v === 'string') return v;
+  // Timestamp do Firestore, tanto o objeto vivo quanto o já serializado
+  const seg = (typeof v.toDate === 'function')
+    ? null
+    : (typeof v._seconds === 'number' ? v._seconds
+      : (typeof v.seconds === 'number' ? v.seconds : null));
+  const d = (typeof v.toDate === 'function') ? v.toDate()
+    : (seg !== null ? new Date(seg * 1000)
+      : (v instanceof Date ? v : null));
+  if (d && !isNaN(d.getTime())) {
+    return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  }
+  if (Array.isArray(v)) return v.map(x => celula(x)).filter(Boolean).join(' | ');
+  try { return JSON.stringify(v).slice(0, 200); } catch (_) { return String(v); }
+}
+
+// Data em texto no padrão brasileiro, para o Sheets reconhecer como data
+function dataCelula(v) {
+  const c = celula(v);
+  if (typeof c !== 'string') return c;
+  // "2026-08-12" vindo de <input type=date> vira 12/08/2026
+  const iso = c.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  return c;
+}
+
 function linhaCliente(c, etapaLabel) {
+  // "1.150,00" é brasileiro e o ponto é milhar; "69.9" é decimal com ponto.
+  // A vírgula é o que distingue os dois — sem ela, ponto nunca é milhar.
   const n = v => {
-    const x = parseFloat(String(v == null ? '' : v).replace(',', '.'));
+    if (typeof v === 'number') return isNaN(v) ? 0 : v;
+    let t = String(celula(v)).trim().replace(/[R$\s]/g, '');
+    if (!t) return 0;
+    if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+    const x = parseFloat(t);
     return isNaN(x) ? 0 : x;
   };
-  return [
-    c.data || '',
-    (c.nome || c.empresa || '').toUpperCase(),
+  const bruta = [
+    dataCelula(c.data || c.criadoEm || ''),
+    String(celula(c.nome || c.empresa || '')).toUpperCase(),
     c.cnpj || '',
     c.contato || '',
     c.tel || c.fone || '',
@@ -4997,6 +5035,8 @@ function linhaCliente(c, etapaLabel) {
     etapaLabel || '',
     c.asaas_status_sistema || c.asaas_status || '',
   ];
+  // Rede de segurança: nada de objeto escapa para o Sheets
+  return bruta.map(celula);
 }
 
 async function configExportacao() {
@@ -5033,8 +5073,13 @@ async function exportarFaturados() {
     faturados.push(linhaCliente(c, etapas[impl.etapa] || impl.etapa || ''));
   });
 
-  // Ordena do mais recente para o mais antigo pela data do cadastro
-  faturados.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+  // Ordena do mais recente para o mais antigo. dd/mm/aaaa comparado como texto
+  // ordenaria por dia, não por ano — por isso a virada para aaaammdd.
+  const chaveData = v => {
+    const m = String(v || '').match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    return m ? `${m[3]}${m[2]}${m[1]}` : '0';
+  };
+  faturados.sort((a, b) => chaveData(b[0]).localeCompare(chaveData(a[0])));
 
   const token = await tokenSheets();
   const aba = encodeURIComponent(cfg.aba);
