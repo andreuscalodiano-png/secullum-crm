@@ -4917,3 +4917,197 @@ exports.propostaEmail = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── EXPORTAÇÃO DE CLIENTES FATURADOS PARA O GOOGLE SHEETS ───────────────────
+// Escreve numa planilha que JÁ EXISTE e foi compartilhada com a conta de serviço
+// do projeto. Criar arquivo novo não funcionaria: conta de serviço tem zero
+// espaço no Drive e o Google recusa com "storage quota exceeded".
+//
+// A autenticação usa a credencial padrão da própria função — nenhuma chave
+// privada guardada em lugar nenhum.
+
+const { GoogleAuth } = require('google-auth-library');
+
+function contaDeServico() {
+  const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'secullum-crm';
+  return `${proj}@appspot.gserviceaccount.com`;
+}
+
+// Aceita o ID puro ou a URL inteira da planilha
+function idDaPlanilha(v) {
+  const t = String(v || '').trim();
+  const m = t.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : t;
+}
+
+async function tokenSheets() {
+  const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+  const client = await auth.getClient();
+  const t = await client.getAccessToken();
+  const token = typeof t === 'string' ? t : (t && t.token);
+  if (!token) throw new Error('Não consegui autenticar no Google.');
+  return token;
+}
+
+async function chamarSheets({ token, path, method = 'GET', body = null }) {
+  const opts = { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${path}`, opts);
+  const txt = await r.text();
+  let data; try { data = txt ? JSON.parse(txt) : {}; } catch (_) { data = { raw: txt }; }
+  if (!r.ok) {
+    const msg = data?.error?.message || txt || `HTTP ${r.status}`;
+    if (r.status === 403) {
+      throw new Error(`${msg}\n\nCompartilhe a planilha como EDITOR com: ${contaDeServico()}`);
+    }
+    if (r.status === 404) {
+      throw new Error('Planilha não encontrada. Confira o endereço colado.');
+    }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+const COLUNAS_FATURADOS = [
+  'Data', 'Empresa / Nome', 'CNPJ/CPF', 'Contato', 'Telefone', 'E-mail',
+  'Funcionários', 'Plano', 'Equipamento', 'Mensalidade', 'Implantação',
+  'Equipamento (R$)', 'Total', 'Forma de pagamento', 'Vendedor', 'Status',
+  'Etapa da implantação', 'Cobrança Asaas',
+];
+
+function linhaCliente(c, etapaLabel) {
+  const n = v => {
+    const x = parseFloat(String(v == null ? '' : v).replace(',', '.'));
+    return isNaN(x) ? 0 : x;
+  };
+  return [
+    c.data || '',
+    (c.nome || c.empresa || '').toUpperCase(),
+    c.cnpj || '',
+    c.contato || '',
+    c.tel || c.fone || '',
+    c.email || '',
+    c.func || '',
+    c.plano || '',
+    c.equipTipo || '',
+    n(c.vS), n(c.vI), n(c.vE), n(c.total) || (n(c.vS) + n(c.vI) + n(c.vE)),
+    c.pagamentoI || c.pagamentoE || '',
+    c.vendedor || '',
+    c.status || '',
+    etapaLabel || '',
+    c.asaas_status_sistema || c.asaas_status || '',
+  ];
+}
+
+async function configExportacao() {
+  const snap = await db.collection('config').doc('exportacao').get();
+  const d = snap.exists ? snap.data() : {};
+  return {
+    planilhaId: idDaPlanilha(d.planilhaId || ''),
+    aba: String(d.aba || 'Faturados').trim() || 'Faturados',
+    ativo: d.ativo !== false,
+  };
+}
+
+// Monta as linhas e sobrescreve a aba inteira
+async function exportarFaturados() {
+  const cfg = await configExportacao();
+  if (!cfg.planilhaId) throw new Error('Nenhuma planilha configurada em Configurações › Exportação.');
+
+  const [cs, impls, etapasSnap] = await Promise.all([
+    db.collection('clientes').get(),
+    db.collection('implantacoes').get(),
+    db.collection('config_kanban').get(),
+  ]);
+
+  const etapas = {};
+  etapasSnap.forEach(d => { etapas[d.id] = (d.data() || {}).label || d.id; });
+  const implPorCliente = {};
+  impls.forEach(d => { implPorCliente[d.id] = d.data() || {}; });
+
+  const faturados = [];
+  cs.forEach(d => {
+    const c = { id: d.id, ...d.data() };
+    if (String(c.status || '').trim() !== 'Faturado') return;
+    const impl = implPorCliente[c.id] || {};
+    faturados.push(linhaCliente(c, etapas[impl.etapa] || impl.etapa || ''));
+  });
+
+  // Ordena do mais recente para o mais antigo pela data do cadastro
+  faturados.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+
+  const token = await tokenSheets();
+  const aba = encodeURIComponent(cfg.aba);
+
+  // Limpa antes de escrever: sem isso, uma exportação menor deixaria linhas
+  // velhas embaixo e a comparação sairia com clientes que já não existem.
+  await chamarSheets({
+    token, path: `${cfg.planilhaId}/values/${aba}:clear`, method: 'POST', body: {},
+  });
+
+  const carimbo = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const valores = [
+    [`Clientes faturados — ${faturados.length} · atualizado em ${carimbo}`],
+    COLUNAS_FATURADOS,
+    ...faturados,
+  ];
+
+  await chamarSheets({
+    token,
+    path: `${cfg.planilhaId}/values/${aba}!A1?valueInputOption=USER_ENTERED`,
+    method: 'PUT',
+    body: { range: `${cfg.aba}!A1`, majorDimension: 'ROWS', values: valores },
+  });
+
+  await db.collection('config').doc('exportacao').set({
+    ultimaExportacao: new Date().toISOString(),
+    ultimaQtd: faturados.length,
+    ultimoErro: '',
+  }, { merge: true });
+
+  return { total: faturados.length, aba: cfg.aba, em: carimbo };
+}
+
+exports.exportarFaturadosAgora = functions
+  .runWith({ timeoutSeconds: 300 })
+  .https.onRequest(async (req, res) => {
+    setCors(req, res);
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    try {
+      // O painel pede a conta de serviço para mostrar com quem compartilhar
+      if ((req.body || {}).acao === 'conta') {
+        res.status(200).json({ ok: true, conta: contaDeServico() });
+        return;
+      }
+      const r = await exportarFaturados();
+      res.status(200).json({ ok: true, ...r, conta: contaDeServico() });
+    } catch (err) {
+      console.error('[exportacao] erro:', err.message);
+      await db.collection('config').doc('exportacao')
+        .set({ ultimoErro: err.message, ultimaTentativa: new Date().toISOString() }, { merge: true })
+        .catch(() => {});
+      res.status(500).json({ error: err.message, conta: contaDeServico() });
+    }
+  });
+
+exports.exportarFaturadosDiario = functions
+  .runWith({ timeoutSeconds: 300 })
+  .pubsub.schedule('0 5 * * *')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    const cfg = await configExportacao();
+    if (!cfg.ativo || !cfg.planilhaId) {
+      console.log('[exportacao] desligada ou sem planilha — nada a fazer');
+      return null;
+    }
+    try {
+      const r = await exportarFaturados();
+      console.log(`[exportacao] ${r.total} cliente(s) na aba ${r.aba}`);
+    } catch (err) {
+      console.error('[exportacao] falhou:', err.message);
+      await db.collection('config').doc('exportacao')
+        .set({ ultimoErro: err.message, ultimaTentativa: new Date().toISOString() }, { merge: true })
+        .catch(() => {});
+    }
+    return null;
+  });

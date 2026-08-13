@@ -7844,6 +7844,156 @@ function ConfigChangelog(){
   );
 }
 
+// ─── CONFIGURAÇÕES › EXPORTAÇÃO PARA O GOOGLE SHEETS ─────────────────────────
+// Escreve os clientes faturados numa planilha que já existe no Drive do cliente.
+// Criar arquivo novo não é possível: a conta de serviço do projeto não tem
+// espaço no Drive, e o Google recusa a criação.
+function ConfigExportacao(){
+  const [cfg,setCfg]=useState(null);
+  const [salvo,setSalvo]=useState(false);
+  const [rodando,setRodando]=useState(false);
+  const [conta,setConta]=useState('');
+  const [msg,setMsg]=useState(null);
+
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'config','exportacao'),s=>{
+      const d=s.exists()?s.data():{};
+      setCfg(c=>c||{planilhaId:d.planilhaId||'',aba:d.aba||'Faturados',ativo:d.ativo!==false});
+      setInfo({
+        ultimaExportacao:d.ultimaExportacao||'',
+        ultimaQtd:d.ultimaQtd,
+        ultimoErro:d.ultimoErro||'',
+      });
+    });
+    fetch(`${FUNCTIONS_URL}/exportarFaturadosAgora`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:'conta'}),
+    }).then(r=>r.json()).then(d=>setConta(d.conta||'')).catch(()=>{});
+    return()=>u();
+  },[]);
+  const [info,setInfo]=useState({});
+
+  if(!cfg)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>{setCfg(c=>({...c,[k]:v}));setSalvo(false);};
+
+  async function salvar(){
+    await setDoc(doc(db,'config','exportacao'),{
+      ...cfg,atualizadoEm:new Date().toISOString(),
+      atualizadoPor:auth.currentUser?.email||'—',
+    },{merge:true});
+    setSalvo(true);setTimeout(()=>setSalvo(false),2500);
+  }
+
+  async function exportarAgora(){
+    if(!String(cfg.planilhaId||'').trim()){setMsg({erro:true,txt:'Cole o endereço da planilha antes.'});return;}
+    await salvar();
+    setRodando(true);setMsg(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/exportarFaturadosAgora`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({}),
+      });
+      const d=await r.json();
+      if(d.error)setMsg({erro:true,txt:d.error});
+      else setMsg({erro:false,txt:`${d.total} cliente(s) faturado(s) gravado(s) na aba "${d.aba}".`});
+    }catch(e){setMsg({erro:true,txt:e.message});}
+    setRodando(false);
+  }
+
+  return(
+    <div>
+      <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginBottom:14,maxWidth:660}}>
+        Todo dia às 5h da manhã o sistema reescreve uma aba da sua planilha com os clientes
+        marcados como <strong>Faturado</strong> — nome, CNPJ, contato, funcionários, plano e valores.
+        Serve para você comparar com a sua outra planilha usando PROCV entre abas.
+      </div>
+
+      <div style={{background:'#f0f7ff',border:'1px solid #bee3f8',borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#2b6cb0',marginBottom:6}}>Antes de tudo: compartilhe a planilha</div>
+        <div style={{fontSize:11,color:'#2c3e50',lineHeight:1.7}}>
+          Crie uma planilha no seu Google Drive, abra <strong>Compartilhar</strong> e dê acesso de
+          <strong> Editor</strong> para este endereço:
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginTop:7,flexWrap:'wrap'}}>
+          <code style={{background:'#fff',border:'1px solid #bee3f8',borderRadius:6,padding:'6px 10px',fontSize:11,color:'#2b6cb0',wordBreak:'break-all'}}>
+            {conta||'carregando...'}
+          </code>
+          {conta&&(
+            <button onClick={()=>navigator.clipboard?.writeText(conta)}
+              style={{padding:'5px 12px',borderRadius:6,border:'1px solid #bee3f8',background:'#fff',color:'#2b6cb0',cursor:'pointer',fontSize:11,fontWeight:700}}>
+              copiar
+            </button>
+          )}
+        </div>
+        <div style={{fontSize:10,color:'#5a7a9a',marginTop:7,lineHeight:1.6}}>
+          Sem esse compartilhamento a exportação falha com erro de permissão. O sistema só escreve
+          nessa planilha — não enxerga nada mais do seu Drive.
+        </div>
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <label style={lbl}>Endereço da planilha</label>
+        <input style={fi} value={cfg.planilhaId} onChange={e=>up('planilhaId',e.target.value)}
+          placeholder="Cole o link inteiro da planilha do Google"/>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Pode colar o endereço completo da barra do navegador.</div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+        <div>
+          <label style={lbl}>Nome da aba</label>
+          <input style={fi} value={cfg.aba} onChange={e=>up('aba',e.target.value)} placeholder="Faturados"/>
+          <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>A aba precisa existir na planilha.</div>
+        </div>
+        <div>
+          <label style={lbl}>Atualização automática</label>
+          <select style={fi} value={cfg.ativo?'sim':'nao'} onChange={e=>up('ativo',e.target.value==='sim')}>
+            <option value="sim">Ligada — todo dia às 5h</option>
+            <option value="nao">Desligada — só quando eu mandar</option>
+          </select>
+        </div>
+      </div>
+
+      {msg&&(
+        <div style={{padding:'10px 12px',borderRadius:7,marginBottom:12,fontSize:11,lineHeight:1.6,whiteSpace:'pre-wrap',
+          background:msg.erro?'#fff5f5':'#f0fff4',border:`1px solid ${msg.erro?'#feb2b2':'#9ae6b4'}`,
+          color:msg.erro?'#c53030':'#276749'}}>
+          {msg.txt}
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:9,flexWrap:'wrap',alignItems:'center',marginBottom:14}}>
+        <button onClick={salvar}
+          style={{padding:'10px 20px',borderRadius:7,border:'none',background:salvo?'#27ae60':'#3498db',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+          {salvo?'✓ Salvo!':'💾 Salvar'}
+        </button>
+        <button onClick={exportarAgora} disabled={rodando}
+          style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#2c3e50',fontWeight:700,cursor:rodando?'default':'pointer',fontSize:13}}>
+          {rodando?'Exportando...':'▶ Exportar agora'}
+        </button>
+        {cfg.planilhaId&&(
+          <a href={`https://docs.google.com/spreadsheets/d/${String(cfg.planilhaId).match(/\/d\/([\w-]+)/)?.[1]||cfg.planilhaId}`}
+            target="_blank" rel="noopener noreferrer"
+            style={{fontSize:11,color:'#3498db',fontWeight:600}}>abrir a planilha →</a>
+        )}
+      </div>
+
+      {(info.ultimaExportacao||info.ultimoErro)&&(
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',fontSize:11,color:'#7f8c8d',lineHeight:1.7}}>
+          {info.ultimaExportacao&&(
+            <div>Última exportação: <strong style={{color:'#2c3e50'}}>
+              {new Date(info.ultimaExportacao).toLocaleString('pt-BR')}
+            </strong>{info.ultimaQtd!==undefined&&<> — {info.ultimaQtd} cliente(s)</>}</div>
+          )}
+          {info.ultimoErro&&(
+            <div style={{color:'#c53030',marginTop:4,whiteSpace:'pre-wrap'}}>Último erro: {info.ultimoErro}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Abas da tela de Configurações — só agrupam as seções existentes
 const ABAS_CONFIG=[
   {id:'usuarios',    icone:'👥',  label:'Usuários e acessos'},
@@ -8388,6 +8538,15 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
       {/* ══ ABA: Integrações ══ */}
       {abaConfig==='integracoes'&&<>
+
+      {/* Exportação dos faturados para o Google Sheets */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:'#16a085',marginBottom:12,textTransform:'uppercase'}}>
+          📊 Exportação de clientes faturados
+        </div>
+        <ConfigExportacao/>
+      </div>
+
       {/* Integração Asaas — liga/desliga */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={{...sec,border:`2px solid ${asaasHabilitado?'#27ae60':'#e74c3c'}`}}>
