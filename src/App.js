@@ -5595,14 +5595,43 @@ function SecullumView({todos,onAbrirCliente,perfil}){
   const [erro,setErro]=useState('');
   const [aba,setAba]=useState('ativar');
   const [busca,setBusca]=useState('');
+  const [resolvidos,setResolvidos]=useState({});
+  const [modalOff,setModalOff]=useState(null);   // registro sendo baixado na mão
 
   useEffect(()=>{
     const u=onSnapshot(doc(db,'config','secullum_demo'),s=>{
       setDados(s.exists()?s.data():null);
       setCarregando(false);
     });
-    return()=>u();
+    // Resolvidos na mão ficam por CÓDIGO do banco, não por CNPJ: filial e matriz
+    // dividem CNPJ raiz, e o código é o que identifica a base de verdade.
+    const u2=onSnapshot(collection(db,'secullum_resolvidos'),snap=>{
+      const m={};snap.forEach(d=>{m[d.id]=d.data();});
+      setResolvidos(m);
+    });
+    return()=>{u();u2();};
   },[]);
+
+  async function ativarOffline(reg,justificativa,gravarNoCliente){
+    const cod=String(reg.codigo||'');
+    await setDoc(doc(db,'secullum_resolvidos',cod),{
+      codigo:cod,doc:reg.doc||'',nome:reg.nome||'',plano:reg.plano||'',
+      clienteId:reg.cliente?.id||'',clienteNome:reg.cliente?.nome||'',
+      justificativa:String(justificativa||'').trim(),
+      resolvidoEm:new Date().toISOString(),
+      resolvidoPor:auth.currentUser?.email||'—',
+    });
+    // Se o banco tem cliente casado, guarda o número no cadastro — era o que
+    // ficava perdido quando a ativação era feita fora do sistema.
+    if(gravarNoCliente&&reg.cliente?.id){
+      await setDoc(doc(db,'clientes',reg.cliente.id),{nrBanco:cod},{merge:true});
+    }
+    setModalOff(null);
+  }
+  async function desfazerOffline(cod){
+    if(!window.confirm('Trazer esta base de volta para a conferência?'))return;
+    await deleteDoc(doc(db,'secullum_resolvidos',String(cod)));
+  }
 
   async function subir(file){
     if(!file)return;
@@ -5623,7 +5652,8 @@ function SecullumView({todos,onAbrirCliente,perfil}){
 
   // ── CRUZAMENTO ────────────────────────────────────────────────────────────
   const cruz=useMemo(()=>{
-    const regs=(dados?.registros)||[];
+    // Bases baixadas na mão saem das listas — é o que limpa a tela com o tempo
+    const regs=((dados?.registros)||[]).filter(r=>!resolvidos[String(r.codigo)]);
     const porDoc={};
     (todos||[]).forEach(c=>{
       const k=chaveDoc(c.cnpj);
@@ -5648,14 +5678,18 @@ function SecullumView({todos,onAbrirCliente,perfil}){
       .filter(c=>{const k=chaveDoc(c.cnpj);return !k||!vistos.has(k);});
     const ord=(a,b)=>(b.funcionarios||0)-(a.funcionarios||0);
     return {ativar:ativar.sort(ord),negociando:negociando.sort(ord),oportunidade:oportunidade.sort(ord),semDemo};
-  },[dados,todos]);
+  },[dados,todos,resolvidos]);
+
+  const listaResolvidos=useMemo(
+    ()=>Object.values(resolvidos).sort((a,b)=>String(b.resolvidoEm||'').localeCompare(String(a.resolvidoEm||''))),
+    [resolvidos]);
 
   const vencendo=useMemo(()=>{
-    const regs=(dados?.registros)||[];
+    const regs=((dados?.registros)||[]).filter(r=>!resolvidos[String(r.codigo)]);
     return regs.map(r=>({r,d:dataSec(r.validade)}))
       .filter(x=>x.d&&diasAte(x.d)<=7&&diasAte(x.d)>=-3)
       .sort((a,b)=>a.d-b.d);
-  },[dados]);
+  },[dados,resolvidos]);
 
   if(carregando)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
 
@@ -5664,6 +5698,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
     {id:'oportunidade',l:'🎯 Oportunidade',       n:cruz.oportunidade.length,cor:'#e84393'},
     {id:'negociando',  l:'🤝 Em negociação',      n:cruz.negociando.length,  cor:'#f5a623'},
     {id:'semdemo',     l:'📋 Sem demonstração',   n:cruz.semDemo.length,     cor:'#7f8c8d'},
+    {id:'resolvidos',  l:'✓ Baixados na mão',     n:listaResolvidos.length,  cor:'#0d9488'},
   ];
 
   const filtra=lista=>{
@@ -5763,7 +5798,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
         {aba==='ativar'&&(
           <Lista vazio="Ninguém faturado aqui está em demonstração lá. Ou já ativou tudo, ou falta faturar."
             itens={filtra(cruz.ativar)} render={r=>(
-            <LinhaSec key={r.codigo} r={r} cor="#27ae60"
+            <LinhaSec key={r.codigo} r={r} cor="#27ae60" onOffline={()=>setModalOff(r)}
               extra={<span style={{fontSize:10,color:'#276749',fontWeight:700}}>✔ Faturado no CRM</span>}
               onCliente={()=>onAbrirCliente&&onAbrirCliente(r.cliente)}/>
           )}/>
@@ -5777,7 +5812,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
             </div>
             <Lista vazio="Todo mundo que está em demonstração já tem cadastro aqui."
               itens={filtra(cruz.oportunidade)} render={r=>(
-              <LinhaSec key={r.codigo} r={r} cor="#e84393"/>
+              <LinhaSec key={r.codigo} r={r} cor="#e84393" onOffline={()=>setModalOff(r)}/>
             )}/>
           </>
         )}
@@ -5785,7 +5820,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
         {aba==='negociando'&&(
           <Lista vazio="Nenhum cliente em demonstração está sem faturar."
             itens={filtra(cruz.negociando)} render={r=>(
-            <LinhaSec key={r.codigo} r={r} cor="#f5a623"
+            <LinhaSec key={r.codigo} r={r} cor="#f5a623" onOffline={()=>setModalOff(r)}
               extra={<span style={{fontSize:10,color:'#b45309',fontWeight:700}}>Status no CRM: {r.cliente?.status||'—'}</span>}
               onCliente={()=>onAbrirCliente&&onAbrirCliente(r.cliente)}/>
           )}/>
@@ -5812,7 +5847,114 @@ function SecullumView({todos,onAbrirCliente,perfil}){
               )}/>
           </>
         )}
+        {aba==='resolvidos'&&(
+          <>
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:9,lineHeight:1.6,maxWidth:640}}>
+              Bases que você resolveu fora do sistema — filial criada separada da matriz, ativação manual,
+              casos que não se repetem. Elas somem das outras listas, mas ficam registradas aqui com o motivo.
+            </div>
+            <Lista vazio="Nada baixado na mão ainda."
+              itens={listaResolvidos.filter(x=>{
+                const b=busca.trim().toLowerCase();
+                return !b||[x.nome,x.doc,x.codigo,x.justificativa,x.clienteNome].join(' ').toLowerCase().includes(b);
+              })}
+              render={x=>(
+                <div key={x.codigo} style={{background:'#fff',borderRadius:8,padding:'11px 15px',marginBottom:7,
+                  boxShadow:'0 1px 3px rgba(0,0,0,.06)',borderLeft:'3px solid #0d9488'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                    <span style={{fontWeight:700,fontSize:12,color:'#2c3e50',flex:1,minWidth:160}}>{x.nome}</span>
+                    <span style={{fontSize:9,background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:8,padding:'1px 7px',fontWeight:700}}>banco {x.codigo}</span>
+                    <button onClick={()=>desfazerOffline(x.codigo)}
+                      style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:10,fontWeight:700}}>
+                      ↩ trazer de volta
+                    </button>
+                  </div>
+                  <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>
+                    {x.doc}{x.clienteNome?` · ${x.clienteNome}`:''}
+                  </div>
+                  <div style={{fontSize:11,color:'#2c3e50',marginTop:6,background:'#f8f9fa',borderRadius:6,padding:'7px 10px',lineHeight:1.5}}>
+                    {x.justificativa||'(sem justificativa)'}
+                  </div>
+                  <div style={{fontSize:9,color:'#c5c5c5',marginTop:4}}>
+                    {x.resolvidoEm?new Date(x.resolvidoEm).toLocaleString('pt-BR'):''} · {String(x.resolvidoPor||'').split('@')[0]}
+                  </div>
+                </div>
+              )}/>
+          </>
+        )}
       </>}
+
+      {modalOff&&(
+        <ModalAtivarOffline reg={modalOff} onFechar={()=>setModalOff(null)} onConfirmar={ativarOffline}/>
+      )}
+    </div>
+  );
+}
+
+// Baixa uma base da conferência sem passar pela API — exige o motivo escrito,
+// porque daqui a três meses ninguém lembra por que aquela linha sumiu.
+function ModalAtivarOffline({reg,onFechar,onConfirmar}){
+  const [texto,setTexto]=useState('');
+  const [gravar,setGravar]=useState(true);
+  const [salvando,setSalvando]=useState(false);
+  const MOTIVOS=[
+    'Filial criada separada da matriz',
+    'Base ativada manualmente na Secullum',
+    'Cliente desistiu — base não será ativada',
+    'Base de teste interno',
+  ];
+  return(
+    <div onClick={onFechar} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:12,width:'100%',maxWidth:520,padding:'22px',boxShadow:'0 20px 60px rgba(0,0,0,.35)'}}>
+        <div style={{fontWeight:700,fontSize:15,color:'#2c3e50',marginBottom:3}}>Ativar offline</div>
+        <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+          Tira esta base da conferência sem passar pela Secullum. Fica guardada em "Baixados na mão",
+          com o motivo, e dá para trazer de volta depois.
+        </div>
+
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:12,color:'#2c3e50'}}>{reg.nome}</div>
+          <div style={{fontSize:10,color:'#95a5a6'}}>banco {reg.codigo} · {reg.doc} · {reg.plano}</div>
+          {reg.cliente&&<div style={{fontSize:10,color:'#276749',marginTop:3}}>Casado com: {reg.cliente.nome}</div>}
+        </div>
+
+        <label style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:5}}>Motivo</label>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
+          {MOTIVOS.map(m=>(
+            <button key={m} onClick={()=>setTexto(m)}
+              style={{padding:'5px 11px',borderRadius:14,cursor:'pointer',fontSize:10,fontWeight:600,
+                border:`1px solid ${texto===m?'#0d9488':'#dde1e7'}`,
+                background:texto===m?'#f0fdfa':'#fff',color:texto===m?'#0d9488':'#7f8c8d'}}>
+              {m}
+            </button>
+          ))}
+        </div>
+        <textarea value={texto} onChange={e=>setTexto(e.target.value)}
+          placeholder="Escreva o motivo, ou escolha um acima e complemente..."
+          style={{width:'100%',boxSizing:'border-box',minHeight:70,padding:'9px 11px',borderRadius:7,border:'1px solid #dde1e7',fontSize:12,resize:'vertical',lineHeight:1.5,fontFamily:'inherit'}}/>
+
+        {reg.cliente&&(
+          <label style={{display:'flex',alignItems:'center',gap:8,marginTop:11,cursor:'pointer',fontSize:11,color:'#2c3e50'}}>
+            <input type="checkbox" checked={gravar} onChange={()=>setGravar(g=>!g)} style={{cursor:'pointer'}}/>
+            Gravar o número do banco <strong>{reg.codigo}</strong> no cadastro de {reg.cliente.nome}
+          </label>
+        )}
+
+        <div style={{display:'flex',gap:9,marginTop:16,flexWrap:'wrap'}}>
+          <button disabled={!texto.trim()||salvando}
+            onClick={async()=>{setSalvando(true);try{await onConfirmar(reg,texto,gravar);}catch(e){alert(e.message);setSalvando(false);}}}
+            style={{padding:'10px 20px',borderRadius:7,border:'none',fontWeight:700,fontSize:13,
+              background:texto.trim()&&!salvando?'#0d9488':'#e8eaed',color:texto.trim()&&!salvando?'#fff':'#aaa',
+              cursor:texto.trim()&&!salvando?'pointer':'default'}}>
+            {salvando?'Salvando...':'✓ Ativar offline'}
+          </button>
+          <button onClick={onFechar}
+            style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            Cancelar
+          </button>
+          {!texto.trim()&&<span style={{fontSize:10,color:'#b45309',alignSelf:'center'}}>O motivo é obrigatório.</span>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -5826,7 +5968,7 @@ function Lista({itens,render,vazio}){
   return <div>{itens.map(render)}</div>;
 }
 
-function LinhaSec({r,cor,extra,onCliente}){
+function LinhaSec({r,cor,extra,onCliente,onOffline}){
   const venc=dataSec(r.validade);
   const dias=diasAte(venc);
   const login=dataHoraSec(r.ultimoLogin);
@@ -5859,11 +6001,20 @@ function LinhaSec({r,cor,extra,onCliente}){
         </div>
         <div style={{fontSize:9,color:'#c5c5c5'}}>{r.validade}</div>
       </div>
-      <button disabled title="Vai ativar o banco direto na Secullum — falta a integração com a API deles"
-        onClick={e=>e.stopPropagation()}
-        style={{padding:'7px 14px',borderRadius:7,border:'1px dashed #dde1e7',background:'#fafbfc',color:'#bbb',fontSize:11,fontWeight:700,cursor:'not-allowed',flexShrink:0}}>
-        Ativar
-      </button>
+      <div style={{display:'flex',gap:6,flexShrink:0}}>
+        <button disabled title="Vai ativar o banco direto na Secullum — falta a integração com a API deles"
+          onClick={e=>e.stopPropagation()}
+          style={{padding:'7px 13px',borderRadius:7,border:'1px dashed #dde1e7',background:'#fafbfc',color:'#bbb',fontSize:11,fontWeight:700,cursor:'not-allowed'}}>
+          Ativar
+        </button>
+        {onOffline&&(
+          <button onClick={e=>{e.stopPropagation();onOffline();}}
+            title="Baixar da conferência informando o motivo — para filial separada da matriz, ativação manual e casos parecidos"
+            style={{padding:'7px 13px',borderRadius:7,border:'1px solid #99f6e4',background:'#f0fdfa',color:'#0d9488',fontSize:11,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+            ✓ offline
+          </button>
+        )}
+      </div>
     </div>
   );
 }
