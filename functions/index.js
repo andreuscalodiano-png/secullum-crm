@@ -5321,13 +5321,20 @@ exports.paginaFunil = functions.https.onRequest(async (req, res) => {
   try {
     const { slug, dias } = req.body || {};
     const limite = new Date(Date.now() - (Number(dias) || 30) * 864e5).toISOString();
-    let q = db.collection('paginas_eventos').where('em', '>=', limite);
-    if (slug) q = q.where('slug', '==', String(slug).toLowerCase());
+
+    // Filtro por data + por campanha na mesma consulta exigiria índice composto
+    // no Firestore — e um índice novo a cada consulta parecida. Aqui a consulta
+    // usa UM critério só (o que já tem índice automático) e a outra peneira é
+    // feita na memória. O volume é de centenas de eventos por campanha.
+    let q = slug
+      ? db.collection('paginas_eventos').where('slug', '==', String(slug).toLowerCase()).limit(20000)
+      : db.collection('paginas_eventos').where('em', '>=', limite).limit(20000);
     const snap = await q.get();
 
     const porTipo = {}, porOrigem = {}, sessoes = new Set();
     snap.forEach(d => {
       const e = d.data();
+      if (String(e.em || '') < limite) return;
       porTipo[e.tipo] = (porTipo[e.tipo] || 0) + 1;
       if (e.tipo === 'abriu') {
         porOrigem[e.origem || 'direto'] = (porOrigem[e.origem || 'direto'] || 0) + 1;
