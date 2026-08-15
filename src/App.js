@@ -13661,11 +13661,537 @@ function EditorRecorrente({campanha,etapas,usuarios,onFechar}){
   );
 }
 
+// ─── PÁGINAS DE CAPTURA ──────────────────────────────────────────────────────
+// Cada campanha vira uma página HTML solta, publicada no Storage. Sem framework
+// de propósito: em tráfego pago o clique é cobrado antes da página carregar, e
+// 30 KB que aparecem em 1 segundo convertem melhor que 200 KB que aparecem em 4.
+//
+// O fim da página é o WhatsApp com a mensagem pronta — é o que abre a janela de
+// 24 horas da Meta no ato, e libera a resposta rápida com áudio e vídeo.
+
+const PERGUNTAS_PAGINA=[
+  {id:'funcionarios',t:'Quantos funcionários?',
+   ops:['Até 5 funcionários','De 6 a 10 funcionários','De 11 a 15 funcionários','De 16 a 30 funcionários','Mais de 30 funcionários']},
+  {id:'sistema_ponto',t:'Já usa algum sistema de ponto?',ops:['Sim','Não']},
+  {id:'solucao',t:'O que você procura?',
+   ops:['Relógio de ponto fixo (facial/biométrico)','Reconhecimento facial em tablet/celular','Ainda não sei, quero entender']},
+];
+
+const CAMPANHA_PADRAO={
+  nome:'',ativa:true,
+  titulo:'Controle de ponto que funciona de verdade',
+  subtitulo:'Sistema Secullum com reconhecimento facial. Teste 30 dias sem custo e sem cartão.',
+  chamada:'Quero testar 30 dias',
+  cor:'#1EA952',
+  imagemTopo:'',
+  blocos:[],
+  beneficios:['Reconhecimento facial em segundos','Relatórios prontos para a contabilidade','Sem instalar nada — funciona no navegador','Suporte humano, de gente que atende'],
+  numeroWhats:'',
+  mensagemWhats:'Olá! Sou #primeiroNome e quero testar o controle de ponto por 30 dias.',
+  rodape:'Guion Informática e Relógio de Ponto · revenda Secullum · Ibaiti/PR',
+};
+
+function escP(v){
+  return String(v==null?'':v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── O DOCUMENTO PUBLICADO ───────────────────────────────────────────────────
+function htmlPaginaCaptura(c,fnUrl){
+  const cor=c.cor||'#1EA952';
+  const perguntas=JSON.stringify(PERGUNTAS_PAGINA);
+  const benef=(c.beneficios||[]).filter(Boolean)
+    .map(b=>'<li>'+escP(b)+'</li>').join('');
+  const blocos=(c.blocos||[]).filter(b=>b&&(b.titulo||b.texto||b.imagem)).map(b=>
+    '<section class="bloco">'
+    +(b.imagem?'<img src="'+escP(b.imagem)+'" alt="" loading="lazy"/>':'')
+    +(b.titulo?'<h2>'+escP(b.titulo)+'</h2>':'')
+    +(b.texto?'<p>'+escP(b.texto).replace(/\n/g,'<br/>')+'</p>':'')
+    +'</section>').join('');
+
+  return '<!doctype html>\n'+
+'<html lang="pt-BR"><head>\n'+
+'<meta charset="utf-8"/>\n'+
+'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>\n'+
+'<meta name="theme-color" content="'+escP(cor)+'"/>\n'+
+'<title>'+escP(c.titulo||'Controle de ponto')+'</title>\n'+
+'<meta name="description" content="'+escP(c.subtitulo||'')+'"/>\n'+
+'<meta property="og:title" content="'+escP(c.titulo||'')+'"/>\n'+
+'<meta property="og:description" content="'+escP(c.subtitulo||'')+'"/>\n'+
+(c.imagemTopo?'<meta property="og:image" content="'+escP(c.imagemTopo)+'"/>\n':'')+
+'<style>\n'+
+'*{box-sizing:border-box;margin:0;padding:0}\n'+
+'body{font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#16181d;background:#fff;-webkit-font-smoothing:antialiased}\n'+
+'img{max-width:100%;display:block;border-radius:14px}\n'+
+'.w{max-width:560px;margin:0 auto;padding:0 20px}\n'+
+'header{padding:34px 0 26px;text-align:center}\n'+
+'h1{font-size:29px;line-height:1.22;letter-spacing:-.5px;margin-bottom:12px}\n'+
+'.sub{font-size:17px;color:#5a6068;margin-bottom:22px}\n'+
+'.cta{display:block;width:100%;background:'+escP(cor)+';color:#fff;border:0;border-radius:13px;\n'+
+'  padding:18px;font-size:17px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 5px 18px '+escP(cor)+'44}\n'+
+'.cta:active{transform:translateY(1px)}\n'+
+'.selo{display:inline-block;font-size:12px;font-weight:700;color:'+escP(cor)+';background:'+escP(cor)+'18;\n'+
+'  border-radius:20px;padding:6px 14px;margin-bottom:16px;letter-spacing:.3px}\n'+
+'ul.b{list-style:none;margin:26px 0}\n'+
+'ul.b li{padding:11px 0 11px 32px;position:relative;font-size:16px;border-bottom:1px solid #eef0f2}\n'+
+'ul.b li:before{content:"";position:absolute;left:4px;top:17px;width:8px;height:14px;\n'+
+'  border:solid '+escP(cor)+';border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}\n'+
+'.bloco{margin:34px 0}\n'+
+'.bloco h2{font-size:21px;margin:16px 0 8px;letter-spacing:-.3px}\n'+
+'.bloco p{color:#5a6068;font-size:16px}\n'+
+'#form{background:#f7f8f9;border-radius:18px;padding:24px 20px;margin:34px 0}\n'+
+'#form h2{font-size:20px;margin-bottom:6px;letter-spacing:-.3px}\n'+
+'#form .ajuda{font-size:14px;color:#5a6068;margin-bottom:18px}\n'+
+'.perg{margin-bottom:20px}\n'+
+'.perg .q{font-size:14px;font-weight:700;margin-bottom:9px}\n'+
+'.op{display:block;width:100%;text-align:left;background:#fff;border:1.5px solid #e2e5e9;border-radius:11px;\n'+
+'  padding:13px 15px;font-size:15px;margin-bottom:8px;cursor:pointer;font-family:inherit;color:#16181d}\n'+
+'.op[aria-pressed="true"]{border-color:'+escP(cor)+';background:'+escP(cor)+'12;font-weight:600}\n'+
+'input{width:100%;padding:15px;font-size:16px;border:1.5px solid #e2e5e9;border-radius:11px;\n'+
+'  margin-bottom:10px;font-family:inherit;background:#fff}\n'+
+'input:focus{outline:0;border-color:'+escP(cor)+'}\n'+
+'.erro{color:#c0392b;font-size:14px;margin:6px 0 10px;display:none}\n'+
+'.passo2{display:none}\n'+
+'footer{text-align:center;padding:34px 0 46px;color:#8b9099;font-size:13px;line-height:1.7}\n'+
+'.pol{font-size:12px;color:#8b9099;margin-top:12px;text-align:center;line-height:1.6}\n'+
+'</style></head>\n'+
+'<body><div class="w">\n'+
+'<header>\n'+
+(c.imagemTopo?'<img src="'+escP(c.imagemTopo)+'" alt="" style="margin-bottom:22px"/>\n':'')+
+'<div class="selo">30 dias grátis · sem cartão</div>\n'+
+'<h1>'+escP(c.titulo||'')+'</h1>\n'+
+'<p class="sub">'+escP(c.subtitulo||'')+'</p>\n'+
+'<button class="cta" onclick="irForm()">'+escP(c.chamada||'Quero testar')+'</button>\n'+
+'</header>\n'+
+(benef?'<ul class="b">'+benef+'</ul>\n':'')+
+blocos+
+'<div id="form">\n'+
+'<div class="passo1">\n'+
+'<h2>Vamos montar seu teste</h2>\n'+
+'<p class="ajuda">Três perguntas rápidas para preparar o sistema do seu jeito.</p>\n'+
+'<div id="perguntas"></div>\n'+
+'</div>\n'+
+'<div class="passo2" id="p2">\n'+
+'<h2>Só falta o seu contato</h2>\n'+
+'<p class="ajuda">Enviamos os dados do teste no seu WhatsApp, na hora.</p>\n'+
+'<input id="nome" placeholder="Seu nome" autocomplete="name"/>\n'+
+'<input id="tel" placeholder="WhatsApp com DDD" inputmode="tel" autocomplete="tel"/>\n'+
+'<input id="mail" placeholder="E-mail (opcional)" inputmode="email" autocomplete="email"/>\n'+
+'<div class="erro" id="erro"></div>\n'+
+'<button class="cta" id="enviar" onclick="enviar()">Falar no WhatsApp agora</button>\n'+
+'<p class="pol">Ao enviar, você concorda em receber nosso contato pelo WhatsApp. Nada de spam.</p>\n'+
+'</div>\n'+
+'</div>\n'+
+'<footer>'+escP(c.rodape||'')+'</footer>\n'+
+'</div>\n'+
+'<script>\n'+
+'var API="'+fnUrl+'";\n'+
+'var SLUG="'+escP(c.id||'')+'";\n'+
+'var PERG='+perguntas+';\n'+
+'var resp={},sessao=Math.random().toString(36).slice(2)+Date.now().toString(36);\n'+
+'var origem=(new URLSearchParams(location.search)).get("o")||"direto";\n'+
+'function ev(tipo,extra){\n'+
+'  try{fetch(API+"/paginaEvento",{method:"POST",headers:{"Content-Type":"application/json"},\n'+
+'    keepalive:true,body:JSON.stringify({slug:SLUG,tipo:tipo,origem:origem,sessao:sessao,extra:extra||""})});}catch(e){}\n'+
+'}\n'+
+'ev("abriu");\n'+
+'var rolou=false;\n'+
+'addEventListener("scroll",function(){\n'+
+'  if(rolou)return;\n'+
+'  if((scrollY+innerHeight)/document.body.scrollHeight>0.5){rolou=true;ev("rolou");}\n'+
+'},{passive:true});\n'+
+'function irForm(){ev("clicou","cta topo");document.getElementById("form").scrollIntoView({behavior:"smooth"});}\n'+
+'function montar(){\n'+
+'  var alvo=document.getElementById("perguntas"),h="";\n'+
+'  for(var i=0;i<PERG.length;i++){\n'+
+'    var p=PERG[i];h+=\'<div class="perg" id="perg_\'+p.id+\'"><div class="q">\'+p.t+"</div>";\n'+
+'    for(var j=0;j<p.ops.length;j++){\n'+
+'      h+=\'<button class="op" aria-pressed="false" data-p="\'+p.id+\'" data-v="\'+p.ops[j].replace(/"/g,"&quot;")+\'">\'+p.ops[j]+"</button>";\n'+
+'    }\n'+
+'    h+="</div>";\n'+
+'  }\n'+
+'  alvo.innerHTML=h;\n'+
+'  var bts=alvo.querySelectorAll(".op");\n'+
+'  for(var k=0;k<bts.length;k++){bts[k].onclick=function(){escolher(this);};}\n'+
+'}\n'+
+'function escolher(bt){\n'+
+'  var p=bt.getAttribute("data-p");\n'+
+'  var irmaos=document.querySelectorAll(\'[data-p="\'+p+\'"]\');\n'+
+'  for(var i=0;i<irmaos.length;i++)irmaos[i].setAttribute("aria-pressed","false");\n'+
+'  bt.setAttribute("aria-pressed","true");\n'+
+'  resp[p]=bt.getAttribute("data-v");\n'+
+'  if(Object.keys(resp).length>=PERG.length){\n'+
+'    ev("respondeu",resp.funcionarios||"");\n'+
+'    document.getElementById("p2").style.display="block";\n'+
+'    setTimeout(function(){document.getElementById("nome").focus();},250);\n'+
+'    document.getElementById("p2").scrollIntoView({behavior:"smooth",block:"center"});\n'+
+'  }\n'+
+'}\n'+
+'montar();\n'+
+'function erroMsg(t){var e=document.getElementById("erro");e.textContent=t;e.style.display=t?"block":"none";}\n'+
+'function enviar(){\n'+
+'  var nome=document.getElementById("nome").value.trim();\n'+
+'  var tel=document.getElementById("tel").value.replace(/\\D/g,"");\n'+
+'  var mail=document.getElementById("mail").value.trim();\n'+
+'  if(nome.length<2){erroMsg("Escreva seu nome.");return;}\n'+
+'  if(tel.length<10){erroMsg("Escreva o WhatsApp com DDD.");return;}\n'+
+'  erroMsg("");\n'+
+'  var bt=document.getElementById("enviar");bt.disabled=true;bt.textContent="Abrindo o WhatsApp...";\n'+
+'  var dados={slug:SLUG,nome:nome,telefone:tel,email:mail,origem:origem,sessao:sessao,\n'+
+'    funcionarios:resp.funcionarios||"",sistema_ponto:resp.sistema_ponto||"",solucao:resp.solucao||""};\n'+
+'  var t=setTimeout(function(){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg("Demorou demais. Tente de novo.");},9000);\n'+
+'  fetch(API+"/paginaLead",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(dados)})\n'+
+'   .then(function(r){return r.json();})\n'+
+'   .then(function(d){\n'+
+'     clearTimeout(t);\n'+
+'     if(d.error){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg(d.error);return;}\n'+
+'     if(d.whatsapp){location.href=d.whatsapp;}\n'+
+'     else{bt.textContent="Recebemos! Vamos te chamar.";}\n'+
+'   })\n'+
+'   .catch(function(){clearTimeout(t);bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg("Sem conexão. Tente de novo.");});\n'+
+'}\n'+
+'<\/script>\n'+
+'</body></html>';
+}
+
+// ─── ABA EM ANÚNCIOS ─────────────────────────────────────────────────────────
+function AbaPaginas(){
+  const [lista,setLista]=useState([]);
+  const [editando,setEditando]=useState(null);
+
+  useEffect(()=>{
+    const u=onSnapshot(collection(db,'paginas_campanha'),s=>{
+      const a=[];s.forEach(d=>a.push({id:d.id,...d.data()}));
+      setLista(a.sort((x,y)=>String(x.nome||'').localeCompare(String(y.nome||''))));
+    });
+    return()=>u();
+  },[]);
+
+  if(editando)return <EditorPagina campanha={editando} onFechar={()=>setEditando(null)}/>;
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:10}}>
+        <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,maxWidth:640}}>
+          Cada campanha vira uma página de 8 KB que abre em 1 segundo. Termina no WhatsApp com a mensagem pronta —
+          <strong> é o clique do cliente que abre a janela de 24 horas</strong>, e a resposta rápida pode disparar na hora.
+        </div>
+        <button onClick={()=>setEditando({nova:true})}
+          style={{padding:'9px 18px',borderRadius:7,border:'none',background:'#1EA952',color:'#fff',cursor:'pointer',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>
+          ＋ Nova campanha
+        </button>
+      </div>
+
+      {lista.length===0&&(
+        <div style={{background:'#fff',borderRadius:10,padding:'34px',textAlign:'center',boxShadow:'0 1px 4px rgba(0,0,0,.07)'}}>
+          <div style={{fontSize:32,marginBottom:8}}>🔗</div>
+          <div style={{fontWeight:700,fontSize:14,color:'#2c3e50',marginBottom:5}}>Nenhuma página ainda</div>
+          <div style={{fontSize:12,color:'#7f8c8d'}}>Crie uma para cada anúncio e descubra qual traz cliente, não só volume.</div>
+        </div>
+      )}
+
+      {lista.map(c=>(
+        <div key={c.id} style={{background:'#fff',borderRadius:10,padding:'14px 18px',marginBottom:9,boxShadow:'0 1px 4px rgba(0,0,0,.07)',
+          borderLeft:`4px solid ${c.ativa===false?'#bdc3c7':(c.cor||'#1EA952')}`}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+            <span style={{fontWeight:700,fontSize:13,color:'#2c3e50',flex:1,minWidth:140}}>{c.nome||c.id}</span>
+            {c.ativa===false&&<span style={{fontSize:9,background:'#f5f6fa',color:'#95a5a6',border:'1px solid #e8eaed',padding:'2px 9px',borderRadius:10,fontWeight:700}}>PAUSADA</span>}
+            {c.linkPublico&&<a href={c.linkPublico} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+              style={{fontSize:11,color:'#3498db',fontWeight:600}}>abrir página →</a>}
+            <button onClick={()=>setEditando(c)}
+              style={{padding:'5px 13px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#2c3e50',fontWeight:700}}>Editar</button>
+          </div>
+          <div style={{fontSize:11,color:'#95a5a6'}}>
+            /{c.id}{c.publicadoEm?` · publicada em ${new Date(c.publicadoEm).toLocaleDateString('pt-BR')}`:' · nunca publicada'}
+          </div>
+          <FunilPagina slug={c.id}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Números do funil, buscados só quando a campanha aparece na tela
+function FunilPagina({slug}){
+  const [f,setF]=useState(null);
+  useEffect(()=>{
+    let vivo=true;
+    fetch(`${FUNCTIONS_URL}/paginaFunil`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({slug,dias:30}),
+    }).then(r=>r.json()).then(d=>{if(vivo&&!d.error)setF(d);}).catch(()=>{});
+    return()=>{vivo=false;};
+  },[slug]);
+  if(!f)return null;
+  const etapas=[
+    {l:'visitantes',v:f.visitantes,c:'#2a78d6'},
+    {l:'rolaram',   v:f.rolou,     c:'#2a78d6'},
+    {l:'responderam',v:f.respondeu,c:'#eda100'},
+    {l:'viraram lead',v:f.enviou,  c:'#1baf7a'},
+  ];
+  const topo=Math.max(1,f.visitantes||1);
+  return(
+    <div style={{display:'flex',gap:14,marginTop:9,flexWrap:'wrap',alignItems:'flex-end'}}>
+      {etapas.map(e=>(
+        <div key={e.l} style={{minWidth:74}}>
+          <div style={{fontSize:18,fontWeight:700,color:e.c,lineHeight:1.1}}>{e.v||0}</div>
+          <div style={{fontSize:9,color:'#95a5a6',textTransform:'uppercase',letterSpacing:.4,fontWeight:700}}>{e.l}</div>
+          <div style={{height:3,borderRadius:2,background:'#eef0f2',marginTop:3}}>
+            <div style={{height:'100%',borderRadius:2,background:e.c,width:`${Math.round(100*(e.v||0)/topo)}%`}}/>
+          </div>
+        </div>
+      ))}
+      <div style={{fontSize:9,color:'#c5c5c5',alignSelf:'flex-end'}}>últimos 30 dias</div>
+    </div>
+  );
+}
+
+// ─── EDITOR DA CAMPANHA ──────────────────────────────────────────────────────
+function EditorPagina({campanha,onFechar}){
+  const nova=campanha?.nova;
+  const [c,setC]=useState(nova?{...CAMPANHA_PADRAO,id:''}:{...CAMPANHA_PADRAO,...campanha});
+  const [salvando,setSalvando]=useState(false);
+  const [publicando,setPublicando]=useState(false);
+  const [enviandoImg,setEnviandoImg]=useState('');
+  const [erro,setErro]=useState('');
+  const [ok,setOk]=useState('');
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:12,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const sec={background:'#f8f9fa',borderRadius:9,padding:'13px',marginBottom:10};
+  const up=(k,v)=>{setC(x=>({...x,[k]:v}));setOk('');};
+
+  // Endereço da página vira parte do link do anúncio: sem acento, sem espaço.
+  const gerarSlug=t=>String(t||'').toLowerCase().normalize('NFD')
+    .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-')
+    .replace(/^-+|-+$/g,'').slice(0,40);
+
+  const html=useMemo(()=>htmlPaginaCaptura({...c,id:c.id||'previa'},FUNCTIONS_URL),[c]);
+
+  async function subirImagem(destino,file,idx){
+    if(!file)return;
+    if(file.size>3*1024*1024){setErro('Imagem acima de 3 MB deixa a página lenta. Reduza antes de subir.');return;}
+    setEnviandoImg(destino+idx);setErro('');
+    try{
+      const path=`config/paginas/${Date.now()}_${file.name.replace(/[^\w.]+/g,'_')}`;
+      const r=storageRef(storage,path);
+      await uploadBytes(r,file);
+      const url=await getDownloadURL(r);
+      if(destino==='topo')up('imagemTopo',url);
+      else setC(x=>({...x,blocos:x.blocos.map((b,i)=>i===idx?{...b,imagem:url}:b)}));
+    }catch(e){setErro('Erro ao subir a imagem: '+e.message);}
+    setEnviandoImg('');
+  }
+
+  async function salvar(){
+    setErro('');
+    const id=c.id||gerarSlug(c.nome);
+    if(!String(c.nome||'').trim()){setErro('Dê um nome à campanha.');return null;}
+    if(!id){setErro('Não consegui montar o endereço. Escreva um nome com letras.');return null;}
+    if(!String(c.numeroWhats||'').replace(/\D/g,'')){setErro('Informe o número de WhatsApp que vai receber.');return null;}
+    setSalvando(true);
+    try{
+      const {nova:_n,...dados}=c;
+      await setDoc(doc(db,'paginas_campanha',id),{
+        ...dados,id,
+        atualizadoEm:new Date().toISOString(),
+        criadaPor:c.criadaPor||auth.currentUser?.email||'—',
+      },{merge:true});
+      setC(x=>({...x,id}));
+      setSalvando(false);
+      return id;
+    }catch(e){setErro(e.message);setSalvando(false);return null;}
+  }
+
+  async function publicar(){
+    const id=await salvar();
+    if(!id)return;
+    setPublicando(true);setErro('');
+    try{
+      const doc0=htmlPaginaCaptura({...c,id},FUNCTIONS_URL);
+      const ref=storageRef(storage,`config/paginas/${id}.html`);
+      await uploadBytes(ref,new Blob([doc0],{type:'text/html;charset=utf-8'}),
+        {contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'public,max-age=300'});
+      const url=await getDownloadURL(ref);
+      await setDoc(doc(db,'paginas_campanha',id),{
+        linkPublico:url,publicadoEm:new Date().toISOString(),
+        publicadoPor:auth.currentUser?.email||'—',tamanhoKb:Math.round(doc0.length/102.4)/10,
+      },{merge:true});
+      setC(x=>({...x,linkPublico:url,publicadoEm:new Date().toISOString()}));
+      setOk(`Publicada — ${(doc0.length/1024).toFixed(1)} KB.`);
+    }catch(e){setErro('Erro ao publicar: '+e.message);}
+    setPublicando(false);
+  }
+
+  async function remover(){
+    if(!c.id)return;
+    if(!window.confirm(`Remover a campanha "${c.nome}"?\n\nA página publicada continua no ar até você apagar o arquivo.`))return;
+    await deleteDoc(doc(db,'paginas_campanha',c.id));
+    onFechar();
+  }
+
+  const CANAIS=['instagram','facebook','whatsapp','bio','google'];
+
+  return(
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+        <button onClick={onFechar} style={{background:'none',border:'none',cursor:'pointer',color:'#3498db',fontSize:13,padding:0}}>← Voltar</button>
+        <div style={{flex:1}}/>
+        {!nova&&<button onClick={remover} style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:12}}>Excluir</button>}
+      </div>
+
+      <div style={{display:'flex',gap:14,alignItems:'flex-start',flexWrap:'wrap'}}>
+        {/* ── coluna do editor ── */}
+        <div style={{flex:'1 1 400px',minWidth:0}}>
+
+          <div style={sec}>
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:9,marginBottom:9}}>
+              <div><label style={lbl}>Nome da campanha</label>
+                <input style={fi} value={c.nome||''} onChange={e=>up('nome',e.target.value)} placeholder="Ex: Relógio facial — agosto"/></div>
+              <div><label style={lbl}>Ativa</label>
+                <select style={fi} value={c.ativa===false?'nao':'sim'} onChange={e=>up('ativa',e.target.value==='sim')}>
+                  <option value="sim">Sim</option><option value="nao">Pausada</option>
+                </select></div>
+            </div>
+            <label style={lbl}>Endereço da página</label>
+            <input style={fi} value={c.id||''} onChange={e=>up('id',gerarSlug(e.target.value))}
+              placeholder={gerarSlug(c.nome)||'relogio-facial-agosto'}/>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:3}}>Sem acento e sem espaço. Aparece no link do anúncio.</div>
+          </div>
+
+          <div style={sec}>
+            <div style={{fontSize:10,color:'#1EA952',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Abertura</div>
+            <div style={{marginBottom:9}}><label style={lbl}>Título</label>
+              <input style={fi} value={c.titulo||''} onChange={e=>up('titulo',e.target.value)}/></div>
+            <div style={{marginBottom:9}}><label style={lbl}>Subtítulo</label>
+              <textarea style={{...fi,minHeight:52,resize:'vertical'}} value={c.subtitulo||''} onChange={e=>up('subtitulo',e.target.value)}/></div>
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:9,marginBottom:9}}>
+              <div><label style={lbl}>Texto do botão</label>
+                <input style={fi} value={c.chamada||''} onChange={e=>up('chamada',e.target.value)}/></div>
+              <div><label style={lbl}>Cor</label>
+                <input style={{...fi,padding:'3px',height:34}} type="color" value={c.cor||'#1EA952'} onChange={e=>up('cor',e.target.value)}/></div>
+            </div>
+            <label style={lbl}>Imagem do topo</label>
+            {c.imagemTopo&&<img src={c.imagemTopo} alt="" style={{width:'100%',borderRadius:8,marginBottom:6,border:'1px solid #e8eaed'}}/>}
+            <label style={{display:'block',padding:'7px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#1EA952',fontWeight:700,textAlign:'center'}}>
+              {enviandoImg==='topoundefined'||enviandoImg==='topo'?'Enviando...':(c.imagemTopo?'Trocar imagem':'Enviar imagem')}
+              <input type="file" accept="image/*" style={{display:'none'}}
+                onChange={e=>{subirImagem('topo',e.target.files[0]);e.target.value='';}}/>
+            </label>
+          </div>
+
+          <div style={sec}>
+            <div style={{fontSize:10,color:'#1EA952',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Benefícios</div>
+            {(c.beneficios||[]).map((b,i)=>(
+              <div key={i} style={{display:'flex',gap:6,marginBottom:6}}>
+                <input style={fi} value={b} onChange={e=>setC(x=>({...x,beneficios:x.beneficios.map((y,j)=>j===i?e.target.value:y)}))}/>
+                <button onClick={()=>setC(x=>({...x,beneficios:x.beneficios.filter((_,j)=>j!==i)}))}
+                  style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+              </div>
+            ))}
+            <button onClick={()=>setC(x=>({...x,beneficios:[...(x.beneficios||[]),'']}))}
+              style={{padding:'5px 12px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>+ Benefício</button>
+          </div>
+
+          <div style={sec}>
+            <div style={{fontSize:10,color:'#1EA952',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Blocos com imagem</div>
+            {(c.blocos||[]).map((b,i)=>(
+              <div key={i} style={{background:'#fff',borderRadius:8,padding:'10px',marginBottom:8,border:'1px solid #e8eaed'}}>
+                <div style={{display:'flex',gap:6,marginBottom:6}}>
+                  <input style={fi} value={b.titulo||''} placeholder="Título do bloco"
+                    onChange={e=>setC(x=>({...x,blocos:x.blocos.map((y,j)=>j===i?{...y,titulo:e.target.value}:y)}))}/>
+                  <button onClick={()=>setC(x=>({...x,blocos:x.blocos.filter((_,j)=>j!==i)}))}
+                    style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:15}}>×</button>
+                </div>
+                <textarea style={{...fi,minHeight:48,resize:'vertical',marginBottom:6}} value={b.texto||''} placeholder="Texto"
+                  onChange={e=>setC(x=>({...x,blocos:x.blocos.map((y,j)=>j===i?{...y,texto:e.target.value}:y)}))}/>
+                {b.imagem&&<img src={b.imagem} alt="" style={{width:'100%',borderRadius:7,marginBottom:6,border:'1px solid #e8eaed'}}/>}
+                <label style={{display:'block',padding:'6px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fafbfc',cursor:'pointer',fontSize:10,color:'#8e44ad',fontWeight:700,textAlign:'center'}}>
+                  {enviandoImg==='bloco'+i?'Enviando...':(b.imagem?'Trocar imagem':'Enviar imagem')}
+                  <input type="file" accept="image/*" style={{display:'none'}}
+                    onChange={e=>{subirImagem('bloco',e.target.files[0],i);e.target.value='';}}/>
+                </label>
+              </div>
+            ))}
+            <button onClick={()=>setC(x=>({...x,blocos:[...(x.blocos||[]),{titulo:'',texto:'',imagem:''}]}))}
+              style={{padding:'5px 12px',borderRadius:6,border:'1px dashed #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#7f8c8d',fontWeight:600}}>+ Bloco</button>
+          </div>
+
+          <div style={{...sec,borderLeft:'3px solid #1EA952'}}>
+            <div style={{fontSize:10,color:'#1EA952',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>Fim da página — o WhatsApp</div>
+            <div style={{fontSize:10,color:'#95a5a6',marginBottom:9,lineHeight:1.6}}>
+              É o clique aqui que abre a janela de 24 horas. Depois disso a resposta rápida pode disparar com áudio e vídeo.
+            </div>
+            <div style={{marginBottom:9}}><label style={lbl}>Número que recebe</label>
+              <input style={fi} value={c.numeroWhats||''} onChange={e=>up('numeroWhats',e.target.value)} placeholder="43 99999-9999"/></div>
+            <label style={lbl}>Mensagem já escrita</label>
+            <textarea style={{...fi,minHeight:56,resize:'vertical'}} value={c.mensagemWhats||''} onChange={e=>up('mensagemWhats',e.target.value)}/>
+            <div style={{fontSize:10,color:'#95a5a6',marginTop:4}}>
+              Variáveis: <code>#primeiroNome</code> <code>#funcionarios</code> <code>#solucao</code>
+            </div>
+          </div>
+
+          <div style={sec}>
+            <label style={lbl}>Rodapé</label>
+            <input style={fi} value={c.rodape||''} onChange={e=>up('rodape',e.target.value)}/>
+          </div>
+
+          {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'9px 12px',marginBottom:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+          {ok&&<div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'9px 12px',marginBottom:10,fontSize:11,color:'#276749'}}>{ok}</div>}
+
+          <div style={{display:'flex',gap:9,flexWrap:'wrap',alignItems:'center'}}>
+            <button onClick={salvar} disabled={salvando}
+              style={{padding:'10px 20px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#2c3e50',fontWeight:700,cursor:'pointer',fontSize:12}}>
+              {salvando?'Salvando...':'💾 Salvar rascunho'}
+            </button>
+            <button onClick={publicar} disabled={publicando||salvando}
+              style={{padding:'10px 22px',borderRadius:7,border:'none',background:publicando?'#dde1e7':'#1EA952',color:'#fff',fontWeight:700,cursor:'pointer',fontSize:13}}>
+              {publicando?'Publicando...':'🚀 Publicar'}
+            </button>
+          </div>
+
+          {c.linkPublico&&(
+            <div style={{background:'#fff',border:'1px solid #e8eaed',borderRadius:9,padding:'12px 14px',marginTop:12}}>
+              <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:7}}>Links para divulgar</div>
+              <div style={{fontSize:10,color:'#95a5a6',marginBottom:8,lineHeight:1.6}}>
+                Um link por canal. A origem aparece no lead e no funil, e é assim que você descobre qual anúncio traz cliente.
+              </div>
+              {[{o:'',l:'Link direto'},...CANAIS.map(o=>({o,l:o}))].map(x=>{
+                const url=c.linkPublico+(x.o?(c.linkPublico.includes('?')?'&':'?')+'o='+x.o:'');
+                return(
+                  <div key={x.l} style={{display:'flex',alignItems:'center',gap:8,marginBottom:5}}>
+                    <span style={{fontSize:10,color:'#7f8c8d',fontWeight:700,minWidth:74,textTransform:'capitalize'}}>{x.l}</span>
+                    <input readOnly value={url} onFocus={e=>e.target.select()}
+                      style={{...fi,fontSize:10,color:'#95a5a6',flex:1}}/>
+                    <button onClick={()=>navigator.clipboard?.writeText(url)}
+                      style={{padding:'6px 11px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:10,color:'#3498db',fontWeight:700}}>copiar</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── prévia ── */}
+        <div style={{flex:'1 1 320px',minWidth:0,position:'sticky',top:12}}>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>
+            Como o cliente vê · {(html.length/1024).toFixed(1)} KB
+          </div>
+          <iframe title="Prévia da página" srcDoc={html}
+            style={{width:'100%',height:'72vh',border:'1px solid #e8eaed',borderRadius:12,background:'#fff'}}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AnunciosView({leads,usuarios,perfil}){
   const [aba,setAba]=useState('campanhas');
   const abas=[
     {id:'campanhas',  l:'📢 Campanhas',  cor:'#c2185b'},
     {id:'recorrentes',l:'🔁 Recorrentes', cor:'#ad1457'},
+    {id:'paginas',    l:'🔗 Páginas',    cor:'#1EA952'},
     {id:'templates',  l:'📄 Templates',  cor:'#3498db'},
     {id:'ia',         l:'🤖 Atendimento IA', cor:'#8e44ad'},
     {id:'treino',     l:'🎓 Treinar a IA',   cor:'#6b21a8'},
@@ -13689,6 +14215,7 @@ function AnunciosView({leads,usuarios,perfil}){
       </div>
       {aba==='campanhas'&&<AbaCampanhas leads={leads}/>}
       {aba==='recorrentes'&&<AbaRecorrentes leads={leads} usuarios={usuarios}/>}
+      {aba==='paginas'&&<AbaPaginas/>}
       {aba==='templates'&&<AbaTemplates/>}
       {aba==='ia'&&<AbaAtendimentoIA usuarios={usuarios}/>}
       {aba==='treino'&&<AbaTreino/>}

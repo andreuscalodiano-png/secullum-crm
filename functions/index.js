@@ -5156,3 +5156,197 @@ exports.exportarFaturadosDiario = functions
     }
     return null;
   });
+
+// ─── PÁGINAS DE CAPTURA ──────────────────────────────────────────────────────
+// A página publicada é um HTML solto, servido do Storage ou de um domínio
+// próprio. Ela conversa com o CRM só por aqui: registra eventos e cria o lead.
+//
+// CORS aberto de propósito: a página roda em endereço público, e pode mudar de
+// domínio sem redeploy. O que protege não é a origem — é o fato de a função só
+// ESCREVER evento e lead, nunca ler nada, e só aceitar campanha que existe e
+// está ativa.
+
+function setCorsPublico(req, res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '3600');
+}
+
+function ipDaRequisicao(req) {
+  const h = req.headers || {};
+  const bruto = String(h['x-forwarded-for'] || h['fastly-client-ip'] || '').split(',')[0];
+  return bruto.trim() || String(req.ip || '');
+}
+
+// Telefone brasileiro em formato internacional, sem símbolos
+function telParaWhats(v) {
+  let n = String(v || '').replace(/\D/g, '');
+  if (!n) return '';
+  if (n.length <= 11) n = '55' + n;
+  return n;
+}
+
+async function campanhaPagina(slug) {
+  const s = String(slug || '').trim().toLowerCase();
+  if (!s) throw new Error('Campanha não informada.');
+  const snap = await db.collection('paginas_campanha').doc(s).get();
+  if (!snap.exists) throw new Error('Campanha não encontrada.');
+  const c = snap.data();
+  if (c.ativa === false) throw new Error('Esta campanha está pausada.');
+  return { id: s, ...c };
+}
+
+// Registra abertura, rolagem e clique. É chamado muitas vezes por visita, então
+// grava direto sem ler nada antes — barato e não trava a página.
+async function gravarEventoPagina({ slug, tipo, origem, sessao, extra, req }) {
+  await db.collection('paginas_eventos').add({
+    slug: String(slug || '').toLowerCase(),
+    tipo: String(tipo || 'abriu'),
+    origem: String(origem || 'direto').slice(0, 40),
+    sessao: String(sessao || '').slice(0, 40),
+    extra: String(extra || '').slice(0, 120),
+    ip: ipDaRequisicao(req),
+    em: new Date().toISOString(),
+    dia: new Date().toISOString().slice(0, 10),
+  });
+}
+
+exports.paginaEvento = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { slug, tipo, origem, sessao, extra } = req.body || {};
+    if (!slug) throw new Error('Campanha não informada.');
+    await gravarEventoPagina({ slug, tipo, origem, sessao, extra, req });
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    // Evento é telemetria: falhar aqui não pode atrapalhar quem está na página
+    console.warn('[pagina-evento]', err.message);
+    res.status(200).json({ ok: false });
+  }
+});
+
+exports.paginaLead = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const b = req.body || {};
+    const camp = await campanhaPagina(b.slug);
+
+    const nome = String(b.nome || '').trim().slice(0, 80);
+    const telefone = telParaWhats(b.telefone);
+    if (!nome) throw new Error('Informe seu nome.');
+    if (telefone.length < 12) throw new Error('Informe um WhatsApp válido com DDD.');
+
+    const email = String(b.email || '').trim().toLowerCase().slice(0, 120);
+    const origem = String(b.origem || 'direto').slice(0, 40);
+
+    // Já existe? Atualiza o que veio em branco, sem sobrescrever o atendimento.
+    // Lead que volta pela página não pode virar lead novo e sumir da fila de
+    // quem já está atendendo ele.
+    const todos = await db.collection('leads').get();
+    let existente = null;
+    const chave = telefone.slice(-8);
+    todos.forEach(d => {
+      if (existente) return;
+      const l = d.data();
+      const t = String(l.telefone || '').replace(/\D/g, '');
+      if (t && t.slice(-8) === chave) existente = { id: d.id, ...l };
+      else if (email && String(l.email || '').toLowerCase() === email) existente = { id: d.id, ...l };
+    });
+
+    const agora = new Date().toISOString();
+    const detalhe = `Voltou pela página "${camp.nome || camp.id}"${origem !== 'direto' ? ` (${origem})` : ''}`;
+
+    let leadId;
+    if (existente) {
+      leadId = existente.id;
+      const patch = { atualizadoEm: agora, ultimaPagina: camp.id };
+      if (!existente.email && email) patch.email = email;
+      if (!existente.funcionarios && b.funcionarios) patch.funcionarios = String(b.funcionarios).slice(0, 60);
+      if (!existente.solucao && b.solucao) patch.solucao = String(b.solucao).slice(0, 80);
+      if (!existente.sistema_ponto && b.sistema_ponto) patch.sistema_ponto = String(b.sistema_ponto).slice(0, 20);
+      patch.historico = [...(existente.historico || []),
+        { evento: 'pagina', detalhe, data: agora, usuario: '—' }];
+      await db.collection('leads').doc(leadId).set(patch, { merge: true });
+    } else {
+      leadId = 'pag_' + Date.now();
+      await db.collection('leads').doc(leadId).set({
+        nome: nome.toUpperCase(),
+        email, telefone,
+        funcionarios: String(b.funcionarios || '').slice(0, 60),
+        solucao: String(b.solucao || '').slice(0, 80),
+        sistema_ponto: String(b.sistema_ponto || '').slice(0, 20),
+        empresa: String(b.empresa || '').slice(0, 80),
+        status: 'novo',
+        origem: `Página: ${camp.nome || camp.id}`,
+        campanha: camp.id,
+        conjunto: origem,
+        criadoEm: agora,
+        atualizadoEm: agora,
+        historico: [{ evento: 'criado', detalhe: `Chegou pela página "${camp.nome || camp.id}"${origem !== 'direto' ? ` — ${origem}` : ''}`, data: agora, usuario: '—' }],
+      });
+    }
+
+    await gravarEventoPagina({
+      slug: camp.id, tipo: 'enviou', origem,
+      sessao: b.sessao, extra: existente ? 'lead existente' : 'lead novo', req,
+    });
+
+    // O link de WhatsApp é montado aqui, e não na página, para o número e o
+    // texto poderem mudar em Configurações sem republicar nada.
+    const primeiro = nome.split(/\s+/)[0] || '';
+    const msg = String(camp.mensagemWhats || 'Olá! Quero saber mais sobre o controle de ponto.')
+      .replace(/#primeiroNome/gi, primeiro)
+      .replace(/#nome/gi, nome)
+      .replace(/#funcionarios/gi, b.funcionarios || '')
+      .replace(/#solucao/gi, b.solucao || '');
+    const destino = telParaWhats(camp.numeroWhats || '');
+    const whatsapp = destino
+      ? `https://wa.me/${destino}?text=${encodeURIComponent(msg)}`
+      : '';
+
+    res.status(200).json({ ok: true, whatsapp, novo: !existente });
+  } catch (err) {
+    console.error('[pagina-lead]', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Números da campanha para a aba de Anúncios
+exports.paginaFunil = functions.https.onRequest(async (req, res) => {
+  setCors(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { slug, dias } = req.body || {};
+    const limite = new Date(Date.now() - (Number(dias) || 30) * 864e5).toISOString();
+    let q = db.collection('paginas_eventos').where('em', '>=', limite);
+    if (slug) q = q.where('slug', '==', String(slug).toLowerCase());
+    const snap = await q.get();
+
+    const porTipo = {}, porOrigem = {}, sessoes = new Set();
+    snap.forEach(d => {
+      const e = d.data();
+      porTipo[e.tipo] = (porTipo[e.tipo] || 0) + 1;
+      if (e.tipo === 'abriu') {
+        porOrigem[e.origem || 'direto'] = (porOrigem[e.origem || 'direto'] || 0) + 1;
+        if (e.sessao) sessoes.add(e.sessao);
+      }
+    });
+
+    res.status(200).json({
+      ok: true,
+      abriu: porTipo.abriu || 0,
+      visitantes: sessoes.size,
+      rolou: porTipo.rolou || 0,
+      respondeu: porTipo.respondeu || 0,
+      clicou: porTipo.clicou || 0,
+      enviou: porTipo.enviou || 0,
+      porOrigem,
+    });
+  } catch (err) {
+    console.error('[pagina-funil]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
