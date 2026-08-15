@@ -13788,6 +13788,8 @@ blocos+
 '<script>\n'+
 'var API="'+fnUrl+'";\n'+
 'var SLUG="'+escP(c.id||'')+'";\n'+
+'var ZAP="'+String(c.numeroWhats||'').replace(/\D/g,'').replace(/^(\d{10,11})$/,'55$1')+'";\n'+
+'var MSG='+JSON.stringify(String(c.mensagemWhats||''))+';\n'+
 'var PERG='+perguntas+';\n'+
 'var resp={},sessao=Math.random().toString(36).slice(2)+Date.now().toString(36);\n'+
 'var origem=(new URLSearchParams(location.search)).get("o")||"direto";\n'+
@@ -13840,16 +13842,30 @@ blocos+
 '  var bt=document.getElementById("enviar");bt.disabled=true;bt.textContent="Abrindo o WhatsApp...";\n'+
 '  var dados={slug:SLUG,nome:nome,telefone:tel,email:mail,origem:origem,sessao:sessao,\n'+
 '    funcionarios:resp.funcionarios||"",sistema_ponto:resp.sistema_ponto||"",solucao:resp.solucao||""};\n'+
-'  var t=setTimeout(function(){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg("Demorou demais. Tente de novo.");},9000);\n'+
+'  // Plano B: se o servidor nao responder, o cliente vai pro WhatsApp do mesmo\n'+
+'  // jeito. Perder o registro no CRM e ruim; perder o cliente e pior.\n'+
+'  function planoB(){\n'+
+'    if(!ZAP){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg("Nao consegui enviar agora. Tente de novo em instantes.");return;}\n'+
+'    var m=(MSG||"Ola! Quero saber mais sobre o controle de ponto.")\n'+
+'      .replace(/#primeiroNome/gi,nome.split(" ")[0]).replace(/#nome/gi,nome)\n'+
+'      .replace(/#funcionarios/gi,resp.funcionarios||"").replace(/#solucao/gi,resp.solucao||"");\n'+
+'    m+="\\n\\n"+nome+" · "+tel+(mail?" · "+mail:"")+(resp.funcionarios?" · "+resp.funcionarios:"");\n'+
+'    location.href="https://wa.me/"+ZAP+"?text="+encodeURIComponent(m);\n'+
+'  }\n'+
+'  var caiu=false;\n'+
+'  var t=setTimeout(function(){if(caiu)return;caiu=true;planoB();},8000);\n'+
 '  fetch(API+"/paginaLead",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(dados)})\n'+
-'   .then(function(r){return r.json();})\n'+
-'   .then(function(d){\n'+
-'     clearTimeout(t);\n'+
-'     if(d.error){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg(d.error);return;}\n'+
-'     if(d.whatsapp){location.href=d.whatsapp;}\n'+
-'     else{bt.textContent="Recebemos! Vamos te chamar.";}\n'+
+'   .then(function(r){return r.text().then(function(txt){\n'+
+'     var d=null;try{d=JSON.parse(txt);}catch(e){}\n'+
+'     return {ok:r.ok,d:d};\n'+
+'   });})\n'+
+'   .then(function(x){\n'+
+'     if(caiu)return; caiu=true; clearTimeout(t);\n'+
+'     if(x.d&&x.d.error){bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg(x.d.error);return;}\n'+
+'     if(x.d&&x.d.whatsapp){location.href=x.d.whatsapp;return;}\n'+
+'     planoB();\n'+
 '   })\n'+
-'   .catch(function(){clearTimeout(t);bt.disabled=false;bt.textContent="Falar no WhatsApp agora";erroMsg("Sem conexão. Tente de novo.");});\n'+
+'   .catch(function(){if(caiu)return;caiu=true;clearTimeout(t);planoB();});\n'+
 '}\n'+
 '<\/script>\n'+
 '</body></html>';
@@ -13915,14 +13931,34 @@ function AbaPaginas(){
 // Números do funil, buscados só quando a campanha aparece na tela
 function FunilPagina({slug}){
   const [f,setF]=useState(null);
+  const [falhou,setFalhou]=useState('');
   useEffect(()=>{
     let vivo=true;
+    setF(null);setFalhou('');
     fetch(`${FUNCTIONS_URL}/paginaFunil`,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({slug,dias:30}),
-    }).then(r=>r.json()).then(d=>{if(vivo&&!d.error)setF(d);}).catch(()=>{});
+    })
+      .then(async r=>{
+        const t=await r.text();
+        let d=null;try{d=JSON.parse(t);}catch(_){}
+        if(!vivo)return;
+        // Sem função no ar a resposta vem em HTML — sem isso a tela ficava
+        // em branco e ninguém descobria que faltava o deploy.
+        if(!d)  {setFalhou('O servidor respondeu algo inesperado. A função paginaFunil foi implantada?');return;}
+        if(d.error){setFalhou(d.error);return;}
+        setF(d);
+      })
+      .catch(()=>{if(vivo)setFalhou('Não consegui falar com o servidor. Falta implantar as funções das páginas.');});
     return()=>{vivo=false;};
   },[slug]);
+
+  if(falhou)return(
+    <div style={{fontSize:10,color:'#b45309',background:'#fff8ee',border:'1px solid #fde68a',
+      borderRadius:7,padding:'7px 10px',marginTop:9,lineHeight:1.5}}>
+      ⚠ {falhou}
+    </div>
+  );
   if(!f)return null;
   const etapas=[
     {l:'visitantes',v:f.visitantes,c:'#2a78d6'},
