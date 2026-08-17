@@ -5066,6 +5066,30 @@ function ConfigKanban(){
 
 
 // ─── BOTÃO MICROFONE — Web Speech API ────────────────────────────────────────
+// Quem está logado, para carimbar transcrição e comentários. Guardado aqui
+// porque a maioria das telas não recebe o perfil por props.
+let USUARIO_ATUAL={nome:'',email:''};
+function nomeUsuarioAtual(){
+  return USUARIO_ATUAL.nome
+    || auth.currentUser?.displayName
+    || String(auth.currentUser?.email||'').split('@')[0]
+    || '—';
+}
+
+// Transcrição SEMPRE entra no fim, com data, hora e quem falou. Antes ela era
+// colada por cima do que já existia quando o campo ainda não tinha sido tocado
+// — e apagava anotação de outra pessoa sem avisar.
+function anexarTranscricao(base,texto){
+  const t=String(texto||'').trim();
+  if(!t)return String(base||'');
+  const d=new Date();
+  const carimbo='🎤 '+d.toLocaleDateString('pt-BR')
+    +' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})
+    +' · '+nomeUsuarioAtual();
+  const antes=String(base||'').replace(/\s+$/,'');
+  return (antes?antes+'\n\n':'')+carimbo+'\n"'+t.toUpperCase()+'"';
+}
+
 function BotaoMic({onTranscricao,style}){
   const [gravando,setGravando]=useState(false);
   const [suportado]=useState(()=>!!(window.SpeechRecognition||window.webkitSpeechRecognition));
@@ -5420,7 +5444,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
         <div style={{marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
             <div style={{fontWeight:700,fontSize:12,color:'#2c3e50',textTransform:'uppercase'}}>Descrição do Setup</div>
-            <BotaoMic onTranscricao={t=>setLocal(l=>({...l,descricaoSetup:(l.descricaoSetup?(l.descricaoSetup+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"'}))}/>
+            <BotaoMic onTranscricao={t=>setLocal(l=>({...l,descricaoSetup:anexarTranscricao(l.descricaoSetup,t)}))}/>
           </div>
           <textarea
             value={local.descricaoSetup??(local.processos||[]).map(p=>p.texto).join('\n')}
@@ -5478,7 +5502,7 @@ function CardDetalhe({cliente,implData,onSalvar,onVoltar,currentUser,usuarios,on
             <div style={{flex:1,display:'flex',flexDirection:'column',gap:4}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <span style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase'}}>Novo comentário</span>
-                <BotaoMic onTranscricao={t=>setComentario(prev=>(prev?(prev+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+                <BotaoMic onTranscricao={t=>setComentario(prev=>anexarTranscricao(prev,t))}/>
               </div>
               <input value={comentario} onChange={e=>setComentario(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addComent()} placeholder="Comentário..." style={{...fi}}/>
             </div>
@@ -6851,7 +6875,7 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
         <div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
             <label style={lbl}>Observações</label>
-            <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+            <BotaoMic onTranscricao={t=>up('obs',anexarTranscricao(f.obs,t))}/>
           </div>
           <textarea style={{...fi,resize:'vertical',minHeight:56,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
         </div>
@@ -7361,7 +7385,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
         <div style={{gridColumn:'span 2'}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
                 <label style={lbl}>Observações</label>
-                {editMode&&<BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>}
+                {editMode&&<BotaoMic onTranscricao={t=>up('obs',anexarTranscricao(f.obs,t))}/>}
               </div>
               {editMode
                 ?<textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase',width:'100%',boxSizing:'border-box'}} value={f.obs||''} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
@@ -9473,7 +9497,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
             <div style={{flex:1,display:'flex',flexDirection:'column',gap:6}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <span style={{fontSize:10,color:'#7f8c8d',fontWeight:600,textTransform:'uppercase'}}>Comentário</span>
-                <BotaoMic onTranscricao={t=>setComentario(prev=>(prev?(prev+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+                <BotaoMic onTranscricao={t=>setComentario(prev=>anexarTranscricao(prev,t))}/>
               </div>
               <textarea value={comentario} onChange={e=>setComentario(e.target.value.toUpperCase())} placeholder="ADICIONAR COMENTÁRIO..." style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}}/>
             </div>
@@ -9582,7 +9606,7 @@ function SolicitacoesView({solicitacoes,usuarios,todos,currentUser,onAbrirClient
           <div style={{marginBottom:14}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
               <label style={lbl}>Descreva a solicitação</label>
-              <BotaoMic onTranscricao={t=>upF('descricao',(form.descricao?(form.descricao+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+              <BotaoMic onTranscricao={t=>upF('descricao',anexarTranscricao(form.descricao,t))}/>
             </div>
             <textarea value={form.descricao} onChange={e=>upF('descricao',e.target.value.toUpperCase())} style={{...fi,resize:'vertical',minHeight:80,textTransform:'uppercase'}} placeholder="DESCREVA AQUI OS DETALHES DA SOLICITAÇÃO..."/>
           </div>
@@ -10414,7 +10438,7 @@ function OrcamentoForm({orcServicos,orcFormas,orcTemplates,equipamentosCad,vende
           <div style={{marginBottom:10}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
               <label style={lbl}>Observações / condições</label>
-              <BotaoMic onTranscricao={t=>setDet(d=>({...d,obs:(d.obs?(d.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"'}))}/>
+              <BotaoMic onTranscricao={t=>setDet(d=>({...d,obs:anexarTranscricao(d.obs,t)}))}/>
             </div>
             <textarea style={{...fi,resize:'vertical',minHeight:60}} value={det.obs} onChange={e=>setDet(d=>({...d,obs:e.target.value}))} placeholder="Ex: Frete grátis. Envio após confirmação do pagamento."/>
           </div>
@@ -12924,7 +12948,7 @@ function ModalNovoLead({onFechar}){
         <div style={{marginBottom:14}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
             <label style={lbl}>Observações (opcional)</label>
-            <BotaoMic onTranscricao={t=>up('obs',(f.obs?(f.obs+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+            <BotaoMic onTranscricao={t=>up('obs',anexarTranscricao(f.obs,t))}/>
           </div>
           <textarea style={{...fi,resize:'vertical',minHeight:60,textTransform:'uppercase'}} value={f.obs} onChange={e=>up('obs',e.target.value.toUpperCase())}/>
         </div>
@@ -17984,7 +18008,7 @@ function BlocoAgendamentoLead({lead,usuarios}){
       <div style={{marginBottom:12}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
           <label style={lbl}>Observações da apresentação</label>
-          <BotaoMic onTranscricao={t=>up('obs',(a.obs?(a.obs+'\n\n🎤 TRANSCRIÇÃO: "'):'🎤 TRANSCRIÇÃO: "')+t.toUpperCase()+'"')}/>
+          <BotaoMic onTranscricao={t=>up('obs',anexarTranscricao(a.obs,t))}/>
         </div>
         <textarea style={{...fi,minHeight:60,resize:'vertical',textTransform:'uppercase'}} value={a.obs}
           onChange={e=>up('obs',e.target.value.toUpperCase())} placeholder="O QUE PRECISA SER PREPARADO, PONTOS A DESTACAR..."/>
@@ -19089,7 +19113,7 @@ function LeadsView({leads,onConverterCliente,onConverterOrcamento,orcServicos,eq
         <div style={estiloSecao('dados',{background:'#fff',borderRadius:10,padding:'18px 22px',boxShadow:'0 1px 4px rgba(0,0,0,.08)'})}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
             <div style={{fontWeight:700,fontSize:12,color:CORES_SECAO.dados.cor,textTransform:'uppercase'}}>📝 Observações</div>
-            <BotaoMic onTranscricao={t=>setObsEdit(prev=>(prev?(prev+'\n\n🎤 TRANSCRIÇÃO: \"'):'🎤 TRANSCRIÇÃO: \"')+t.toUpperCase()+'\"')}/>
+            <BotaoMic onTranscricao={t=>setObsEdit(prev=>anexarTranscricao(prev!==''?prev:(lead.obs||''),t))}/>
           </div>
           <textarea value={obsEdit!==''?obsEdit:(lead.obs||'')} onChange={e=>setObsEdit(e.target.value.toUpperCase())} onFocus={()=>{if(obsEdit==='')setObsEdit(lead.obs||'');}} placeholder="ANOTAÇÕES SOBRE ESTE LEAD..." style={{...fi,resize:'vertical',minHeight:80,marginBottom:8,textTransform:'uppercase'}}/>
           <button onClick={()=>salvarObs(lead)} disabled={salvando} style={{padding:'7px 16px',borderRadius:6,border:'none',background:salvando?'#dde1e7':'#3498db',color:'#fff',fontWeight:700,cursor:salvando?'default':'pointer',fontSize:12}}>{salvando?'Salvando...':'💾 Salvar'}</button>
@@ -19485,6 +19509,14 @@ export default function App(){
   const [authUser,setAuthUser]=useState(null);
   const [authLoading,setAuthLoading]=useState(true);
   const [userProfile,setUserProfile]=useState(null);
+
+  // Deixa o nome de quem está logado disponível para o carimbo das transcrições
+  useEffect(()=>{
+    USUARIO_ATUAL={
+      nome:userProfile?.nome||'',
+      email:userProfile?.email||auth.currentUser?.email||'',
+    };
+  },[userProfile]);
   useEffect(()=>{document.title='Guion - CRM';},[]);
   const [clientes,setClientes]=useState([]);
   const [overrides,setOverrides]=useState({});
