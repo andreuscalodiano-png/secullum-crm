@@ -698,6 +698,21 @@ function montarContrato(cliente,cfg){
 }
 
 // HTML do documento — mesma base para a prévia, a impressão e o Word
+// Formatação do corpo do contrato — usada pela prévia, pelo Word e pela
+// página de aprovação, para os três mostrarem exatamente o mesmo documento.
+function corpoContratoHtml(texto){
+  return String(texto||'').split('\n').map(l=>{
+    const t=l.trim();
+    if(!t)return '<p class="vazio">&nbsp;</p>';
+    if(/^CONTRATO DE LICENÇA/i.test(t))return `<h1>${t}</h1>`;
+    if(/^CLÁUSULA\s/i.test(t))return `<h2>${t}</h2>`;
+    if(/^(LICENCIANTE|LICENCIADA):/i.test(t))
+      return `<p class="parte">${t.replace(/^(LICENCIANTE|LICENCIADA):/i,'<b>$1:</b>')}</p>`;
+    if(/^•/.test(t))return `<p class="item">${t}</p>`;
+    return `<p>${t}</p>`;
+  }).join('\n');
+}
+
 function htmlContrato(texto,cliente,L,id){
   const linhas=texto.split('\n');
   const corpo=linhas.map(l=>{
@@ -759,15 +774,196 @@ ${corpo}
 }
 
 // ─── MODAL: PRÉVIA E DOWNLOAD ────────────────────────────────────────────────
+// ─── PÁGINA DE APROVAÇÃO DO CONTRATO ─────────────────────────────────────────
+// O cliente abre um link, lê o contrato inteiro e aprova informando nome
+// completo e CPF. Assinatura eletrônica simples: o que sustenta não é o clique,
+// é a prova em volta — quando abriu, de qual IP, e o hash do texto aprovado.
+
+function htmlAprovacaoContrato({id,texto,clienteNome,documento,plano,licenciante},fnUrl){
+  const L=licenciante||{};
+  const corpo=corpoContratoHtml(texto);
+  const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  return '<!doctype html>\n'+
+'<html lang="pt-BR" translate="no"><head>\n'+
+'<meta charset="utf-8"/>\n'+
+'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>\n'+
+'<meta name="google" content="notranslate"/>\n'+
+'<meta name="robots" content="noindex,nofollow"/>\n'+
+'<title>Aprovação de contrato · '+esc(clienteNome)+'</title>\n'+
+'<style>\n'+
+'*{box-sizing:border-box;margin:0;padding:0}\n'+
+'body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#16181d;background:#eef1f4}\n'+
+'.w{max-width:760px;margin:0 auto;padding:18px 14px 60px}\n'+
+'.topo{background:#2c3e50;color:#fff;border-radius:14px;padding:20px 22px;margin-bottom:14px}\n'+
+'.topo .t{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;opacity:.7}\n'+
+'.topo h1{font-size:20px;margin:4px 0 6px;letter-spacing:-.3px;font-weight:700}\n'+
+'.topo .d{font-size:12.5px;opacity:.75}\n'+
+'.doc{background:#fff;border-radius:14px;padding:8px 0;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.06)}\n'+
+'.rolo{max-height:56vh;overflow-y:auto;padding:22px 26px;font-family:Georgia,"Times New Roman",serif;font-size:14.5px;line-height:1.75;text-align:justify}\n'+
+'.rolo h1{font-size:16px;text-align:center;margin:0 0 16px;padding-bottom:10px;border-bottom:2px solid #16181d;font-family:inherit}\n'+
+'.rolo h2{font-size:14.5px;margin:20px 0 8px;font-family:inherit}\n'+
+'.rolo p{margin:0 0 9px}\n'+
+'.rolo p.vazio{margin:0;height:6px}\n'+
+'.rolo p.item{padding-left:16px}\n'+
+'.rolo p.parte{margin-bottom:12px}\n'+
+'.fimdoc{padding:11px 26px;border-top:1px solid #eef0f2;font-size:11.5px;color:#8b9099}\n'+
+'.form{background:#fff;border-radius:14px;padding:22px;box-shadow:0 2px 10px rgba(0,0,0,.06)}\n'+
+'.form h2{font-size:17px;margin-bottom:5px;letter-spacing:-.2px}\n'+
+'.form .aj{font-size:13px;color:#5a6068;margin-bottom:18px}\n'+
+'label.c{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#5a6068;margin-bottom:4px}\n'+
+'input[type=text]{width:100%;padding:14px;font-size:16px;border:1.5px solid #dfe3e8;border-radius:11px;margin-bottom:12px;font-family:inherit;background:#fff}\n'+
+'input[type=text]:focus{outline:0;border-color:#2c3e50}\n'+
+'.aceito{display:flex;gap:11px;align-items:flex-start;background:#f7f8f9;border-radius:11px;padding:14px;margin:6px 0 14px;cursor:pointer}\n'+
+'.aceito input{margin-top:2px;width:19px;height:19px;flex:0 0 auto;cursor:pointer}\n'+
+'.aceito span{font-size:13.5px;line-height:1.55}\n'+
+'.bt{display:block;width:100%;background:#1EA952;color:#fff;border:0;border-radius:12px;padding:17px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit}\n'+
+'.bt:disabled{background:#cfd6dc;cursor:default}\n'+
+'.erro{color:#c0392b;font-size:13.5px;margin-bottom:10px;display:none;line-height:1.5}\n'+
+'.nota{font-size:11.5px;color:#8b9099;margin-top:13px;line-height:1.6}\n'+
+'.ok{background:#fff;border-radius:14px;padding:30px 24px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.06)}\n'+
+'.ok .ic{width:60px;height:60px;border-radius:50%;background:#1EA952;color:#fff;font-size:30px;display:flex;align-items:center;justify-content:center;margin:0 auto 14px}\n'+
+'.ok h2{font-size:20px;margin-bottom:8px}\n'+
+'.ok p{font-size:14px;color:#5a6068;line-height:1.65}\n'+
+'.prot{display:inline-block;background:#f2f4f6;border-radius:9px;padding:9px 15px;margin-top:14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#16181d}\n'+
+'</style></head>\n'+
+'<body><div class="w">\n'+
+'<div class="topo">\n'+
+'<div class="t">Aprovação de contrato</div>\n'+
+'<h1>'+esc(clienteNome)+'</h1>\n'+
+'<div class="d">'+esc(documento)+(plano?' · plano '+esc(plano):'')+' · '+esc(L.razao||'')+'</div>\n'+
+'</div>\n'+
+'<div id="tela">\n'+
+'<div class="doc"><div class="rolo" id="rolo">\n'+corpo+'\n</div>\n'+
+'<div class="fimdoc" id="fim">Role até o fim para liberar a aprovação.</div></div>\n'+
+'<div class="form">\n'+
+'<h2>Aprovar este contrato</h2>\n'+
+'<p class="aj">Preencha com os dados de quem assina pela empresa.</p>\n'+
+'<label class="c">Nome completo</label>\n'+
+'<input type="text" id="nome" autocomplete="name" placeholder="Nome e sobrenome"/>\n'+
+'<label class="c">CPF</label>\n'+
+'<input type="text" id="cpf" inputmode="numeric" autocomplete="off" placeholder="000.000.000-00" maxlength="14"/>\n'+
+'<label class="c">E-mail (opcional)</label>\n'+
+'<input type="text" id="mail" inputmode="email" autocomplete="email" placeholder="seu@email.com"/>\n'+
+'<label class="aceito"><input type="checkbox" id="ok"/>\n'+
+'<span>Li o contrato acima na íntegra, concordo com todas as suas condições, e reconheço esta aprovação eletrônica como válida entre as partes.</span></label>\n'+
+'<div class="erro" id="erro"></div>\n'+
+'<button class="bt" id="bt" disabled>Aprovar contrato</button>\n'+
+'<p class="nota">Ao aprovar, ficam registrados data, hora, endereço de rede e uma marca digital do texto exato que você leu. Uma cópia do comprovante é enviada ao seu consultor.</p>\n'+
+'</div>\n'+
+'</div>\n'+
+'</div>\n'+
+'<script>\n'+
+'var API="'+fnUrl+'";\n'+
+'var ID="'+esc(id)+'";\n'+
+'var sessao=Math.random().toString(36).slice(2)+Date.now().toString(36);\n'+
+'try{fetch(API+"/contratoAbertura",{method:"POST",headers:{"Content-Type":"application/json"},\n'+
+'  keepalive:true,body:JSON.stringify({id:ID,sessao:sessao})});}catch(e){}\n'+
+'var leu=false;\n'+
+'var rolo=document.getElementById("rolo");\n'+
+'function conferirFim(){\n'+
+'  if(leu)return;\n'+
+'  if(rolo.scrollTop+rolo.clientHeight>=rolo.scrollHeight-40){\n'+
+'    leu=true;\n'+
+'    document.getElementById("fim").textContent="Contrato lido por completo.";\n'+
+'    atualizar();\n'+
+'  }\n'+
+'}\n'+
+'rolo.addEventListener("scroll",conferirFim,{passive:true});\n'+
+'// documento curto pode nao ter barra de rolagem\n'+
+'if(rolo.scrollHeight<=rolo.clientHeight+40){leu=true;document.getElementById("fim").textContent="Contrato exibido por completo.";}\n'+
+'function so(v,n){return v.replace(/\\D/g,"").slice(0,n);}\n'+
+'var cpf=document.getElementById("cpf");\n'+
+'cpf.addEventListener("input",function(){\n'+
+'  var n=so(cpf.value,11),f=n;\n'+
+'  if(n.length>9)f=n.replace(/^(\\d{3})(\\d{3})(\\d{3})(\\d{1,2}).*/,"$1.$2.$3-$4");\n'+
+'  else if(n.length>6)f=n.replace(/^(\\d{3})(\\d{3})(\\d{1,3}).*/,"$1.$2.$3");\n'+
+'  else if(n.length>3)f=n.replace(/^(\\d{3})(\\d{1,3}).*/,"$1.$2");\n'+
+'  cpf.value=f;atualizar();\n'+
+'});\n'+
+'function atualizar(){\n'+
+'  var nome=document.getElementById("nome").value.trim();\n'+
+'  var n=so(cpf.value,11);\n'+
+'  var marcou=document.getElementById("ok").checked;\n'+
+'  document.getElementById("bt").disabled=!(leu&&marcou&&n.length===11&&nome.split(/\\s+/).filter(Boolean).length>=2);\n'+
+'}\n'+
+'document.getElementById("nome").addEventListener("input",atualizar);\n'+
+'document.getElementById("ok").addEventListener("change",atualizar);\n'+
+'function erroMsg(t){var e=document.getElementById("erro");e.textContent=t;e.style.display=t?"block":"none";}\n'+
+'document.getElementById("bt").onclick=function(){\n'+
+'  var bt=this;bt.disabled=true;bt.textContent="Registrando...";erroMsg("");\n'+
+'  fetch(API+"/contratoAceite",{method:"POST",headers:{"Content-Type":"application/json"},\n'+
+'    body:JSON.stringify({id:ID,nome:document.getElementById("nome").value.trim(),\n'+
+'      cpf:so(cpf.value,11),email:document.getElementById("mail").value.trim(),concorda:true})})\n'+
+'   .then(function(r){return r.text().then(function(t){var d=null;try{d=JSON.parse(t);}catch(e){}return d;});})\n'+
+'   .then(function(d){\n'+
+'     if(!d){bt.disabled=false;bt.textContent="Aprovar contrato";erroMsg("Nao consegui registrar agora. Tente de novo em instantes.");return;}\n'+
+'     if(d.error){bt.disabled=false;bt.textContent="Aprovar contrato";erroMsg(d.error);return;}\n'+
+'     document.getElementById("tela").innerHTML=\n'+
+'       \'<div class="ok"><div class="ic">&#10003;</div><h2>Contrato aprovado</h2>\'+\n'+
+'       \'<p>Obrigado, \'+d.nome+\'. O registro foi feito e seu consultor ja foi avisado.</p>\'+\n'+
+'       \'<div class="prot">\'+d.protocolo+\'</div>\'+\n'+
+'       \'<p style="margin-top:12px;font-size:12.5px">Guarde este numero. Ele identifica a sua aprovacao.</p></div>\';\n'+
+'     window.scrollTo({top:0,behavior:"smooth"});\n'+
+'   })\n'+
+'   .catch(function(){bt.disabled=false;bt.textContent="Aprovar contrato";erroMsg("Sem conexao. Tente de novo.");});\n'+
+'};\n'+
+'<\/script>\n'+
+'</body></html>';
+}
+
 function ModalContrato({cliente,onFechar,onRegistrado}){
   const cfg=useContratoConfig();
   const [salvando,setSalvando]=useState(false);
   const [registrado,setRegistrado]=useState(false);
+  const [gerandoLink,setGerandoLink]=useState(false);
+  const [aprov,setAprov]=useState(null);   // documento de aprovação deste cliente
+  const [erroLink,setErroLink]=useState('');
 
   const {texto,faltando,plano,semDescricao}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
   const idDoc=useMemo(()=>'CT-'+new Date().getFullYear()+'-'+String(cliente.id||'').slice(-6).toUpperCase(),[cliente.id]);
   const html=useMemo(()=>htmlContrato(texto,cliente,cfg.licenciante,idDoc),[texto,cliente,cfg,idDoc]);
   const arquivo=`Contrato_${String(cliente.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
+
+  // Acompanha ao vivo: assim o vendedor vê a aprovação chegar sem recarregar
+  useEffect(()=>{
+    if(!cliente?.id)return;
+    const u=onSnapshot(doc(db,'contratos_aprovacao','ap_'+cliente.id),s=>{
+      setAprov(s.exists()?{id:s.id,...s.data()}:null);
+    });
+    return()=>u();
+  },[cliente?.id]);
+
+  async function gerarLinkAprovacao(){
+    setGerandoLink(true);setErroLink('');
+    try{
+      const id='ap_'+cliente.id;
+      await setDoc(doc(db,'contratos_aprovacao',id),{
+        id,clienteId:cliente.id,clienteNome:cliente.nome||'',
+        documento:idDoc,plano,
+        texto,                                  // congela o texto exato do link
+        status:'aguardando',cancelado:false,
+        geradoPor:auth.currentUser?.email||'',
+        criadoEm:new Date().toISOString(),
+      },{merge:true});
+
+      const pagina=htmlAprovacaoContrato(
+        {id,texto,clienteNome:cliente.nome||'',documento:idDoc,plano,licenciante:cfg.licenciante},
+        FUNCTIONS_URL);
+      const ref=storageRef(storage,`config/contratos/${id}.html`);
+      await uploadBytes(ref,new Blob([pagina],{type:'text/html;charset=utf-8'}),
+        {contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'no-cache'});
+      const url=await getDownloadURL(ref);
+      await setDoc(doc(db,'contratos_aprovacao',id),{link:url},{merge:true});
+    }catch(e){setErroLink('Não consegui gerar o link: '+e.message);}
+    setGerandoLink(false);
+  }
+
+  async function cancelarLink(){
+    if(!aprov?.id)return;
+    if(!window.confirm('Cancelar este link?\n\nQuem abrir vai ver que ele não vale mais. Você pode gerar outro depois.'))return;
+    await setDoc(doc(db,'contratos_aprovacao',aprov.id),{cancelado:true,status:'cancelado'},{merge:true});
+  }
 
   async function registrar(formato){
     if(registrado)return;
@@ -863,6 +1059,64 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
           {salvando&&<span style={{fontSize:11,color:'#7f8c8d'}}>Registrando...</span>}
           {registrado&&<span style={{fontSize:11,color:'#27ae60',fontWeight:600}}>✓ Registrado no histórico</span>}
         </div>
+        {/* ── Aprovação eletrônica ── */}
+        <div style={{margin:'0 22px 16px',border:'1px solid #e8eaed',borderRadius:10,padding:'14px 16px',background:'#fafbfc'}}>
+          <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>
+            🔗 Aprovação eletrônica
+          </div>
+
+          {aprov?.aceite?(
+            <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:9,padding:'12px 14px'}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#276749',marginBottom:6}}>
+                ✓ Aprovado por {aprov.aceite.nome}
+              </div>
+              <div style={{fontSize:11,color:'#2c3e50',lineHeight:1.8}}>
+                CPF {aprov.aceite.cpfFormatado}{aprov.aceite.email?` · ${aprov.aceite.email}`:''}<br/>
+                {new Date(aprov.aceite.em).toLocaleString('pt-BR')} · IP {aprov.aceite.ip}<br/>
+                Protocolo <strong>{aprov.aceite.protocolo}</strong>
+              </div>
+              <div style={{fontSize:9,color:'#68a683',marginTop:7,wordBreak:'break-all',lineHeight:1.5}}>
+                Marca digital do texto aprovado: {String(aprov.aceite.hashDocumento||'').slice(0,32)}...
+              </div>
+            </div>
+          ):aprov?.link&&!aprov?.cancelado?(
+            <>
+              <div style={{fontSize:11,color:'#b45309',background:'#fff8ee',border:'1px solid #fde68a',borderRadius:8,padding:'8px 11px',marginBottom:9}}>
+                Aguardando o cliente aprovar. O link já está valendo.
+              </div>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+                <input readOnly value={aprov.link} onFocus={e=>e.target.select()}
+                  style={{flex:1,minWidth:170,padding:'8px 10px',borderRadius:7,border:'1px solid #dde1e7',fontSize:10,color:'#95a5a6'}}/>
+                <button onClick={()=>navigator.clipboard?.writeText(aprov.link)}
+                  style={{padding:'8px 13px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:11,color:'#3498db',fontWeight:700}}>copiar</button>
+                {cliente.tel&&(
+                  <a href={`https://wa.me/${String(cliente.tel).replace(/\D/g,'').replace(/^(\d{10,11})$/,'55$1')}?text=${encodeURIComponent(`Olá! Segue o contrato para sua aprovação:\n\n${aprov.link}`)}`}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{padding:'8px 13px',borderRadius:7,background:'#1EA952',color:'#fff',fontSize:11,fontWeight:700,textDecoration:'none'}}>WhatsApp</a>
+                )}
+                <button onClick={cancelarLink}
+                  style={{background:'none',border:'none',cursor:'pointer',color:'#e74c3c',fontSize:11,fontWeight:600}}>cancelar</button>
+              </div>
+              {aprov.aberturas!==undefined&&<div style={{fontSize:10,color:'#95a5a6',marginTop:6}}>Aberto {aprov.aberturas}x</div>}
+            </>
+          ):(
+            <>
+              <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.6,marginBottom:9}}>
+                Gera um link para o cliente ler o contrato e aprovar informando nome completo e CPF.
+                Ficam registrados data, hora, endereço de rede e a marca digital do texto exato aprovado.
+              </div>
+              <button onClick={gerarLinkAprovacao} disabled={gerandoLink||faltando?.length>0}
+                title={faltando?.length>0?'Complete os dados do cliente antes':''}
+                style={{padding:'10px 18px',borderRadius:7,border:'none',
+                  background:(gerandoLink||faltando?.length>0)?'#dde1e7':'#2c3e50',color:'#fff',
+                  fontWeight:700,cursor:(gerandoLink||faltando?.length>0)?'default':'pointer',fontSize:12}}>
+                {gerandoLink?'Gerando...':aprov?.cancelado?'🔗 Gerar novo link':'🔗 Gerar link de aprovação'}
+              </button>
+            </>
+          )}
+          {erroLink&&<div style={{fontSize:11,color:'#c53030',marginTop:8}}>{erroLink}</div>}
+        </div>
+
         <div style={{padding:'0 22px 14px',fontSize:10,color:'#95a5a6',lineHeight:1.6}}>
           No PDF, escolha <strong>Salvar como PDF</strong> na janela de impressão. O arquivo já sai no formato aceito
           por ZapSign, Clicksign e D4Sign — os campos de assinatura ficam no fim, em bloco próprio.

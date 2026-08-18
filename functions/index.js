@@ -5357,3 +5357,134 @@ exports.paginaFunil = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ─── APROVAÇÃO ELETRÔNICA DE CONTRATO ────────────────────────────────────────
+// O cliente recebe um link, lê o contrato inteiro e aceita informando nome
+// completo e CPF. O que dá valor a isso não é o clique — é a prova em volta:
+// quando abriu, quanto tempo leu, de qual IP, e o hash do texto exato aprovado.
+//
+// Isso é assinatura eletrônica simples. Vale entre as partes quando o próprio
+// contrato diz que elas aceitam esse meio — por isso a cláusula de aceite no
+// modelo não é enfeite.
+
+// crypto já foi carregado mais acima neste arquivo
+
+function hashTexto(t) {
+  return crypto.createHash('sha256').update(String(t || ''), 'utf8').digest('hex');
+}
+
+// CPF com dígito verificador. Erro de digitação vira prova frágil depois.
+function cpfValido(v) {
+  const n = String(v || '').replace(/\D/g, '');
+  if (n.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(n)) return false;
+  for (const corte of [9, 10]) {
+    let soma = 0;
+    for (let i = 0; i < corte; i++) soma += Number(n[i]) * (corte + 1 - i);
+    let d = (soma * 10) % 11;
+    if (d === 10) d = 0;
+    if (d !== Number(n[corte])) return false;
+  }
+  return true;
+}
+
+function cpfFormatado(v) {
+  const n = String(v || '').replace(/\D/g, '');
+  return n.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+}
+
+// Cada abertura do link fica registrada. "Leu por 4 minutos e depois aceitou"
+// pesa mais do que só o clique no botão.
+exports.contratoAbertura = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const { id, sessao } = req.body || {};
+    if (!id) throw new Error('Documento não informado.');
+    await db.collection('contratos_aprovacao').doc(String(id)).collection('aberturas').add({
+      em: new Date().toISOString(),
+      ip: ipDaRequisicao(req),
+      navegador: String(req.headers['user-agent'] || '').slice(0, 200),
+      sessao: String(sessao || '').slice(0, 40),
+    });
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.warn('[contrato-abertura]', err.message);
+    res.status(200).json({ ok: false });
+  }
+});
+
+exports.contratoAceite = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const b = req.body || {};
+    const id = String(b.id || '').trim();
+    if (!id) throw new Error('Documento não informado.');
+
+    const ref = db.collection('contratos_aprovacao').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) throw new Error('Este link de aprovação não existe mais.');
+    const ap = snap.data();
+
+    if (ap.aceite) {
+      throw new Error(`Este contrato já foi aprovado em ${new Date(ap.aceite.em).toLocaleString('pt-BR')} por ${ap.aceite.nome}.`);
+    }
+    if (ap.cancelado) throw new Error('Este link foi cancelado. Peça um novo ao seu consultor.');
+
+    const nome = String(b.nome || '').trim().slice(0, 120);
+    const cpf = String(b.cpf || '').replace(/\D/g, '');
+    const email = String(b.email || '').trim().toLowerCase().slice(0, 120);
+
+    if (nome.split(/\s+/).filter(Boolean).length < 2) throw new Error('Informe o nome completo, com sobrenome.');
+    if (!cpfValido(cpf)) throw new Error('CPF inválido. Confira os números.');
+    if (b.concorda !== true) throw new Error('É preciso marcar que você leu e concorda com o contrato.');
+
+    // Hash recalculado do texto guardado, não do que veio do navegador:
+    // é o que garante que o aprovado é o que está arquivado aqui.
+    const hash = hashTexto(ap.texto || '');
+    const agora = new Date().toISOString();
+    const protocolo = 'AP-' + id.slice(-6).toUpperCase() + '-' + Date.now().toString(36).toUpperCase();
+
+    const aceite = {
+      nome, cpf, cpfFormatado: cpfFormatado(cpf), email,
+      em: agora,
+      ip: ipDaRequisicao(req),
+      navegador: String(req.headers['user-agent'] || '').slice(0, 300),
+      hashDocumento: hash,
+      protocolo,
+    };
+
+    await ref.set({ aceite, status: 'aprovado', atualizadoEm: agora }, { merge: true });
+
+    if (ap.clienteId) {
+      await db.collection('clientes').doc(ap.clienteId).set({
+        contratoAprovadoEm: agora,
+        contratoAprovadoPor: nome,
+        contratoAprovadoCpf: cpfFormatado(cpf),
+        contratoProtocolo: protocolo,
+      }, { merge: true }).catch(() => {});
+    }
+
+    // Avisa quem gerou o link, pelo e-mail que o sistema já usa
+    if (ap.geradoPor) {
+      const linhas = [
+        `<p><strong>${nome}</strong> aprovou o contrato de <strong>${ap.clienteNome || ''}</strong>.</p>`,
+        `<p>CPF ${cpfFormatado(cpf)}${email ? ` · ${email}` : ''}<br/>`,
+        `${new Date(agora).toLocaleString('pt-BR')} · IP ${aceite.ip}<br/>`,
+        `Protocolo ${protocolo}</p>`,
+      ].join('');
+      await enviarEmail({
+        to: ap.geradoPor,
+        subject: `Contrato aprovado — ${ap.clienteNome || ''}`,
+        html: linhas,
+        remetente: 'Secullum CRM',
+      }).catch(e => console.warn('[contrato-aceite] aviso por e-mail falhou:', e.message));
+    }
+
+    res.status(200).json({ ok: true, protocolo, em: agora, nome });
+  } catch (err) {
+    console.error('[contrato-aceite]', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
