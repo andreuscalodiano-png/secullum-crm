@@ -2804,6 +2804,60 @@ function RelatoriosView({todos,implantacoes}){
     return p.join('_');
   }
 
+  // Relatório impresso da aba aberta, com os MESMOS filtros da tela. O texto do
+  // filtro sai no cabeçalho — papel sem o critério que gerou vira discussão.
+  function imprimirRelatorio(){
+    const lista=listaOrdenada;
+    const filtros=[];
+    if(busca.trim())filtros.push(`busca: "${busca.trim()}"`);
+    if(anoRel!=='Todos')filtros.push('ano '+anoRel);
+    if(mesRel!=='Todos')filtros.push(MESES[+mesRel]);
+    if(vendRel!=='Todos')filtros.push('vendedor '+vendRel);
+    if(planoRel!=='Todos')filtros.push('plano '+planoRel);
+    if(statusRel!=='Todos')filtros.push('status '+statusRel);
+    if(!filtros.length)filtros.push('sem filtro — base completa');
+
+    const pend=abaRel==='pendentes';
+    const colunas=[
+      {t:'Empresa',c:'nome'},
+      {t:'CNPJ',c:'cnpj',w:'128px'},
+      {t:'Contato',v:c=>[c.contato,c.telefone||c.tel].filter(Boolean).join(' · '),w:'160px'},
+      {t:'Vendedor',c:'vendedor',w:'96px'},
+      {t:'Plano',c:'plano',w:'92px'},
+      {t:'Status',c:'status',w:'92px'},
+      pend&&{t:'O que falta',v:c=>getPendencias(c).map(p=>`${p.label} ${moeda(p.valor)}`).join(' · '),w:'190px'},
+      {t:'Impl.',v:c=>moeda(c.vI),al:'d',w:'82px'},
+      {t:'Equip.',v:c=>moeda(c.vE),al:'d',w:'82px'},
+      {t:'Sist./mês',v:c=>moeda(c.vS),al:'d',w:'86px'},
+      {t:'Total',v:c=>moeda(c.total),al:'d',w:'88px'},
+    ].filter(Boolean);
+
+    const soma=k=>lista.reduce((a,c)=>a+(parseFloat(c[k])||0),0);
+    abrirRelatorio({
+      titulo:pend?'Clientes com pendência':'Clientes',
+      subtitulo:filtros.join(' · '),
+      paisagem:true,
+      colunas,
+      linhas:lista,
+      totais:{
+        'Impl.':moeda(soma('vI')),
+        'Equip.':moeda(soma('vE')),
+        'Sist./mês':moeda(soma('vS')),
+        'Total':moeda(soma('total')),
+      },
+      resumo:[
+        {t:'Nesta lista',v:lista.length,s:pend?'com pendência':'clientes'},
+        {t:'Pendente',v:moeda(totPendentes)},
+        {t:'Inadimplentes',v:inadimplentes.length,s:moeda(totInadimpl)+'/mês'},
+        {t:'Faturados',v:dadosFiltrados.filter(c=>c.status==='Faturado').length},
+        {t:'Mensal somado',v:moeda(soma('vS'))},
+      ],
+      nota:pend
+        ?'Cobranças ainda não resolvidas: sem link gerado, pendentes ou vencidas no Asaas.'
+        :'Todos os clientes que passaram pelos filtros acima.',
+    });
+  }
+
   const porEtapa=ETAPAS.map(e=>{
     const cs=todos.filter(c=>{const impl=implantacoes[c.id]||{};return impl.etapa===e.id;});
     return{...e,qtd:cs.length,clientes:cs};
@@ -2877,6 +2931,7 @@ function RelatoriosView({todos,implantacoes}){
           <button onClick={()=>exportarExcel(abaRel==='pendentes'?pendentes:dadosFiltrados,nomeArq()+'_clientes')} style={{display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:11}}>
             <i className="ti ti-file-spreadsheet"/> Exportar .csv
           </button>
+          <BotaoRelatorio onClick={imprimirRelatorio} titulo="Gerar o relatório desta lista para impressão ou PDF"/>
         </div>
       </div>
 
@@ -5969,6 +6024,19 @@ function SecullumView({todos,onAbrirCliente,perfil}){
       .sort((a,b)=>a.d-b.d);
   },[dados,resolvidos]);
 
+  // Demonstração que JÁ passou da data. Fica separada porque a cobrança é outra:
+  // "vence em 2 dias" é hora de ligar; "venceu há 20 dias" é base morta que ou
+  // some da lista ou volta para negociação. Sem esta aba elas se misturavam com
+  // os 286 registros e ninguém enxergava.
+  const expirados=useMemo(()=>{
+    const regs=((dados?.registros)||[]).filter(r=>!resolvidos[String(r.codigo)]);
+    const porDoc={};
+    (todos||[]).forEach(c=>{const k=chaveDoc(c.cnpj);if(k)porDoc[k]=c;});
+    return regs.map(r=>({...r,cliente:porDoc[chaveDoc(r.doc)]||null,_venc:dataSec(r.validade)}))
+      .filter(x=>x._venc&&diasAte(x._venc)<0)
+      .sort((a,b)=>b._venc-a._venc);   // venceu ontem primeiro, o mais antigo por último
+  },[dados,resolvidos,todos]);
+
   if(carregando)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
 
   const ABAS=[
@@ -5977,6 +6045,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
     {id:'negociando',  l:'🤝 Em negociação',      n:cruz.negociando.length,  cor:'#f5a623'},
     {id:'semdemo',     l:'📋 Sem demonstração',   n:cruz.semDemo.length,     cor:'#7f8c8d'},
     {id:'resolvidos',  l:'✓ Baixados na mão',     n:listaResolvidos.length,  cor:'#0d9488'},
+    {id:'expirados',   l:'⌛ Expirados',           n:expirados.length,        cor:'#d03b3b'},
   ];
 
   const filtra=lista=>{
@@ -5987,6 +6056,105 @@ function SecullumView({todos,onAbrirCliente,perfil}){
       return alvo.includes(b);
     });
   };
+
+  // Relatório da aba que está aberta, com a mesma busca aplicada. O que a
+  // pessoa vê na tela é exatamente o que sai no papel — se filtrou, o filtro
+  // vai impresso no cabeçalho para ninguém discutir número depois.
+  function relatorioDaAba(){
+    const atual=ABAS.find(x=>x.id===aba)||ABAS[0];
+    const b=busca.trim();
+    const partes=[];
+    if(b)partes.push(`busca: "${b}"`);
+    if(dados?.atualizadoEm)partes.push('planilha de '+new Date(dados.atualizadoEm).toLocaleDateString('pt-BR'));
+
+    const colBase=[
+      {t:'Banco',c:'codigo',w:'58px'},
+      {t:'Base / cliente',c:'nome'},
+      {t:'CNPJ',c:'doc',w:'132px'},
+      {t:'Plano',c:'plano',w:'92px'},
+      {t:'Func.',c:'funcionarios',al:'d',w:'46px'},
+      {t:'Equip.',c:'equipamentos',al:'d',w:'50px'},
+      {t:'Validade',c:'validade',al:'c',w:'70px'},
+      {t:'Último acesso',v:r=>r.ultimoLogin||'nunca entrou',w:'110px'},
+    ];
+    const colCrm={t:'No CRM',v:r=>r.cliente?`${r.cliente.nome} · ${r.cliente.status||'sem status'}`:'—'};
+
+    const M={
+      ativar:{
+        titulo:'Bases prontas para ativar',
+        colunas:[...colBase,colCrm],
+        linhas:filtra(cruz.ativar),
+        nota:'Clientes faturados no CRM que ainda estão em demonstração na Secullum. São as ativações pendentes.',
+      },
+      oportunidade:{
+        titulo:'Oportunidades em demonstração',
+        colunas:colBase,
+        linhas:filtra(cruz.oportunidade),
+        nota:'Estão testando o sistema da Secullum e não existem no CRM. Entraram por link e ninguém atendeu.',
+      },
+      negociando:{
+        titulo:'Em negociação',
+        colunas:[...colBase,colCrm],
+        linhas:filtra(cruz.negociando),
+        nota:'Já têm cadastro no CRM, estão em demonstração e ainda não foram faturados.',
+      },
+      semdemo:{
+        titulo:'Faturados sem demonstração na lista',
+        colunas:[
+          {t:'Cliente',v:r=>r.cliente?.nome},
+          {t:'CNPJ',v:r=>r.cliente?.cnpj,w:'138px'},
+          {t:'Plano',v:r=>r.cliente?.plano,w:'110px'},
+          {t:'Status',v:r=>r.cliente?.status,w:'96px'},
+          {t:'Banco gravado',v:r=>r.cliente?.nrBanco,al:'c',w:'92px'},
+        ],
+        linhas:filtra(cruz.semDemo.map(c=>({cliente:c,nome:c.nome,doc:c.cnpj,codigo:c.id}))),
+        nota:'Faturados no CRM que não aparecem na lista de demonstração. Em geral já foram ativados — os que não foram são banco faturado sem uso.',
+      },
+      resolvidos:{
+        titulo:'Bases baixadas na mão',
+        colunas:[
+          {t:'Banco',c:'codigo',w:'58px'},
+          {t:'Base',c:'nome'},
+          {t:'CNPJ',c:'doc',w:'132px'},
+          {t:'Cliente no CRM',c:'clienteNome',w:'150px'},
+          {t:'Motivo',c:'justificativa'},
+          {t:'Quando',v:x=>x.resolvidoEm?new Date(x.resolvidoEm).toLocaleString('pt-BR'):'',w:'110px'},
+          {t:'Quem',v:x=>String(x.resolvidoPor||'').split('@')[0],w:'82px'},
+        ],
+        linhas:listaResolvidos.filter(x=>{
+          const q=busca.trim().toLowerCase();
+          return !q||[x.nome,x.doc,x.codigo,x.justificativa,x.clienteNome].join(' ').toLowerCase().includes(q);
+        }),
+        nota:'Resolvidas fora do sistema, com o motivo registrado. Saem das outras listas e podem ser trazidas de volta.',
+      },
+      expirados:{
+        titulo:'Demonstrações expiradas',
+        colunas:[
+          ...colBase,
+          {t:'Venceu há',v:r=>Math.abs(diasAte(r._venc))+' d',al:'d',w:'66px'},
+          colCrm,
+        ],
+        linhas:filtra(expirados),
+        nota:'Demonstrações que já passaram da data de validade, das mais recentes para as mais antigas.',
+      },
+    };
+    const cfg=M[aba]||M.ativar;
+    abrirRelatorio({
+      titulo:cfg.titulo,
+      subtitulo:partes.join(' · '),
+      colunas:cfg.colunas,
+      linhas:cfg.linhas,
+      nota:cfg.nota,
+      paisagem:true,
+      resumo:[
+        {t:'Nesta lista',v:cfg.linhas.length,s:atual.l.replace(/^\S+\s/,'')},
+        {t:'Pode ativar',v:cruz.ativar.length},
+        {t:'Oportunidade',v:cruz.oportunidade.length},
+        {t:'Expiradas',v:expirados.length},
+        {t:'Vencendo em 7d',v:vencendo.length},
+      ],
+    });
+  }
 
   const Card=({cor,titulo,valor,sub})=>(
     <div style={{background:'#fff',borderRadius:10,padding:'14px 16px',boxShadow:'0 1px 4px rgba(0,0,0,.07)',borderTop:`3px solid ${cor}`,flex:'1 1 150px',minWidth:140}}>
@@ -6071,6 +6239,7 @@ function SecullumView({todos,onAbrirCliente,perfil}){
           <div style={{flex:1}}/>
           <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Buscar por nome ou CNPJ..."
             style={{padding:'8px 12px',borderRadius:7,border:'1px solid #dde1e7',fontSize:12,minWidth:210}}/>
+          <BotaoRelatorio onClick={relatorioDaAba} titulo="Imprimir a lista que está na tela, com o filtro aplicado"/>
         </div>
 
         {aba==='ativar'&&(
@@ -6160,6 +6329,24 @@ function SecullumView({todos,onAbrirCliente,perfil}){
               )}/>
           </>
         )}
+
+        {aba==='expirados'&&(
+          <>
+            <div style={{fontSize:11,color:'#7f8c8d',marginBottom:9,lineHeight:1.6,maxWidth:640}}>
+              Demonstrações que <strong>já passaram da data</strong>. As mais recentes vêm primeiro — é onde
+              ainda dá para virar venda. As de muitos dias atrás normalmente viram "✓ offline".
+            </div>
+            <Lista vazio="Nenhuma demonstração vencida. Está tudo em dia."
+              itens={filtra(expirados)} render={r=>(
+              <LinhaSec key={r.codigo} r={r} cor="#d03b3b" onOffline={()=>setModalOff(r)}
+                extra={<span style={{fontSize:10,color:'#c53030',fontWeight:700}}>
+                  Venceu há {Math.abs(diasAte(r._venc))} dia(s)
+                  {r.cliente?` · ${r.cliente.nome} (${r.cliente.status||'sem status'})`:' · sem cadastro no CRM'}
+                </span>}
+                onCliente={r.cliente?()=>onAbrirCliente&&onAbrirCliente(r.cliente):undefined}/>
+            )}/>
+          </>
+        )}
       </>}
 
       {modalOff&&(
@@ -6234,6 +6421,147 @@ function ModalAtivarOffline({reg,onFechar,onConfirmar}){
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── RELATÓRIO PARA IMPRESSÃO ────────────────────────────────────────────────
+// Vira em papel o que está na tela. Abre em janela cheia, com o cabeçalho da
+// Guion, o filtro que gerou a lista, os totais e o rodapé de quem imprimiu.
+// Não imprime sozinho — primeiro dá para conferir na tela; o botão em cima abre
+// a caixa do Chrome, onde "Salvar como PDF" também está.
+//
+// É a MESMA função para qualquer menu. Quem chama passa só colunas e linhas:
+//   abrirRelatorio({
+//     titulo:'Clientes ativos', subtitulo:'Faturados · agosto/2026',
+//     resumo:[{t:'Clientes',v:42},{t:'Funcionários',v:1380}],
+//     colunas:[{t:'Cliente',c:'nome'},{t:'Func.',c:'funcionarios',al:'d',w:'70px'}],
+//     linhas:lista,
+//   })
+function abrirRelatorio({titulo,subtitulo,colunas,linhas,resumo,nota,paisagem,totais,blocos}){
+  const cols=(colunas||[]).filter(Boolean);
+  const dados=linhas||[];
+  const al=c=>c.al==='d'?'right':c.al==='c'?'center':'left';
+  const val=(c,r)=>{
+    const v=typeof c.v==='function'?c.v(r):r[c.c];
+    return (v===null||v===undefined||v==='')?'—':esc(v);
+  };
+  const cabeca=cols.map(c=>`<th style="text-align:${al(c)}${c.w?';width:'+c.w:''}">${esc(c.t)}</th>`).join('');
+  const corpo=dados.length
+    ? dados.map((r,i)=>`<tr${i%2?' class="z"':''}>${cols.map(c=>`<td style="text-align:${al(c)}">${val(c,r)}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${cols.length||1}" class="vazio">Nada para listar com este filtro.</td></tr>`;
+  // Linha de fechamento da tabela. Vem indexada pela chave da coluna para o
+  // total cair embaixo do número certo mesmo se a ordem das colunas mudar.
+  const rodapeTab=totais
+    ? `<tfoot><tr>${cols.map((c,i)=>{
+        const k=c.c||c.t;
+        const v=(totais[k]!==undefined&&totais[k]!==null)?totais[k]:(i===0?'TOTAL':'');
+        return `<td style="text-align:${al(c)}">${esc(v)}</td>`;
+      }).join('')}</tr></tfoot>`
+    : '';
+  // Blocos de ficha: rótulo em cima, valor embaixo, em grade. É o formato de
+  // "dados do cliente" — não cabe em tabela, e em tabela ninguém lê.
+  const secoes=(blocos||[]).filter(Boolean).map(b=>
+    `<div class="bl"><div class="blt">${esc(b.titulo)}</div><div class="blg">`
+    +(b.campos||[]).filter(Boolean).map(x=>
+      `<div class="cp"${x.largo?' style="grid-column:1/-1"':''}><div class="cl">${esc(x.l)}</div>`
+      +`<div class="cvv">${(x.v===''||x.v===null||x.v===undefined)?'—':esc(x.v)}</div></div>`).join('')
+    +'</div></div>').join('');
+  const cards=(resumo||[]).map(x=>
+    `<div class="card"><div class="ct">${esc(x.t)}</div><div class="cv">${esc(x.v)}</div>${x.s?`<div class="cs">${esc(x.s)}</div>`:''}</div>`).join('');
+  const agora=new Date();
+  const html=`<!DOCTYPE html>
+<html lang="pt-BR" translate="no"><head><meta charset="utf-8"/>
+<meta name="google" content="notranslate"/>
+<title>${esc(titulo)} · Guion Informática</title>
+<style>
+  /* thead como grupo de cabeçalho faz o Chrome repetir os títulos em toda
+     página impressa — sem isso, da página 2 em diante a tabela vira números soltos */
+  @page{size:A4 ${paisagem?'landscape':'portrait'};margin:11mm}
+  *{box-sizing:border-box}
+  body{margin:0;background:#eef1f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#2c3e50}
+  .barra{position:sticky;top:0;background:#2c3e50;color:#fff;padding:11px 18px;display:flex;gap:10px;align-items:center;z-index:9}
+  .barra b{flex:1;font-size:13px;font-weight:600}
+  .barra button{padding:8px 16px;border-radius:7px;border:none;font-size:12px;font-weight:700;cursor:pointer}
+  .imp{background:#2a78d6;color:#fff}
+  .fec{background:rgba(255,255,255,.15);color:#fff}
+  .folha{background:#fff;max-width:${paisagem?'1180px':'830px'};margin:16px auto;padding:26px 30px 34px;box-shadow:0 2px 14px rgba(0,0,0,.12)}
+  .topo{display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid #2c3e50;padding-bottom:12px;margin-bottom:16px}
+  .marca{font-size:17px;font-weight:800;letter-spacing:-.3px}
+  .marca span{color:#2a78d6}
+  .sub{font-size:10px;color:#7f8c8d;margin-top:2px}
+  .tit{margin-left:auto;text-align:right}
+  .tit .t{font-size:15px;font-weight:700}
+  .tit .s{font-size:10px;color:#7f8c8d;margin-top:3px;max-width:330px}
+  .cards{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:16px}
+  .card{border:1px solid #e3e7eb;border-radius:8px;padding:9px 13px;min-width:104px}
+  .ct{font-size:8.5px;color:#7f8c8d;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  .cv{font-size:19px;font-weight:800;color:#2a78d6;line-height:1.25}
+  .cs{font-size:8.5px;color:#95a5a6}
+  table{width:100%;border-collapse:collapse;font-size:10.5px}
+  thead{display:table-header-group}
+  th{background:#2c3e50;color:#fff;padding:7px 8px;font-size:9px;text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+  td{padding:6px 8px;border-bottom:1px solid #eef1f4;vertical-align:top}
+  tr{page-break-inside:avoid}
+  tr.z td{background:#fafbfc}
+  tfoot td{background:#f2f6fa;font-weight:800;border-top:2px solid #2c3e50;border-bottom:none;font-size:11px}
+  .vazio{text-align:center;color:#95a5a6;padding:26px;font-style:italic}
+  .bl{margin-bottom:15px;page-break-inside:avoid}
+  .blt{font-size:9px;font-weight:800;color:#2a78d6;text-transform:uppercase;letter-spacing:.7px;border-bottom:1px solid #e3e7eb;padding-bottom:4px;margin-bottom:8px}
+  .blg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px}
+  .cp{border-bottom:1px dotted #e8ecef;padding-bottom:4px}
+  .cl{font-size:8px;color:#95a5a6;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+  .cvv{font-size:11.5px;color:#2c3e50;font-weight:600;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+  .nota{font-size:10px;color:#7f8c8d;line-height:1.6;margin:14px 0 0;background:#f8f9fa;border-left:3px solid #dde1e7;padding:9px 12px}
+  .pe{margin-top:20px;padding-top:10px;border-top:1px solid #eef1f4;display:flex;font-size:9px;color:#95a5a6}
+  .pe span:last-child{margin-left:auto}
+  @media print{body{background:#fff}.barra{display:none}.folha{box-shadow:none;margin:0;max-width:none;padding:0}}
+</style></head>
+<body>
+  <div class="barra">
+    <b>${esc(titulo)}</b>
+    <button class="imp" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+    <button class="fec" onclick="window.close()">Fechar</button>
+  </div>
+  <div class="folha">
+    <div class="topo">
+      <div>
+        <div class="marca">Guion <span>Informática</span></div>
+        <div class="sub">Secullum Ponto · relatório gerado pelo CRM</div>
+      </div>
+      <div class="tit">
+        <div class="t">${esc(titulo)}</div>
+        ${subtitulo?`<div class="s">${esc(subtitulo)}</div>`:''}
+      </div>
+    </div>
+    ${cards?`<div class="cards">${cards}</div>`:''}
+    ${secoes}
+    ${cols.length?`<table><thead><tr>${cabeca}</tr></thead><tbody>${corpo}</tbody>${rodapeTab}</table>`:''}
+    ${nota?`<div class="nota">${esc(nota)}</div>`:''}
+    <div class="pe">
+      <span>${dados.length} registro(s) · impresso por ${esc(nomeUsuarioAtual())}</span>
+      <span>${agora.toLocaleDateString('pt-BR')} às ${agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span>
+    </div>
+  </div>
+</body></html>`;
+  const w=window.open('','_blank','width=1180,height=860');
+  if(!w){
+    alert('O navegador bloqueou a janela do relatório. Libere os pop-ups deste site e tente de novo.');
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+}
+
+// Botão padrão de relatório — o mesmo em toda tela, para não virar cada menu
+// com um jeito diferente de imprimir.
+function BotaoRelatorio({onClick,titulo}){
+  return(
+    <button onClick={onClick} title={titulo||'Gerar relatório para impressão'}
+      style={{padding:'8px 14px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#2c3e50',
+        fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}}>
+      🖨 Relatório
+    </button>
   );
 }
 
@@ -7339,6 +7667,72 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
     }
   }
 
+  // Ficha do cliente em papel: tudo que está espalhado pelas abas da tela em
+  // uma folha só, para levar na visita, anexar em processo ou arquivar.
+  function imprimirFicha(){
+    const end=[f.rua,f.numero,f.complemento].filter(Boolean).join(', ');
+    const cid=[f.bairro,f.cidade,f.uf].filter(Boolean).join(' · ');
+    const itens=(f.itens||[]).filter(i=>i&&i.nome);
+    abrirRelatorio({
+      titulo:'Ficha do cliente',
+      subtitulo:(f.nome||c.nome||'')+(f.cnpj?` · ${f.cnpj}`:''),
+      resumo:[
+        {t:'Implantação',v:moeda(f.vI)},
+        {t:'Equipamento',v:moeda(f.vE)},
+        {t:'Sistema',v:moeda(f.vS),s:'por mês'},
+        {t:'Total',v:moeda(editMode?totEdit:c.total)},
+        {t:'Funcionários',v:f.func||'—'},
+      ],
+      blocos:[
+        {titulo:'Identificação',campos:[
+          {l:'Razão social / nome',v:f.nome,largo:true},
+          {l:'Nome fantasia',v:f.empresa},
+          {l:'CNPJ / CPF',v:f.cnpj},
+          {l:'Inscrição estadual',v:f.inscEstadual},
+          {l:'Inscrição municipal',v:f.inscMunicipal},
+          {l:'Plano',v:f.plano},
+          {l:'Status',v:labelStatus(f.status)},
+        ]},
+        {titulo:'Contato',campos:[
+          {l:'Responsável',v:f.contato},
+          {l:'Celular / WhatsApp',v:f.tel},
+          {l:'Telefone fixo',v:f.fone},
+          {l:'E-mail',v:f.email,largo:true},
+        ]},
+        {titulo:'Endereço',campos:[
+          {l:'Logradouro',v:end,largo:true},
+          {l:'Bairro / cidade / UF',v:cid,largo:true},
+          {l:'CEP',v:f.cep},
+        ]},
+        {titulo:'Comercial e cobrança',campos:[
+          {l:'Vendedor',v:f.vendedor},
+          {l:'Nota fiscal',v:f.nfe},
+          {l:'Renovação',v:f.renovacao},
+          {l:'Implantação',v:`${moeda(f.vI)} · ${f.pagamentoI} ${f.parcelasI}x`},
+          {l:'Equipamento',v:`${moeda(f.vE)} · ${f.pagamentoE} ${f.parcelasE}x`},
+          {l:'Sistema / mês',v:`${moeda(f.vS)} · ${f.pagamento}`},
+          {l:'Data do boleto',v:f.dtBoleto},
+          {l:'Equipamento pago',v:f.equipPago},
+          {l:'Despachado',v:f.despachado},
+          {l:'Rastreio',v:f.equipRastreio},
+          {l:'Enviado em',v:f.equipDataEnvio},
+          {l:'Cliente no Asaas',v:f.asaas_id?'sim':'não'},
+        ]},
+        f.obs?{titulo:'Observações',campos:[{l:'Anotações',v:f.obs,largo:true}]}:null,
+      ],
+      colunas:itens.length?[
+        {t:'Item',c:'nome'},
+        {t:'Tipo',c:'tipo',w:'110px'},
+        {t:'Qtd',c:'qtd',al:'c',w:'50px'},
+        {t:'Valor',v:i=>moeda(i.valor),al:'d',w:'96px'},
+        {t:'Total',v:i=>moeda((parseFloat(i.valor)||0)*(parseInt(i.qtd,10)||1)),al:'d',w:'96px'},
+      ]:[],
+      linhas:itens,
+      totais:itens.length?{'Total':moeda(itens.reduce((a,i)=>a+(parseFloat(i.valor)||0)*(parseInt(i.qtd,10)||1),0))}:null,
+      nota:'Ficha gerada a partir do cadastro no CRM. Confira os dados com o cliente antes de usar em contrato ou nota fiscal.',
+    });
+  }
+
   // Helper: renderiza campo como input/select (edit) ou div (view)
   // Campo é definido fora deste componente para evitar recriação a cada render
 
@@ -7374,6 +7768,7 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
                   style={{padding:'7px 16px',borderRadius:5,border:'none',background:'#8e44ad',color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6,boxShadow:'0 2px 8px rgba(142,68,173,.35)'}}>
                   📄 Gerar contrato
                 </button>
+                <BotaoRelatorio onClick={imprimirFicha} titulo="Imprimir a ficha completa deste cliente"/>
                 <button onClick={()=>setEditMode(true)} style={{padding:'7px 16px',borderRadius:5,border:'none',background:C.blue,color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6}}>
                   <i className="ti ti-edit"/> Editar cliente
                 </button>
