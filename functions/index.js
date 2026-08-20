@@ -5488,3 +5488,202 @@ exports.contratoAceite = functions.https.onRequest(async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GPT MAKER — agente de WhatsApp que qualifica e transfere
+// Base: https://api.gptmaker.ai   Auth: Bearer
+//
+// As chaves ficam no Firestore (config/gptmaker), lidas SÓ aqui no servidor —
+// mesmo desenho da Datafy. O navegador nunca vê o token: ele chama esta função
+// dizendo o que quer, e quem fala com o GPT Maker é o backend.
+//
+// FASE 1 — ESPIÃO. A documentação deles lista os eventos de webhook
+// (onTransfer, onFinishInteraction, ...) mas NÃO publica o corpo que cada um
+// envia. Em vez de chutar o formato e descobrir o erro em produção, este
+// endpoint grava tudo que chegar, cru, em `gptmaker_eventos`. Com duas
+// mensagens de teste a gente vê o payload real e só então escreve a regra.
+//
+// Deploy: firebase deploy --only functions:gptmakerProxy,functions:gptmakerWebhook,functions:gptmakerRegistrar
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GPTMAKER_URL = 'https://api.gptmaker.ai';
+
+// O token mora em OUTRO documento, `config_secreto/gptmaker`, cuja regra do
+// Firestore nega leitura para o navegador. Assim nem quem abre o sistema
+// logado consegue puxar a chave pelo console — o servidor lê porque o Admin
+// SDK passa por cima das regras. Na tela fica só o final dela, para conferir.
+async function configGptmaker() {
+  const [pub, sec] = await Promise.all([
+    db.collection('config').doc('gptmaker').get(),
+    db.collection('config_secreto').doc('gptmaker').get(),
+  ]);
+  const c = { ...(pub.exists ? pub.data() : {}), ...(sec.exists ? sec.data() : {}) };
+  if (!c.token) throw new Error('Configure o token do GPT Maker em Configurações › Integrações.');
+  return c;
+}
+
+async function chamarGptmaker({ token, path, method = 'GET', body = null }) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+  };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+  const resp = await fetch(`${GPTMAKER_URL}${path}`, opts);
+  const texto = await resp.text();
+  let data;
+  try { data = texto ? JSON.parse(texto) : {}; } catch (_) { data = { raw: texto }; }
+  return { status: resp.status, ok: resp.ok, data };
+}
+
+// Proxy genérico — é o que faz o botão "Testar conexão" e as consultas da tela
+// funcionarem sem o token nunca sair do servidor.
+exports.gptmakerProxy = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const cfg = await configGptmaker();
+    const { path, method, body } = req.body || {};
+    if (!path) throw new Error('Caminho não informado.');
+
+    // Só deixa passar caminho da API deles, e só leitura/envio previstos.
+    const limpo = String(path).trim();
+    if (!limpo.startsWith('/v2/')) throw new Error('Caminho inválido: ' + limpo);
+
+    const r = await chamarGptmaker({ token: cfg.token, path: limpo, method: method || 'GET', body: body || null });
+    res.status(200).json({ status: r.status, ok: r.ok, data: r.data });
+  } catch (err) {
+    console.error('[gptmaker] proxy erro:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// O ESPIÃO. Recebe qualquer evento e guarda cru.
+//
+// O nome do evento vem pela URL (?ev=onTransfer) e não do corpo: como o corpo
+// não está documentado, pode ser que ele nem diga qual evento é. Registrando
+// uma URL diferente por evento lá no GPT Maker, a gente sabe sempre.
+exports.gptmakerWebhook = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const ev = String((req.query && req.query.ev) || 'desconhecido').slice(0, 40);
+    const chave = String((req.query && req.query.k) || '');
+
+    let segredoOk = true;
+    try {
+      const s = await db.collection('config').doc('gptmaker').get();
+      const seg = s.exists ? String(s.data().segredo || '') : '';
+      if (seg) segredoOk = (chave === seg);
+    } catch (_) { /* sem config ainda: grava mesmo assim, é a fase de teste */ }
+
+    // Corpo cru, com teto: documento do Firestore morre em 1 MB.
+    let cru = '';
+    try { cru = JSON.stringify(req.body || {}); } catch (_) { cru = String(req.body || ''); }
+    const cortado = cru.length > 90000;
+
+    const achado = farejar(req.body);
+
+    await db.collection('gptmaker_eventos').add({
+      evento: ev,
+      recebidoEm: new Date().toISOString(),
+      metodo: req.method,
+      ip: ipDaRequisicao(req),
+      segredoOk,
+      queryString: JSON.stringify(req.query || {}).slice(0, 2000),
+      cabecalhos: JSON.stringify({
+        'content-type': req.headers['content-type'] || '',
+        'user-agent': String(req.headers['user-agent'] || '').slice(0, 200),
+      }),
+      corpo: cru.slice(0, 90000),
+      corpoCortado: cortado,
+      tamanho: cru.length,
+      // O que já dá para aproveitar na fase 3, guardado para conferência visual.
+      achouChatId: achado.chatId || '',
+      achouTelefone: achado.telefone || '',
+      achouNome: achado.nome || '',
+    });
+
+    // Webhook que não responde 200 vira reenvio em loop. Mesmo recusado,
+    // devolvemos 200 — o registro fica marcado e a gente olha na tela.
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[gptmaker] webhook erro:', err.message);
+    res.status(200).json({ ok: false });
+  }
+});
+
+// Procura chat, telefone e nome dentro do corpo SEM saber o formato dele.
+// Vasculhar por nome de campo é bem mais confiável que caçar número solto no
+// texto: um timestamp de 13 dígitos passa por telefone e estraga o diagnóstico.
+function farejar(obj) {
+  const achado = { chatId: '', telefone: '', nome: '' };
+  const visto = new Set();
+  (function anda(o, prof) {
+    if (!o || typeof o !== 'object' || prof > 6 || visto.has(o)) return;
+    visto.add(o);
+    for (const [k, v] of Object.entries(o)) {
+      const chave = k.toLowerCase();
+      if (v && typeof v === 'object') {
+        // { chat: { id } } é o formato mais provável deles
+        if (chave === 'chat' && v.id && !achado.chatId) achado.chatId = String(v.id);
+        anda(v, prof + 1);
+        continue;
+      }
+      const txt = String(v == null ? '' : v);
+      if (!txt) continue;
+      if (!achado.chatId && /^chat_?id$/.test(chave)) achado.chatId = txt;
+      if (!achado.telefone && /(phone|telefone|whats|celular|recipient)/.test(chave)) {
+        const dig = txt.replace(/\D/g, '');
+        if (dig.length >= 10 && dig.length <= 15) achado.telefone = dig;
+      }
+      if (!achado.nome && /^(name|nome|contactname|username|chatname)$/.test(chave)) achado.nome = txt.slice(0, 80);
+    }
+  })(obj, 0);
+  return achado;
+}
+
+// Registra as nossas URLs lá no agente, uma por evento, já com o segredo.
+// Evita o trabalho manual de colar oito endereços na mão no painel deles.
+exports.gptmakerRegistrar = functions.https.onRequest(async (req, res) => {
+  setCorsPublico(req, res);
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  try {
+    const cfg = await configGptmaker();
+    if (!cfg.agentId) throw new Error('Informe o ID do agente antes de registrar os webhooks.');
+
+    const base = `https://us-central1-secullum-crm.cloudfunctions.net/gptmakerWebhook`;
+    const seg = String(cfg.segredo || '');
+    const url = ev => `${base}?ev=${ev}${seg ? `&k=${encodeURIComponent(seg)}` : ''}`;
+
+    // Na fase de espião ligamos todos: é assim que se descobre qual evento
+    // dispara em qual momento real da conversa.
+    const corpo = {
+      onFirstInteraction: url('onFirstInteraction'),
+      onStartInteraction: url('onStartInteraction'),
+      onFinishInteraction: url('onFinishInteraction'),
+      onTransfer: url('onTransfer'),
+      onLackKnowLedge: url('onLackKnowLedge'),
+      onCreateEvent: url('onCreateEvent'),
+      onCancelEvent: url('onCancelEvent'),
+    };
+    if (req.body && req.body.incluirMensagens === true) corpo.onNewMessage = url('onNewMessage');
+
+    const r = await chamarGptmaker({
+      token: cfg.token,
+      path: `/v2/agent/${encodeURIComponent(cfg.agentId)}/webhooks`,
+      method: 'PUT',
+      body: corpo,
+    });
+    if (!r.ok) throw new Error(`GPT Maker devolveu ${r.status}: ${JSON.stringify(r.data).slice(0, 300)}`);
+
+    await db.collection('config').doc('gptmaker').set({
+      webhooksRegistradosEm: new Date().toISOString(),
+      webhooksUrls: corpo,
+    }, { merge: true });
+
+    res.status(200).json({ ok: true, registrados: Object.keys(corpo) });
+  } catch (err) {
+    console.error('[gptmaker] registrar erro:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});

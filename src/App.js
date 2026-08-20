@@ -9035,6 +9035,244 @@ function ConfigChangelog(){
 // Escreve os clientes faturados numa planilha que já existe no Drive do cliente.
 // Criar arquivo novo não é possível: a conta de serviço do projeto não tem
 // espaço no Drive, e o Google recusa a criação.
+// ─── GPT MAKER ───────────────────────────────────────────────────────────────
+// Fase 1: ligar as chaves e ESPIAR o webhook. A documentação deles lista os
+// eventos mas não publica o corpo de cada um — então antes de escrever regra
+// em cima de campo que talvez nem exista, a gente olha o que chega de verdade.
+//
+// O token NÃO fica neste documento. Vai para `config_secreto/gptmaker`, que a
+// regra do Firestore proíbe o navegador de ler. Aqui só guardamos o final dele.
+function ConfigGptmaker(){
+  const [cfg,setCfg]=useState(null);
+  const [token,setToken]=useState('');
+  const [trocando,setTrocando]=useState(false);
+  const [salvando,setSalvando]=useState(false);
+  const [msg,setMsg]=useState(null);
+  const [eventos,setEventos]=useState([]);
+  const [aberto,setAberto]=useState(null);
+
+  useEffect(()=>{
+    const u=onSnapshot(doc(db,'config','gptmaker'),s=>{
+      const d=s.exists()?s.data():{};
+      setCfg({
+        workspaceId:d.workspaceId||'',agentId:d.agentId||'',segredo:d.segredo||'',
+        tokenFim:d.tokenFim||'',tokenEm:d.tokenAtualizadoEm||'',
+        registradoEm:d.webhooksRegistradosEm||'',
+      });
+    });
+    // Poucos eventos na fase de teste: ordena na memória e evita índice composto.
+    const u2=onSnapshot(collection(db,'gptmaker_eventos'),snap=>{
+      const l=[];snap.forEach(d=>l.push({id:d.id,...d.data()}));
+      l.sort((a,b)=>String(b.recebidoEm||'').localeCompare(String(a.recebidoEm||'')));
+      setEventos(l.slice(0,40));
+    });
+    return()=>{u();u2();};
+  },[]);
+
+  if(!cfg)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
+
+  const fi={padding:'8px 10px',borderRadius:6,border:'1px solid #dde1e7',fontSize:13,color:'#2c3e50',background:'#fff',width:'100%',boxSizing:'border-box'};
+  const lbl={fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:3};
+  const up=(k,v)=>setCfg(c=>({...c,[k]:v}));
+  const temToken=!!cfg.tokenFim;
+
+  const URL_BASE=`${FUNCTIONS_URL}/gptmakerWebhook`;
+
+  function gerarSegredo(){
+    // Só para impedir que qualquer um descubra o endereço e crie evento falso.
+    const a=new Uint8Array(16);
+    (window.crypto||window.msCrypto).getRandomValues(a);
+    up('segredo',Array.from(a).map(x=>x.toString(16).padStart(2,'0')).join(''));
+  }
+
+  async function salvar(){
+    setSalvando(true);setMsg(null);
+    try{
+      const novo=token.trim();
+      if(novo){
+        // Documento separado, sem leitura pelo navegador.
+        await setDoc(doc(db,'config_secreto','gptmaker'),{
+          token:novo,atualizadoEm:new Date().toISOString(),
+          atualizadoPor:auth.currentUser?.email||'—',
+        },{merge:true});
+      }
+      await setDoc(doc(db,'config','gptmaker'),{
+        workspaceId:cfg.workspaceId.trim(),
+        agentId:cfg.agentId.trim(),
+        segredo:cfg.segredo.trim(),
+        ...(novo?{tokenFim:novo.slice(-4),tokenAtualizadoEm:new Date().toISOString()}:{}),
+        atualizadoPor:auth.currentUser?.email||'—',
+      },{merge:true});
+      setToken('');setTrocando(false);
+      setMsg({ok:true,txt:'Salvo.'});
+    }catch(e){setMsg({ok:false,txt:e.message});}
+    setSalvando(false);
+  }
+
+  async function testar(){
+    if(!cfg.workspaceId.trim()){setMsg({ok:false,txt:'Informe o ID do workspace para testar.'});return;}
+    setSalvando(true);setMsg(null);
+    try{
+      const r=await fetch(`${FUNCTIONS_URL}/gptmakerProxy`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({path:`/v2/workspace/${cfg.workspaceId.trim()}/chats?page=1&pageSize=3`}),
+      });
+      const d=await r.json();
+      if(d.error){setMsg({ok:false,txt:d.error});}
+      else if(!d.ok){setMsg({ok:false,txt:`O GPT Maker respondeu ${d.status}. Confira token e workspace.`});}
+      else{
+        const lista=Array.isArray(d.data)?d.data:(d.data?.data||d.data?.content||[]);
+        const n=Array.isArray(lista)?lista.length:0;
+        setMsg({ok:true,txt:`Conectado. ${n} conversa(s) vieram na amostra.`});
+      }
+    }catch(e){setMsg({ok:false,txt:e.message});}
+    setSalvando(false);
+  }
+
+  async function registrar(){
+    if(!cfg.agentId.trim()){setMsg({ok:false,txt:'Informe o ID do agente antes.'});return;}
+    setSalvando(true);setMsg(null);
+    try{
+      await salvar();
+      const r=await fetch(`${FUNCTIONS_URL}/gptmakerRegistrar`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({}),
+      });
+      const d=await r.json();
+      if(d.error)setMsg({ok:false,txt:d.error});
+      else setMsg({ok:true,txt:`Webhooks registrados no agente: ${(d.registrados||[]).length} evento(s). Mande uma mensagem de teste.`});
+    }catch(e){setMsg({ok:false,txt:e.message});}
+    setSalvando(false);
+  }
+
+  async function limpar(){
+    if(!window.confirm('Apagar os eventos capturados? Serve só para limpar a tela de teste.'))return;
+    for(const e of eventos)await deleteDoc(doc(db,'gptmaker_eventos',e.id));
+  }
+
+  const bt=(cor,extra={})=>({padding:'8px 15px',borderRadius:7,border:'none',background:cor,color:'#fff',
+    cursor:salvando?'wait':'pointer',fontSize:12,fontWeight:700,opacity:salvando?.6:1,...extra});
+
+  return(
+    <div>
+      <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginBottom:14,maxWidth:680}}>
+        O agente do GPT Maker atende no WhatsApp, qualifica e transfere. Aqui ficam as chaves.
+        Nesta primeira etapa o sistema só <strong>escuta</strong>: cada evento que o agente disparar
+        é gravado cru aí embaixo, para a gente ver o formato real antes de criar lead automático.
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(210px,1fr))',gap:12,marginBottom:12}}>
+        <div>
+          <label style={lbl}>Token da API</label>
+          {temToken&&!trocando
+            ?<div style={{display:'flex',alignItems:'center',gap:8}}>
+               <code style={{...fi,color:'#0d9488',fontWeight:700}}>•••••••••••••{cfg.tokenFim}</code>
+               <button onClick={()=>setTrocando(true)} style={{background:'none',border:'none',color:'#2b6cb0',cursor:'pointer',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>trocar</button>
+             </div>
+            :<input style={fi} type="password" value={token} onChange={e=>setToken(e.target.value)}
+               placeholder="cole aqui o token do GPT Maker" autoComplete="new-password"/>}
+          <div style={{fontSize:9.5,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
+            Guardado fora do alcance do navegador. {cfg.tokenEm?`Trocado em ${new Date(cfg.tokenEm).toLocaleString('pt-BR')}.`:''}
+          </div>
+        </div>
+        <div>
+          <label style={lbl}>ID do workspace</label>
+          <input style={fi} value={cfg.workspaceId} onChange={e=>up('workspaceId',e.target.value)} placeholder="workspaceId"/>
+        </div>
+        <div>
+          <label style={lbl}>ID do agente</label>
+          <input style={fi} value={cfg.agentId} onChange={e=>up('agentId',e.target.value)} placeholder="agentId"/>
+        </div>
+        <div>
+          <label style={lbl}>Segredo do webhook</label>
+          <div style={{display:'flex',gap:6}}>
+            <input style={fi} value={cfg.segredo} onChange={e=>up('segredo',e.target.value)} placeholder="(vazio = aceita qualquer um)"/>
+            <button onClick={gerarSegredo} title="Gerar um segredo aleatório"
+              style={{padding:'8px 11px',borderRadius:6,border:'1px solid #dde1e7',background:'#fff',cursor:'pointer',fontSize:12}}>🎲</button>
+          </div>
+          <div style={{fontSize:9.5,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
+            Vai junto no endereço. Sem ele, qualquer um que descobrir a URL manda evento falso.
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
+        <button onClick={salvar} disabled={salvando} style={bt('#2c3e50')}>💾 Salvar</button>
+        <button onClick={testar} disabled={salvando||!temToken} style={bt('#2b6cb0')}>🔌 Testar conexão</button>
+        <button onClick={registrar} disabled={salvando||!temToken} style={bt('#0d9488')}>📡 Registrar webhooks no agente</button>
+        {cfg.registradoEm&&<span style={{fontSize:10,color:'#95a5a6'}}>registrados em {new Date(cfg.registradoEm).toLocaleString('pt-BR')}</span>}
+      </div>
+
+      {msg&&(
+        <div style={{background:msg.ok?'#f0fff4':'#fff5f5',border:`1px solid ${msg.ok?'#9ae6b4':'#feb2b2'}`,
+          borderRadius:7,padding:'9px 12px',marginBottom:12,fontSize:11.5,color:msg.ok?'#276749':'#c53030'}}>
+          {msg.ok?'✓ ':'⚠ '}{msg.txt}
+        </div>
+      )}
+
+      <div style={{background:'#f8f9fa',border:'1px solid #e8eaed',borderRadius:8,padding:'11px 13px',marginBottom:14}}>
+        <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>
+          Endereço que o agente vai chamar
+        </div>
+        <code style={{fontSize:10.5,color:'#2b6cb0',wordBreak:'break-all',lineHeight:1.6,display:'block'}}>
+          {URL_BASE}?ev=onTransfer{cfg.segredo?`&k=${cfg.segredo}`:''}
+        </code>
+        <div style={{fontSize:10,color:'#95a5a6',marginTop:6,lineHeight:1.6}}>
+          O botão acima cadastra um endereço desses para cada evento, sozinho. Se preferir colar
+          na mão no painel do GPT Maker, troque só o <strong>ev=</strong> pelo nome do evento.
+        </div>
+      </div>
+
+      {/* ── O ESPIÃO ── */}
+      <div style={{display:'flex',alignItems:'center',gap:9,marginBottom:8,flexWrap:'wrap'}}>
+        <span style={{fontSize:11,fontWeight:700,color:'#2c3e50',textTransform:'uppercase',letterSpacing:.5}}>
+          🕵 Eventos capturados
+        </span>
+        <span style={{fontSize:10,background:'#eef2f7',color:'#7f8c8d',borderRadius:10,padding:'2px 9px',fontWeight:700}}>{eventos.length}</span>
+        <div style={{flex:1}}/>
+        {eventos.length>0&&(
+          <button onClick={limpar} style={{background:'none',border:'none',color:'#e74c3c',cursor:'pointer',fontSize:11,fontWeight:700}}>limpar</button>
+        )}
+      </div>
+
+      {!eventos.length&&(
+        <div style={{background:'#fff',border:'1px dashed #dde1e7',borderRadius:8,padding:'22px',textAlign:'center',fontSize:11.5,color:'#95a5a6',lineHeight:1.7}}>
+          Nada chegou ainda.<br/>
+          Registre os webhooks, mande uma mensagem para o número do agente e peça para ele
+          transferir o atendimento. O que ele mandar aparece aqui na hora.
+        </div>
+      )}
+
+      {eventos.map(e=>{
+        let bonito=e.corpo;
+        try{bonito=JSON.stringify(JSON.parse(e.corpo||'{}'),null,2);}catch(_){/* deixa cru */}
+        const abertoAgora=aberto===e.id;
+        return(
+          <div key={e.id} style={{background:'#fff',border:'1px solid #e8eaed',borderLeft:`3px solid ${e.segredoOk===false?'#e74c3c':'#0d9488'}`,
+            borderRadius:8,padding:'9px 12px',marginBottom:6}}>
+            <div onClick={()=>setAberto(abertoAgora?null:e.id)}
+              style={{display:'flex',alignItems:'center',gap:9,flexWrap:'wrap',cursor:'pointer'}}>
+              <span style={{fontSize:11.5,fontWeight:700,color:'#2c3e50',fontFamily:'ui-monospace,Menlo,monospace'}}>{e.evento}</span>
+              {e.segredoOk===false&&<span style={{fontSize:9,background:'#fff5f5',color:'#c53030',border:'1px solid #feb2b2',borderRadius:8,padding:'1px 7px',fontWeight:700}}>segredo errado</span>}
+              {e.achouChatId&&<span title="Identificador da conversa encontrado no corpo" style={{fontSize:9,background:'#f0f7ff',color:'#2b6cb0',border:'1px solid #bee3f8',borderRadius:8,padding:'1px 7px',fontWeight:700}}>chat {String(e.achouChatId).slice(-8)}</span>}
+              {e.achouTelefone&&<span style={{fontSize:9,background:'#f0fdfa',color:'#0d9488',border:'1px solid #99f6e4',borderRadius:8,padding:'1px 7px',fontWeight:700}}>📱 {e.achouTelefone}</span>}
+              {e.achouNome&&<span style={{fontSize:9,background:'#fffaf0',color:'#b45309',border:'1px solid #fbd38d',borderRadius:8,padding:'1px 7px',fontWeight:700}}>{e.achouNome}</span>}
+              <div style={{flex:1}}/>
+              <span style={{fontSize:10,color:'#95a5a6'}}>{e.tamanho} bytes · {e.recebidoEm?new Date(e.recebidoEm).toLocaleString('pt-BR'):''}</span>
+              <span style={{fontSize:11,color:'#95a5a6'}}>{abertoAgora?'▲':'▼'}</span>
+            </div>
+            {abertoAgora&&(
+              <pre style={{marginTop:8,marginBottom:0,background:'#1e2530',color:'#d6e4f0',borderRadius:7,padding:'11px 13px',
+                fontSize:10.5,lineHeight:1.55,overflowX:'auto',maxHeight:330,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
+                {bonito||'(corpo vazio)'}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ConfigExportacao(){
   const [cfg,setCfg]=useState(null);
   const [salvo,setSalvo]=useState(false);
@@ -9725,6 +9963,14 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
 
       {/* ══ ABA: Integrações ══ */}
       {abaConfig==='integracoes'&&<>
+
+      {/* Agente do GPT Maker — leads qualificados entrando sozinhos */}
+      <div style={sec}>
+        <div style={{fontWeight:700,fontSize:12,color:'#0d9488',marginBottom:12,textTransform:'uppercase'}}>
+          🤖 Agente GPT Maker
+        </div>
+        <ConfigGptmaker/>
+      </div>
 
       {/* Exportação dos faturados para o Google Sheets */}
       <div style={sec}>
