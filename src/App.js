@@ -9097,6 +9097,8 @@ function ConfigGptmaker(){
   const [msg,setMsg]=useState(null);
   const [eventos,setEventos]=useState([]);
   const [aberto,setAberto]=useState(null);
+  const [workspaces,setWorkspaces]=useState(null);
+  const [agentes,setAgentes]=useState(null);
 
   useEffect(()=>{
     const u=onSnapshot(doc(db,'config','gptmaker'),s=>{
@@ -9152,6 +9154,58 @@ function ConfigGptmaker(){
       },{merge:true});
       setToken('');setTrocando(false);
       setMsg({ok:true,txt:'Salvo.'});
+    }catch(e){setMsg({ok:false,txt:e.message});}
+    setSalvando(false);
+  }
+
+  // A API devolve ora um array cru, ora embrulhado em data/content/items.
+  // Em vez de apostar num formato, aceita os três.
+  function comoLista(d){
+    if(Array.isArray(d))return d;
+    for(const k of ['data','content','items','results','workspaces','agents'])
+      if(Array.isArray(d?.[k]))return d[k];
+    return [];
+  }
+
+  async function chamar(path){
+    const r=await fetch(`${FUNCTIONS_URL}/gptmakerProxy`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path}),
+    });
+    const d=await r.json();
+    if(d.error)throw new Error(d.error);
+    if(!d.ok)throw new Error(`O GPT Maker respondeu ${d.status}: ${JSON.stringify(d.data).slice(0,200)}`);
+    return d.data;
+  }
+
+  // O painel deles mostra NOME, a API precisa de ID. Em vez de mandar você
+  // caçar identificador na URL, o sistema pergunta pra própria API quais são
+  // os seus workspaces e agentes, e você escolhe pelo nome.
+  async function descobrir(){
+    setSalvando(true);setMsg(null);setAgentes(null);
+    try{
+      const lista=comoLista(await chamar('/v2/workspaces'));
+      if(!lista.length)throw new Error('O token respondeu, mas nenhum workspace veio na lista.');
+      setWorkspaces(lista);
+      if(lista.length===1){
+        up('workspaceId',String(lista[0].id||''));
+        await buscarAgentes(String(lista[0].id||''));
+      }else{
+        setMsg({ok:true,txt:`${lista.length} workspaces encontrados. Escolha o seu abaixo.`});
+      }
+    }catch(e){setMsg({ok:false,txt:e.message});}
+    setSalvando(false);
+  }
+
+  async function buscarAgentes(wsId){
+    setSalvando(true);
+    try{
+      const lista=comoLista(await chamar(`/v2/workspace/${encodeURIComponent(wsId)}/agents`));
+      setAgentes(lista);
+      if(lista.length===1)up('agentId',String(lista[0].id||''));
+      setMsg({ok:true,txt:lista.length
+        ?`${lista.length} agente(s) encontrado(s). Escolha e clique em Salvar.`
+        :'Nenhum agente neste workspace.'});
     }catch(e){setMsg({ok:false,txt:e.message});}
     setSalvando(false);
   }
@@ -9223,11 +9277,17 @@ function ConfigGptmaker(){
         </div>
         <div>
           <label style={lbl}>ID do workspace</label>
-          <input style={fi} value={cfg.workspaceId} onChange={e=>up('workspaceId',e.target.value)} placeholder="workspaceId"/>
+          <input style={fi} value={cfg.workspaceId} onChange={e=>up('workspaceId',e.target.value)} placeholder="use o botão Descobrir IDs"/>
+          <div style={{fontSize:9.5,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
+            É o <strong>ID</strong>, não o nome. Um código tipo <code>cm3x8ab92...</code>.
+          </div>
         </div>
         <div>
           <label style={lbl}>ID do agente</label>
-          <input style={fi} value={cfg.agentId} onChange={e=>up('agentId',e.target.value)} placeholder="agentId"/>
+          <input style={fi} value={cfg.agentId} onChange={e=>up('agentId',e.target.value)} placeholder="use o botão Descobrir IDs"/>
+          <div style={{fontSize:9.5,color:'#95a5a6',marginTop:3,lineHeight:1.5}}>
+            Também é código, não o nome do agente.
+          </div>
         </div>
         <div>
           <label style={lbl}>Segredo do webhook</label>
@@ -9244,6 +9304,10 @@ function ConfigGptmaker(){
 
       <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:12}}>
         <button onClick={salvar} disabled={salvando} style={bt('#2c3e50')}>💾 Salvar</button>
+        <button onClick={descobrir} disabled={salvando||!temToken} style={bt('#8e44ad')}
+          title="Pergunta à API quais são os seus workspaces e agentes, e preenche os IDs">
+          🔍 Descobrir IDs
+        </button>
         <button onClick={testar} disabled={salvando||!temToken} style={bt('#2b6cb0')}>🔌 Testar conexão</button>
         <button onClick={registrar} disabled={salvando||!temToken} style={bt('#0d9488')}>📡 Registrar webhooks no agente</button>
         {cfg.registradoEm&&<span style={{fontSize:10,color:'#95a5a6'}}>registrados em {new Date(cfg.registradoEm).toLocaleString('pt-BR')}</span>}
@@ -9253,6 +9317,49 @@ function ConfigGptmaker(){
         <div style={{background:msg.ok?'#f0fff4':'#fff5f5',border:`1px solid ${msg.ok?'#9ae6b4':'#feb2b2'}`,
           borderRadius:7,padding:'9px 12px',marginBottom:12,fontSize:11.5,color:msg.ok?'#276749':'#c53030'}}>
           {msg.ok?'✓ ':'⚠ '}{msg.txt}
+        </div>
+      )}
+
+      {(workspaces||agentes)&&(
+        <div style={{background:'#faf5ff',border:'1px solid #e9d8fd',borderRadius:8,padding:'11px 13px',marginBottom:12}}>
+          {workspaces&&workspaces.length>0&&(
+            <>
+              <div style={{fontSize:9.5,color:'#6b46c1',fontWeight:800,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>Workspaces da conta</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:agentes?11:0}}>
+                {workspaces.map(w=>{
+                  const id=String(w.id||'');const sel=cfg.workspaceId===id;
+                  return(
+                    <button key={id} onClick={()=>{up('workspaceId',id);buscarAgentes(id);}}
+                      style={{padding:'6px 12px',borderRadius:16,cursor:'pointer',fontSize:11,fontWeight:700,
+                        border:`1px solid ${sel?'#6b46c1':'#e9d8fd'}`,background:sel?'#6b46c1':'#fff',color:sel?'#fff':'#6b46c1'}}>
+                      {w.name||w.nome||id}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {agentes&&(
+            <>
+              <div style={{fontSize:9.5,color:'#6b46c1',fontWeight:800,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>Agentes</div>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                {agentes.length===0&&<span style={{fontSize:11,color:'#7f8c8d'}}>Nenhum agente neste workspace.</span>}
+                {agentes.map(g=>{
+                  const id=String(g.id||'');const sel=cfg.agentId===id;
+                  return(
+                    <button key={id} onClick={()=>up('agentId',id)}
+                      style={{padding:'6px 12px',borderRadius:16,cursor:'pointer',fontSize:11,fontWeight:700,
+                        border:`1px solid ${sel?'#0d9488':'#99f6e4'}`,background:sel?'#0d9488':'#fff',color:sel?'#fff':'#0d9488'}}>
+                      {g.name||g.nome||id}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          <div style={{fontSize:10,color:'#8a6fc4',marginTop:9,lineHeight:1.6}}>
+            Escolha pelo nome — o sistema guarda o ID por baixo. Depois clique em <strong>Salvar</strong>.
+          </div>
         </div>
       )}
 
