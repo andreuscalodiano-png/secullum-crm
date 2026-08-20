@@ -5583,6 +5583,11 @@ exports.gptmakerWebhook = functions.https.onRequest(async (req, res) => {
 
     const achado = farejar(req.body);
 
+    // Roda o leitor de formulário já no espião: assim, antes de existir
+    // qualquer criação automática, dá para ver na tela EXATAMENTE quais campos
+    // o CRM conseguiria aproveitar deste evento. Barato e sem efeito colateral.
+    const previa = lerFormularioMeta(String(cru).replace(/\\n/g, '\n'));
+
     await db.collection('gptmaker_eventos').add({
       evento: ev,
       recebidoEm: new Date().toISOString(),
@@ -5601,6 +5606,8 @@ exports.gptmakerWebhook = functions.https.onRequest(async (req, res) => {
       achouChatId: achado.chatId || '',
       achouTelefone: achado.telefone || '',
       achouNome: achado.nome || '',
+      previaCampos: JSON.stringify(previa.campos || {}).slice(0, 4000),
+      previaExtras: JSON.stringify(previa.extras || {}).slice(0, 2000),
     });
 
     // Webhook que não responde 200 vira reenvio em loop. Mesmo recusado,
@@ -5687,3 +5694,77 @@ exports.gptmakerRegistrar = functions.https.onRequest(async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// ─── O FORMULÁRIO DA META DENTRO DA CONVERSA ─────────────────────────────────
+// Quando o anúncio manda o lead direto pro WhatsApp do agente, a primeira
+// mensagem vem com as respostas do formulário em texto, uma por linha:
+//
+//   Company name: TC Martins
+//   Quantos funcionários sua empresa possui?: De 6 a 10 funcionários
+//   Email: thalita.threth@gmail.com
+//
+// É formato fixo, "Rótulo: valor" — dá para ler sem IA nenhuma, e ler assim é
+// melhor: não inventa, não custa e não muda de humor.
+const ROTULOS_META = [
+  { campo: 'empresa',      re: /^(company\s*name|nome\s*da\s*empresa|empresa)$/i },
+  { campo: 'nome',         re: /^(full\s*name|nome\s*completo|nome)$/i },
+  { campo: 'email',        re: /^(e-?mail)$/i },
+  { campo: 'telefone',     re: /^(phone\s*number|telefone|celular|whatsapp)$/i },
+  { campo: 'funcionarios', re: /funcion[áa]rios/i },
+  { campo: 'sistema_ponto',re: /(j[áa]\s*utiliza|controle\s*de\s*ponto)/i },
+  { campo: 'solucao',      re: /(qual\s*solu[çc][ãa]o|solu[çc][ãa]o\s*(voc[êe]\s*)?procura)/i },
+  { campo: 'cidade',       re: /^(cidade|city|munic[íi]pio)$/i },
+];
+
+function lerFormularioMeta(texto) {
+  const achados = {};
+  const extras = {};
+  const linhas = String(texto || '').split(/\r?\n/);
+
+  for (const linha of linhas) {
+    // Só o PRIMEIRO ":" separa. O rótulo da Meta já vem com "?" no fim
+    // ("Quantos funcionários sua empresa possui?:") e o valor pode ter ":"
+    // dentro, como em horário.
+    const corte = linha.indexOf(':');
+    if (corte < 1) continue;
+    const rotulo = linha.slice(0, corte).replace(/[?？]\s*$/, '').trim();
+    const valor = linha.slice(corte + 1).trim();
+    if (!rotulo || !valor || rotulo.length > 90) continue;
+
+    const achou = ROTULOS_META.find(r => r.re.test(rotulo));
+    if (achou) { if (!achados[achou.campo]) achados[achou.campo] = valor; }
+    else extras[rotulo.slice(0, 60)] = valor.slice(0, 200);
+  }
+
+  if (achados.telefone) {
+    const d = String(achados.telefone).replace(/\D/g, '');
+    if (d.length >= 10 && d.length <= 15) achados.telefone = d;
+  }
+  return { campos: achados, extras, achouAlgo: Object.keys(achados).length > 0 };
+}
+
+// Junta duas versões do mesmo lead SEM apagar nada que já estava escrito.
+// Regra combinada com o Andreus: a segunda origem só preenche o que está vazio.
+// Divergência não sobrescreve — vira linha de histórico, para alguém olhar.
+function mesclarLead(atual, novo) {
+  const dados = {};
+  const divergencias = [];
+  const vazio = v => v === undefined || v === null || String(v).trim() === '';
+
+  for (const [k, v] of Object.entries(novo || {})) {
+    if (vazio(v)) continue;
+    if (vazio(atual ? atual[k] : undefined)) { dados[k] = v; continue; }
+    const antes = String(atual[k]).trim().toLowerCase();
+    const depois = String(v).trim().toLowerCase();
+    if (antes !== depois) divergencias.push({ campo: k, tinha: String(atual[k]), veio: String(v) });
+  }
+  return { dados, divergencias };
+}
+
+// Canal de origem vira LISTA, não valor único: a mesma pessoa chega pela
+// planilha da Meta e pelo agente, e as duas coisas são verdade ao mesmo tempo.
+function somarCanal(origensAtuais, canal) {
+  const l = Array.isArray(origensAtuais) ? origensAtuais.slice() : [];
+  if (canal && !l.includes(canal)) l.push(canal);
+  return l;
+}

@@ -18,6 +18,53 @@ import { db, auth, app } from "./firebase";
 const storage = getStorage(app);
 
 // --- CONSTANTES --------------------------------------------------------------
+
+// De onde o lead veio. É LISTA, não valor único: a mesma pessoa entra pela
+// planilha da Meta e depois puxa conversa com o agente, e as duas coisas são
+// verdade. Cada canal ganha um ícone próprio para bater o olho e saber.
+const CANAIS_LEAD={
+  planilha:{ic:'📊',l:'Planilha da Meta',cor:'#2a78d6',d:'Preencheu o formulário do anúncio'},
+  agente:  {ic:'🤖',l:'Agente',          cor:'#0d9488',d:'Conversou com o agente no WhatsApp'},
+  pagina:  {ic:'🔗',l:'Página',          cor:'#eb6834',d:'Veio de uma página de captura'},
+  whatsapp:{ic:'💬',l:'WhatsApp',        cor:'#128C7E',d:'Chamou direto no WhatsApp'},
+  manual:  {ic:'✍️',l:'Cadastro manual', cor:'#8a8983',d:'Alguém digitou aqui dentro'},
+};
+
+// Lê a lista nova (origens) e, para os leads antigos que só têm o texto livre
+// em `origem`, deduz o canal pelo que está escrito. Assim os 2 mil leads que
+// já existem ganham ícone hoje, sem migração nenhuma no banco.
+function canaisDoLead(lead){
+  if(Array.isArray(lead?.origens)&&lead.origens.length)
+    return lead.origens.filter(c=>CANAIS_LEAD[c]);
+  const o=String(lead?.origem||'').toLowerCase();
+  if(!o)return [];
+  if(/meta|facebook|instagram|planilha/.test(o))return ['planilha'];
+  if(/agente|gpt|bot/.test(o))return ['agente'];
+  if(/p[áa]gina|captura|link|campanha/.test(o))return ['pagina'];
+  if(/whats/.test(o))return ['whatsapp'];
+  if(/manual|cadastro/.test(o))return ['manual'];
+  return [];
+}
+
+function SelosCanal({lead,tamanho=10}){
+  const canais=canaisDoLead(lead);
+  if(!canais.length)return null;
+  return(
+    <span style={{display:'inline-flex',gap:3,flexWrap:'wrap',verticalAlign:'middle'}}>
+      {canais.map(c=>{
+        const k=CANAIS_LEAD[c];
+        return(
+          <span key={c} title={`${k.l} — ${k.d}`}
+            style={{fontSize:tamanho-1,fontWeight:700,borderRadius:9,padding:'1px 6px',
+              background:k.cor+'1f',color:k.cor,border:`1px solid ${k.cor}44`,whiteSpace:'nowrap'}}>
+            {k.ic} {k.l}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 const MESES=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PLANOS=['Basic','Pro','Ultimate'];
 const UFS=['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
@@ -9245,6 +9292,10 @@ function ConfigGptmaker(){
       {eventos.map(e=>{
         let bonito=e.corpo;
         try{bonito=JSON.stringify(JSON.parse(e.corpo||'{}'),null,2);}catch(_){/* deixa cru */}
+        // O backend já tentou ler o formulário da Meta dentro do corpo. Se
+        // achou campo, mostra aqui — é a prova de que a fase 3 vai funcionar.
+        let campos=[];
+        try{campos=Object.entries(JSON.parse(e.previaCampos||'{}'));}catch(_){}
         const abertoAgora=aberto===e.id;
         return(
           <div key={e.id} style={{background:'#fff',border:'1px solid #e8eaed',borderLeft:`3px solid ${e.segredoOk===false?'#e74c3c':'#0d9488'}`,
@@ -9260,6 +9311,20 @@ function ConfigGptmaker(){
               <span style={{fontSize:10,color:'#95a5a6'}}>{e.tamanho} bytes · {e.recebidoEm?new Date(e.recebidoEm).toLocaleString('pt-BR'):''}</span>
               <span style={{fontSize:11,color:'#95a5a6'}}>{abertoAgora?'▲':'▼'}</span>
             </div>
+            {campos.length>0&&(
+              <div style={{marginTop:7,background:'#f0fdfa',border:'1px solid #99f6e4',borderRadius:7,padding:'8px 11px'}}>
+                <div style={{fontSize:9,color:'#0d9488',fontWeight:800,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>
+                  o que o CRM aproveitaria deste evento
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:'5px 12px'}}>
+                  {campos.map(([k,v])=>(
+                    <div key={k} style={{fontSize:10.5,color:'#2c3e50',lineHeight:1.45}}>
+                      <span style={{color:'#0d9488',fontWeight:700}}>{k}</span>{' · '}{String(v).slice(0,60)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {abertoAgora&&(
               <pre style={{marginTop:8,marginBottom:0,background:'#1e2530',color:'#d6e4f0',borderRadius:7,padding:'11px 13px',
                 fontSize:10.5,lineHeight:1.55,overflowX:'auto',maxHeight:330,whiteSpace:'pre-wrap',wordBreak:'break-word'}}>
@@ -18491,6 +18556,9 @@ function KanbanLeads({leads,etapas,usuarios,onAbrir,onConversar,busca}){
                         )}
                         {lead.funcionarios&&<div style={{fontSize:10,color:'#7f8c8d',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>👥 {lead.funcionarios}</div>}
                         {lead.origem&&<div style={{fontSize:10,color:'#95a5a6',marginBottom:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>🎯 {lead.origem}</div>}
+                        {canaisDoLead(lead).length>0&&(
+                          <div style={{marginBottom:3}}><SelosCanal lead={lead}/></div>
+                        )}
 
                         {apres&&(
                           <div style={{fontSize:10,fontWeight:700,color:apresPassou?'#e74c3c':'#27ae60',marginBottom:2}}>
