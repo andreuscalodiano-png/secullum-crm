@@ -163,6 +163,159 @@ function getSidebarItems(order,perfil){
   return result;
 }
 const NAV_ITEMS=getNavItems(null);
+// ─── MODO ESCURO ─────────────────────────────────────────────────────────────
+// Guardado como texto e injetado numa <style> só. Ligar e desligar é colocar e
+// tirar a classe `escuro` do <html> — o sistema volta ao original na hora, sem
+// recarregar e sem risco de ficar meio pintado.
+const CSS_ESCURO=`/* ══════════════════════════════════════════════════════════════════════════
+   MODO ESCURO
+   O sistema tem cor escrita à mão em mais de 3.600 lugares, tudo em estilo
+   inline. Repintar na fonte seria reescrever o arquivo inteiro e arriscar o
+   que já funciona. Então o caminho é outro: o React serializa
+   style={{background:'#fff'}} como style="background: rgb(255, 255, 255)",
+   e isso o CSS consegue casar por seletor de atributo. Uma folha de estilo
+   com !important vence o inline e repinta tudo sem tocar numa linha de JS.
+   Tirar a classe .escuro devolve o sistema ao original, na hora.
+   ══════════════════════════════════════════════════════════════════════════ */
+.escuro{
+  --f0:#14161a;   /* fundo da página        */
+  --f1:#1c1f26;   /* cartão                 */
+  --f2:#232730;   /* faixa/cabeçalho suave  */
+  --tx:#e6e8ec;   /* texto principal        */
+  --tm:#9aa3ae;   /* texto secundário       */
+  --bd:#2e333d;   /* borda                  */
+}
+.escuro body,
+.escuro [style*="background: rgb(245, 246, 250)"],
+.escuro [style*="background-color: rgb(245, 246, 250)"]{ background:var(--f0)!important; }
+
+/* superfícies brancas → cartão escuro */
+.escuro [style*="background: rgb(255, 255, 255)"],
+.escuro [style*="background-color: rgb(255, 255, 255)"]{ background:var(--f1)!important; }
+
+/* cinzas claros de apoio (#f8f9fa, #f5f6fa, #ecf0f1, #f2f4f6, #eef2f7) */
+.escuro [style*="background: rgb(248, 249, 250)"],
+.escuro [style*="background-color: rgb(248, 249, 250)"],
+.escuro [style*="background: rgb(236, 240, 241)"],
+.escuro [style*="background: rgb(242, 244, 246)"],
+.escuro [style*="background: rgb(238, 242, 247)"],
+.escuro [style*="background: rgb(245, 246, 250)"]{ background:var(--f2)!important; }
+
+/* textos escuros → claros */
+.escuro [style*="color: rgb(44, 62, 80)"],
+.escuro [style*="color: rgb(74, 74, 74)"],
+.escuro [style*="color: rgb(17, 17, 17)"],
+.escuro [style*="color: rgb(0, 0, 0)"]{ color:var(--tx)!important; }
+
+.escuro [style*="color: rgb(127, 140, 141)"],
+.escuro [style*="color: rgb(149, 165, 166)"],
+.escuro [style*="color: rgb(170, 170, 170)"],
+.escuro [style*="color: rgb(187, 187, 187)"],
+.escuro [style*="color: rgb(197, 197, 197)"]{ color:var(--tm)!important; }
+
+/* bordas claras → borda escura */
+.escuro [style*="rgb(221, 225, 231)"],
+.escuro [style*="rgb(232, 234, 237)"],
+.escuro [style*="rgb(242, 244, 246)"],
+.escuro [style*="rgb(228, 228, 224)"]{ border-color:var(--bd)!important; }
+
+/* tarjas coloridas: fundo pastel vira tom escuro, texto clareia */
+.escuro [style*="background: rgb(240, 255, 244)"],
+.escuro [style*="background: rgb(213, 245, 227)"],
+.escuro [style*="background: rgb(240, 253, 247)"]{ background:#12281d!important; }
+.escuro [style*="color: rgb(39, 103, 73)"],
+.escuro [style*="color: rgb(30, 132, 73)"],
+.escuro [style*="color: rgb(15, 122, 85)"]{ color:#5fd39b!important; }
+
+.escuro [style*="background: rgb(255, 245, 245)"],
+.escuro [style*="background: rgb(254, 236, 234)"],
+.escuro [style*="background: rgb(254, 226, 226)"]{ background:#2c1618!important; }
+.escuro [style*="color: rgb(197, 48, 48)"],
+.escuro [style*="color: rgb(192, 57, 43)"],
+.escuro [style*="color: rgb(153, 27, 27)"]{ color:#ff8f85!important; }
+
+.escuro [style*="background: rgb(255, 248, 238)"],
+.escuro [style*="background: rgb(255, 250, 240)"],
+.escuro [style*="background: rgb(255, 251, 235)"],
+.escuro [style*="background: rgb(255, 248, 232)"]{ background:#2c2413!important; }
+.escuro [style*="color: rgb(180, 83, 9)"],
+.escuro [style*="color: rgb(230, 126, 34)"],
+.escuro [style*="color: rgb(138, 98, 18)"]{ color:#f0b458!important; }
+
+.escuro [style*="background: rgb(240, 247, 255)"],
+.escuro [style*="background: rgb(235, 245, 251)"],
+.escuro [style*="background: rgb(238, 246, 255)"]{ background:#14212e!important; }
+.escuro [style*="color: rgb(43, 108, 176)"],
+.escuro [style*="color: rgb(41, 128, 185)"]{ color:#6bb6f2!important; }
+
+.escuro [style*="background: rgb(240, 253, 250)"]{ background:#122522!important; }
+.escuro [style*="color: rgb(13, 148, 136)"]{ color:#4fd6c4!important; }
+
+.escuro [style*="background: rgb(250, 245, 255)"]{ background:#201a2c!important; }
+.escuro [style*="color: rgb(107, 70, 193)"]{ color:#b195f0!important; }
+
+/* campos de formulário */
+.escuro input, .escuro select, .escuro textarea{
+  background:var(--f2)!important; color:var(--tx)!important; border-color:var(--bd)!important;
+}
+.escuro input::placeholder, .escuro textarea::placeholder{ color:#6b737e!important; }
+
+/* o documento da proposta é papel: continua branco dentro do quadro */
+.escuro iframe{ background:#fff!important; }
+
+/* sombras claras somem no escuro */
+.escuro [style*="box-shadow"]{ box-shadow:0 1px 3px rgba(0,0,0,.5)!important; }
+
+.escuro::-webkit-scrollbar{ width:11px;height:11px }
+.escuro::-webkit-scrollbar-thumb{ background:#3a4049;border-radius:6px }
+
+/* Alguns pontos montam o style como texto (innerHTML), e aí o navegador não
+   normaliza para rgb(). Estes seletores em hex cobrem esses casos. */
+.escuro [style*="background:#fff"],.escuro [style*="background: #fff"],
+.escuro [style*="background:#ffffff"],.escuro [style*="background: #ffffff"]{ background:var(--f1)!important; }
+.escuro [style*="background:#f8f9fa"],.escuro [style*="background: #f8f9fa"],
+.escuro [style*="background:#f5f6fa"],.escuro [style*="background: #f5f6fa"]{ background:var(--f2)!important; }
+.escuro [style*="color:#2c3e50"],.escuro [style*="color: #2c3e50"],
+.escuro [style*="color:#4a4a4a"],.escuro [style*="color: #4a4a4a"]{ color:var(--tx)!important; }
+.escuro [style*="color:#7f8c8d"],.escuro [style*="color: #7f8c8d"],
+.escuro [style*="color:#95a5a6"],.escuro [style*="color: #95a5a6"]{ color:var(--tm)!important; }
+`;
+
+// A preferência fica no navegador, não no cadastro do usuário: o problema é o
+// monitor da máquina, não a pessoa. O mesmo login numa tela boa continua claro.
+function useModoEscuro(){
+  const [escuro,setEscuro]=useState(()=>{
+    try{return localStorage.getItem('crm_modo_escuro')==='1';}catch(_){return false;}
+  });
+  useEffect(()=>{
+    // A folha entra uma vez só, na primeira montagem. Sem a classe no <html>
+    // ela não pinta nada — fica ali inerte esperando o botão.
+    if(!document.getElementById('estilo-escuro')){
+      const st=document.createElement('style');
+      st.id='estilo-escuro';
+      st.textContent=CSS_ESCURO;
+      document.head.appendChild(st);
+    }
+  },[]);
+  useEffect(()=>{
+    const cl=document.documentElement.classList;
+    if(escuro)cl.add('escuro');else cl.remove('escuro');
+    try{localStorage.setItem('crm_modo_escuro',escuro?'1':'0');}catch(_){}
+  },[escuro]);
+  return [escuro,()=>setEscuro(v=>!v)];
+}
+
+function BotaoModoEscuro({escuro,alternar}){
+  return(
+    <button onClick={alternar}
+      title={escuro?'Voltar para o modo claro':'Modo escuro — para telas muito claras'}
+      style={{background:'none',border:'none',cursor:'pointer',fontSize:16,padding:'2px 6px',
+        display:'flex',alignItems:'center',lineHeight:1,opacity:.8}}>
+      {escuro?'☀️':'🌙'}
+    </button>
+  );
+}
+
 const C={
   sidebar:'#2c3e50',sidebarActive:'#f5a623',
   header:'#ffffff',
@@ -2180,6 +2333,37 @@ function equipPisoVenda(e){
   if(promo>0)return promo;
   return numVal(e.precoCusto);
 }
+// ╔═ REGRA DE NEGÓCIO ═══════════════════════════════════════════════════════
+// DESCONTO CONCEDIDO: é a diferença entre o PREÇO DE TABELA (precoVenda) e o
+// que foi realmente vendido. Não confundir com o piso: o piso é o limite que
+// protege a margem; a tabela é o preço cheio que o cliente veria sem negociar.
+// Um equipamento em promoção já nasce com desconto — e é isso que a gente quer
+// mostrar no orçamento, porque desconto que o cliente não enxerga não vende.
+// ═══════════════════════════════════════════════════════════════════════════
+function descontoDoItem(equip,valorVendido,qtd){
+  const tabela=numVal(equip&&equip.precoVenda);
+  const vendido=numVal(valorVendido);
+  const q=parseInt(qtd,10)||1;
+  if(!(tabela>0)||!(vendido>0)||vendido>=tabela)return null;
+  const unit=tabela-vendido;
+  return {
+    tabela,
+    vendido,
+    unitario:unit,
+    total:unit*q,
+    pct:(unit/tabela)*100,
+  };
+}
+
+// "20,7% OFF" — uma casa decimal, porque 21% em cima de 1.450 some R$ 4,00 e
+// alguém vai conferir na calculadora.
+function pctOff(d){
+  if(!d)return '';
+  const n=d.pct;
+  const txt=n>=10?n.toFixed(1):n.toFixed(1);
+  return txt.replace('.',',')+'% OFF';
+}
+
 function equipRotuloPiso(e){
   if(!e)return '';
   return numVal(e.valorPromocional)>0?'valor promocional':'preço de custo';
@@ -7144,7 +7328,7 @@ ${textoPDF.slice(0,3000)}`
   );
 }
 
-function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dadosImportados,currentUser,perfil}){
+function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dadosImportados,currentUser,perfil,clientesExistentes,onAbrirExistente}){
   const hoje=new Date();
   const equipDefault=equipamentosCad.length>0?equipamentosCad[0].nome:'Evo40';
   const hojeISO=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
@@ -7229,8 +7413,31 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
     }));
   }
 
+  // ── CNPJ JÁ CADASTRADO ────────────────────────────────────────────────────
+  // O CNPJ é a chave de verdade do cliente. Comparar pelo texto digitado não
+  // funciona: "12.345.678/0001-90" e "12345678000190" são a mesma empresa, e o
+  // Excel ainda come o zero da frente. Por isso os dois lados passam pelo
+  // chaveDoc, que deixa só os dígitos e devolve os zeros perdidos.
+  const duplicado=useMemo(()=>{
+    const n=String(f.cnpj||'').replace(/\D/g,'');
+    // Só compara documento COMPLETO: 11 dígitos de CPF ou 14 de CNPJ. Sem isso,
+    // no meio da digitação um CNPJ pela metade vira chave de CPF e acusa
+    // duplicidade de uma empresa que não tem nada a ver.
+    // 11 = CPF; 12 a 14 = CNPJ, inclusive quando o Excel comeu os zeros da
+    // frente (o chaveDoc devolve). Fora disso é digitação pela metade.
+    if(n.length!==11&&(n.length<12||n.length>14))return null;
+    const k=chaveDoc(n);
+    return (clientesExistentes||[]).find(c=>chaveDoc(c.cnpj)===k)||null;
+  },[f.cnpj,clientesExistentes]);
+
+  // Avisar não basta: quem está com pressa clica em salvar sem ler. Então o
+  // salvamento trava até a pessoa dizer, de propósito, que quer duplicar.
+  const [confirmouDuplicado,setConfirmouDuplicado]=useState(false);
+  useEffect(()=>{setConfirmouDuplicado(false);},[duplicado?.id]);
+
   function validar(){
     const e={};
+    if(duplicado&&!confirmouDuplicado)e.cnpj='Este CNPJ já está cadastrado';
     if(!f.nome.trim())e.nome='Obrigatório';
     if(!f.empresa.trim())e.empresa='Obrigatório';
     if(!f.cnpj.trim())e.cnpj='Obrigatório';
@@ -7321,7 +7528,36 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={{...lbl,color:erros.empresa?'#e74c3c':'#7f8c8d'}}>{erros.empresa?'Empresa — '+erros.empresa:'Empresa / Razão Social *'}</label><input style={{...fiErr('empresa'),textTransform:'uppercase'}} value={f.empresa} onChange={e=>up('empresa',e.target.value.toUpperCase())}/></div>
-          <div><label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label><input style={{...fiErr('cnpj'),textTransform:'uppercase'}} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())}/></div>
+          <div>
+            <label style={{...lbl,color:erros.cnpj?'#e74c3c':'#7f8c8d'}}>{erros.cnpj?'CNPJ/CPF — '+erros.cnpj:'CNPJ/CPF *'}</label>
+            <input style={{...fiErr('cnpj'),textTransform:'uppercase'}} value={f.cnpj} onChange={e=>up('cnpj',e.target.value.toUpperCase())}/>
+            {duplicado&&(
+              <div style={{background:'#fffaf0',border:'1px solid #fbd38d',borderRadius:8,padding:'10px 12px',marginTop:7}}>
+                <div style={{fontSize:11.5,fontWeight:700,color:'#b45309',marginBottom:5}}>
+                  ⚠ Este CNPJ já está cadastrado
+                </div>
+                <div style={{fontSize:12,fontWeight:700,color:'#2c3e50'}}>{duplicado.nome}</div>
+                <div style={{fontSize:10.5,color:'#95a5a6',marginTop:2,lineHeight:1.5}}>
+                  {duplicado.cnpj}
+                  {duplicado.plano?` · ${duplicado.plano}`:''}
+                  {duplicado.status?` · ${labelStatus(duplicado.status)}`:''}
+                  {duplicado.vendedor&&duplicado.vendedor!=='—'?` · ${duplicado.vendedor}`:''}
+                </div>
+                <div style={{display:'flex',gap:8,marginTop:9,flexWrap:'wrap',alignItems:'center'}}>
+                  <button type="button" onClick={()=>onAbrirExistente&&onAbrirExistente(duplicado)}
+                    style={{padding:'6px 13px',borderRadius:6,border:'none',background:'#2b6cb0',color:'#fff',
+                      cursor:'pointer',fontSize:11,fontWeight:700}}>
+                    Abrir o cadastro existente
+                  </button>
+                  <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:10.5,color:'#b45309'}}>
+                    <input type="checkbox" checked={confirmouDuplicado}
+                      onChange={()=>setConfirmouDuplicado(v=>!v)} style={{cursor:'pointer'}}/>
+                    É outra empresa, cadastrar mesmo assim
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div><label style={{...lbl,color:erros.email?'#e74c3c':'#7f8c8d'}}>{erros.email?'Email — '+erros.email:'Email financeiro *'}</label><input style={fiErr('email')} type="email" value={f.email} onChange={e=>up('email',e.target.value)}/></div>
@@ -7583,9 +7819,178 @@ function CampoDetalhe({label,field,type,opts,span,f,up,editMode,fi,fiView,lbl}){
   );
 }
 
-function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcServicos,perfil,usuarios}){
+// Excluir cliente é a operação mais perigosa da tela, então ela pede motivo,
+// mostra na cara o que vai junto, e avisa do que o CRM NÃO consegue desfazer
+// sozinho — a cobrança lá no Asaas continua correndo mesmo depois disso aqui.
+// A lixeira. Sem ela, o botão de excluir seria irreversível — e cedo ou tarde
+// alguém apaga a linha errada com pressa.
+function ConfigRemovidos(){
+  const [itens,setItens]=useState(null);
+  const [msg,setMsg]=useState('');
+  useEffect(()=>{
+    const u=onSnapshot(collection(db,'clientes_removidos'),snap=>{
+      const l=[];snap.forEach(d=>l.push({id:d.id,...d.data()}));
+      l.sort((a,b)=>String(b.removidoEm||'').localeCompare(String(a.removidoEm||'')));
+      setItens(l);
+    });
+    return()=>u();
+  },[]);
+
+  async function restaurar(x){
+    if(!window.confirm(`Trazer "${x.cliente?.nome||x.id}" de volta para a lista de clientes?`))return;
+    try{
+      await setDoc(doc(db,'clientes',x.id),x.cliente||{},{merge:true});
+      if(x.implantacao)await setDoc(doc(db,'implantacoes',x.id),x.implantacao,{merge:true});
+      await deleteDoc(doc(db,'clientes_removidos',x.id));
+      setMsg(`"${x.cliente?.nome||x.id}" voltou para a lista.`);
+      setTimeout(()=>setMsg(''),4000);
+    }catch(e){setMsg('Erro: '+e.message);}
+  }
+
+  if(itens===null)return <div style={{fontSize:12,color:'#7f8c8d'}}>Carregando...</div>;
+
+  return(
+    <div>
+      <div style={{fontWeight:700,fontSize:12,color:'#c0392b',marginBottom:10,textTransform:'uppercase'}}>
+        🗑 Clientes removidos
+      </div>
+      <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginBottom:12,maxWidth:660}}>
+        Tudo que foi excluído da tela de clientes fica aqui, com o motivo e quem excluiu.
+        Nada é apagado do banco — dá para trazer de volta a qualquer momento, com a implantação junto.
+      </div>
+
+      {msg&&(
+        <div style={{background:'#f0fff4',border:'1px solid #9ae6b4',borderRadius:7,padding:'9px 12px',marginBottom:12,fontSize:11.5,color:'#276749'}}>
+          ✓ {msg}
+        </div>
+      )}
+
+      {!itens.length&&(
+        <div style={{background:'#fff',border:'1px dashed #dde1e7',borderRadius:8,padding:'20px',textAlign:'center',fontSize:11.5,color:'#95a5a6'}}>
+          Nenhum cliente removido.
+        </div>
+      )}
+
+      {itens.map(x=>(
+        <div key={x.id} style={{background:'#fff',border:'1px solid #e8eaed',borderLeft:'3px solid #c0392b',
+          borderRadius:8,padding:'10px 13px',marginBottom:7}}>
+          <div style={{display:'flex',alignItems:'center',gap:9,flexWrap:'wrap'}}>
+            <span style={{fontWeight:700,fontSize:12.5,color:'#2c3e50',flex:1,minWidth:170}}>
+              {x.cliente?.nome||'(sem nome)'}
+            </span>
+            <button onClick={()=>restaurar(x)}
+              style={{padding:'5px 12px',borderRadius:6,border:'1px solid #9ae6b4',background:'#f0fff4',
+                color:'#276749',cursor:'pointer',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>
+              ↩ Trazer de volta
+            </button>
+          </div>
+          <div style={{fontSize:10.5,color:'#95a5a6',marginTop:3}}>
+            {x.cliente?.cnpj||'sem CNPJ'}
+            {x.cliente?.plano?` · ${x.cliente.plano}`:''}
+            {x.cliente?.vendedor?` · ${x.cliente.vendedor}`:''}
+          </div>
+          <div style={{fontSize:11,color:'#2c3e50',marginTop:6,background:'#f8f9fa',borderRadius:6,padding:'7px 10px',lineHeight:1.5}}>
+            {x.motivo||'(sem motivo registrado)'}
+          </div>
+          <div style={{fontSize:9.5,color:'#c5c5c5',marginTop:4}}>
+            {x.removidoEm?new Date(x.removidoEm).toLocaleString('pt-BR'):''} · {String(x.removidoPor||'—').split('@')[0]}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ModalExcluirCliente({cliente,implantacao,onFechar,onConfirmar}){
+  const [texto,setTexto]=useState('');
+  const [salvando,setSalvando]=useState(false);
+  const [erro,setErro]=useState('');
+  const MOTIVOS=[
+    'Cadastro duplicado',
+    'Criado por engano',
+    'Registro de teste',
+    'Cliente desistiu antes de assinar',
+  ];
+  const temAsaas=!!cliente.asaas_id;
+  const valores=(parseFloat(cliente.vI)||0)+(parseFloat(cliente.vE)||0)+(parseFloat(cliente.vS)||0);
+
+  return(
+    <div onClick={onFechar} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:12,width:'100%',maxWidth:520,padding:'22px',boxShadow:'0 20px 60px rgba(0,0,0,.35)',maxHeight:'90vh',overflowY:'auto'}}>
+        <div style={{fontWeight:700,fontSize:15,color:'#c0392b',marginBottom:3}}>Excluir cliente</div>
+        <div style={{fontSize:11,color:'#7f8c8d',marginBottom:14,lineHeight:1.6}}>
+          O cadastro sai das telas, mas <strong>não é apagado de verdade</strong>: fica guardado
+          em Configurações › Sistema › Clientes removidos, com o motivo, e dá para trazer de volta.
+        </div>
+
+        <div style={{background:'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:12.5,color:'#2c3e50'}}>{cliente.nome}</div>
+          <div style={{fontSize:10.5,color:'#95a5a6',marginTop:2}}>
+            {cliente.cnpj||'sem CNPJ'}{cliente.plano?` · ${cliente.plano}`:''}{cliente.vendedor?` · ${cliente.vendedor}`:''}
+          </div>
+        </div>
+
+        <div style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>Vai junto</div>
+        <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:14}}>
+          <div style={{fontSize:11,color:'#2c3e50'}}>• O cadastro do cliente</div>
+          {implantacao&&<div style={{fontSize:11,color:'#2c3e50'}}>• A implantação (etapa atual: {implantacao.etapa||'—'})</div>}
+          {valores>0&&<div style={{fontSize:11,color:'#2c3e50'}}>• Os valores lançados ({moeda(valores)})</div>}
+        </div>
+
+        {temAsaas&&(
+          <div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:8,padding:'10px 12px',marginBottom:14}}>
+            <div style={{fontSize:11.5,fontWeight:700,color:'#c53030',marginBottom:4}}>⚠ Este cliente tem cobrança no Asaas</div>
+            <div style={{fontSize:11,color:'#742a2a',lineHeight:1.6}}>
+              Excluir aqui <strong>não cancela nada lá</strong>. A assinatura continua gerando boleto
+              e o cliente continua sendo cobrado. Cancele no Asaas primeiro, depois exclua aqui.
+            </div>
+          </div>
+        )}
+
+        <label style={{fontSize:10,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.5,display:'block',marginBottom:5}}>Motivo</label>
+        <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:8}}>
+          {MOTIVOS.map(m=>(
+            <button key={m} onClick={()=>setTexto(m)}
+              style={{padding:'5px 11px',borderRadius:14,cursor:'pointer',fontSize:10,fontWeight:600,
+                border:`1px solid ${texto===m?'#c0392b':'#dde1e7'}`,
+                background:texto===m?'#fff5f5':'#fff',color:texto===m?'#c0392b':'#7f8c8d'}}>
+              {m}
+            </button>
+          ))}
+        </div>
+        <textarea value={texto} onChange={e=>setTexto(e.target.value)}
+          placeholder="Escreva o motivo, ou escolha um acima e complemente..."
+          style={{width:'100%',boxSizing:'border-box',minHeight:64,padding:'9px 11px',borderRadius:7,border:'1px solid #dde1e7',fontSize:12,resize:'vertical',lineHeight:1.5,fontFamily:'inherit'}}/>
+
+        {erro&&<div style={{background:'#fff5f5',border:'1px solid #feb2b2',borderRadius:7,padding:'8px 11px',marginTop:10,fontSize:11,color:'#c53030'}}>{erro}</div>}
+
+        <div style={{display:'flex',gap:9,marginTop:16,flexWrap:'wrap'}}>
+          <button disabled={!texto.trim()||salvando}
+            onClick={async()=>{
+              setSalvando(true);setErro('');
+              try{await onConfirmar(cliente,texto);}
+              catch(e){setErro(e.message);setSalvando(false);}
+            }}
+            style={{padding:'10px 20px',borderRadius:7,border:'none',fontWeight:700,fontSize:13,
+              background:texto.trim()&&!salvando?'#c0392b':'#e8eaed',color:texto.trim()&&!salvando?'#fff':'#aaa',
+              cursor:texto.trim()&&!salvando?'pointer':'default'}}>
+            {salvando?'Excluindo...':'🗑 Excluir cliente'}
+          </button>
+          <button onClick={onFechar}
+            style={{padding:'10px 18px',borderRadius:7,border:'1px solid #dde1e7',background:'#fff',color:'#7f8c8d',fontWeight:700,cursor:'pointer',fontSize:12}}>
+            Cancelar
+          </button>
+          {!texto.trim()&&<span style={{fontSize:10,color:'#b45309',alignSelf:'center'}}>O motivo é obrigatório.</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcServicos,perfil,usuarios,implantacao,onExcluir}){
   const [editMode,setEditMode]=useState(false);
   const [modalContrato,setModalContrato]=useState(false);
+  const [modalExcluir,setModalExcluir]=useState(false);
   const [saved,setSaved]=useState(false);
   const [modalFaturamento,setModalFaturamento]=useState(false);
   const [modalAlteracao,setModalAlteracao]=useState(null); // null | 'valor' | 'cancelamento'
@@ -7816,6 +8221,13 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
                   📄 Gerar contrato
                 </button>
                 <BotaoRelatorio onClick={imprimirFicha} titulo="Imprimir a ficha completa deste cliente"/>
+                {onExcluir&&(perfil==='admin'||!perfil)&&(
+                  <button onClick={()=>setModalExcluir(true)}
+                    title="Excluir este cliente — duplicado, criado por engano"
+                    style={{padding:'7px 13px',borderRadius:5,border:'1px solid #f5b7b1',background:'#fff',color:'#c0392b',cursor:'pointer',fontWeight:700,fontSize:12}}>
+                    🗑 Excluir
+                  </button>
+                )}
                 <button onClick={()=>setEditMode(true)} style={{padding:'7px 16px',borderRadius:5,border:'none',background:C.blue,color:'#fff',cursor:'pointer',fontWeight:700,fontSize:12,display:'flex',alignItems:'center',gap:6}}>
                   <i className="ti ti-edit"/> Editar cliente
                 </button>
@@ -7825,6 +8237,10 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
       </div>
 
       {modalContrato&&<ModalContrato cliente={{...c,...f,id:c.id}} onFechar={()=>setModalContrato(false)}/>}
+      {modalExcluir&&(
+        <ModalExcluirCliente cliente={{...c,...f,id:c.id}} implantacao={implantacao}
+          onFechar={()=>setModalExcluir(false)} onConfirmar={onExcluir}/>
+      )}
 
       {/* Resumo de valores (sempre visível) */}
       <div style={{...sec,borderTop:`3px solid ${C.blue}`}}>
@@ -10267,6 +10683,11 @@ function ConfigView({usuarios,currentUser,vendedoresCad,equipamentosCad,menuOrde
       {/* Manutenção de dados */}
       {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
         <div style={sec}><ConfigManutencao/></div>
+      )}
+
+      {/* Lixeira dos clientes excluídos */}
+      {(currentUser?.perfil==='admin'||!currentUser?.perfil)&&(
+        <div style={sec}><ConfigRemovidos/></div>
       )}
 
       {/* Changelog — novidades do sistema */}
@@ -18787,6 +19208,12 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
 
   const num=v=>numVal(v);
   const total=(itens||[]).reduce((t,i)=>t+num(i.valor)*(parseInt(i.qtd,10)||1),0);
+  const economiaTotal=(itens||[]).reduce((t,i)=>{
+    if(i.semCusto||i.tipo!=='equipamento')return t;
+    const eq=(equipamentosCad||[]).find(e=>e.id===i.refId||e.nome===i.nome);
+    const d=descontoDoItem(eq,i.valor,i.qtd);
+    return t+(d?d.total:0);
+  },0);
 
   // ╔═ REGRA DE NEGÓCIO ═════════════════════════════════════════════════════
   // Equipamento com requerPagamento === false (ex.: Ponto Virtual, Central do
@@ -18799,7 +19226,8 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
     const base=tipo==='equipamento'
       ? (semCusto
           ? {refId:ref.id,nome:ref.nome,valor:0,piso:0,promo:false,semCusto:true}
-          : {refId:ref.id,nome:ref.nome,valor:equipValorVigente(ref),piso:equipPisoVenda(ref),promo:equipEmPromocao(ref)})
+          : {refId:ref.id,nome:ref.nome,valor:equipValorVigente(ref),piso:equipPisoVenda(ref),
+             promo:equipEmPromocao(ref),tabela:numVal(ref.precoVenda)})
       : {refId:ref.id,nome:ref.nome,valor:numVal(ref.valor),piso:0,promo:false};
     onChange([...(itens||[]),{
       uid:'it_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
@@ -18839,6 +19267,7 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
         const val=num(item.valor);
         const abaixo=piso>0&&val<piso&&!item.liberado;
         const sub=val*(parseInt(item.qtd,10)||1);
+        const desc=item.semCusto?null:descontoDoItem(eq,val,item.qtd);
         return(
           <div key={item.uid} style={{background:abaixo?'#fff5f5':'#f8f9fa',borderRadius:8,padding:'10px 12px',marginBottom:6,
             border:`1px solid ${abaixo?'#fca5a5':'#e8eaed'}`}}>
@@ -18852,6 +19281,17 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
                     :eq&&<SeloOferta equip={eq}/>}
                 </div>
                 {piso>0&&<div style={{fontSize:9,color:'#aaa'}}>Piso: {moeda(piso)} ({equipRotuloPiso(eq)})</div>}
+                {desc&&(
+                  <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginTop:3}}>
+                    <span style={{fontSize:10,color:'#aaa',textDecoration:'line-through'}}>{moeda(desc.tabela)}</span>
+                    <span style={{fontSize:9,fontWeight:800,letterSpacing:.3,background:'#1baf7a',color:'#fff',borderRadius:10,padding:'1px 8px'}}>
+                      {pctOff(desc)}
+                    </span>
+                    <span style={{fontSize:10,color:'#1baf7a',fontWeight:700}}>
+                      economia de {moeda(desc.total)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div style={{display:'flex',alignItems:'flex-end',gap:6,flexWrap:'wrap'}}>
                 <div>
@@ -18900,10 +19340,19 @@ function SeletorItens({itens,onChange,orcServicos,equipamentosCad,perfil,titulo}
 
       {/* Total */}
       {(itens||[]).length>0&&(
-        <div style={{textAlign:'right',padding:'8px 12px',background:'#fff8ee',borderRadius:7,border:'1px solid #fde68a',marginBottom:8}}>
-          <span style={{fontSize:12,color:'#7f8c8d'}}>Total dos itens: </span>
-          <strong style={{fontSize:15,color:'#f5a623'}}>{moeda(total)}</strong>
-        </div>
+        <>
+          <div style={{textAlign:'right',padding:'8px 12px',background:'#fff8ee',borderRadius:7,border:'1px solid #fde68a',marginBottom:economiaTotal>0?6:8}}>
+            <span style={{fontSize:12,color:'#7f8c8d'}}>Total dos itens: </span>
+            <strong style={{fontSize:15,color:'#f5a623'}}>{moeda(total)}</strong>
+          </div>
+          {economiaTotal>0&&(
+            <div style={{textAlign:'right',padding:'7px 12px',background:'#f0fdf7',borderRadius:7,border:'1px solid #a7e8cd',marginBottom:8}}>
+              <span style={{fontSize:11.5,color:'#0f7a55'}}>Desconto concedido: </span>
+              <strong style={{fontSize:14,color:'#1baf7a'}}>{moeda(economiaTotal)}</strong>
+              <span style={{fontSize:10.5,color:'#5a9b81'}}> · sai destacado no orçamento</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* Botões de adicionar */}
@@ -19234,21 +19683,30 @@ function reaisDoc(v){
 }
 
 // Calcula os totais a partir das linhas já com desconto aplicado pelo vendedor
-function totaisOrcamento(linhas){
+function totaisOrcamento(linhas,frete){
   let bruto=0,desc=0;
   linhas.forEach(l=>{
     const q=parseInt(l.qtd,10)||1;
     bruto+=(numVal(l.valor)*q);
     desc+=numVal(l.desconto);
   });
-  return {bruto,desconto:desc,total:Math.max(0,bruto-desc)};
+  const f=numVal(frete);
+  return {bruto,desconto:desc,frete:f,total:Math.max(0,bruto-desc)+f};
 }
 
 // ─── DOCUMENTO ───────────────────────────────────────────────────────────────
 // Feito com tabelas e sem flex/grid de propósito: é o único layout que o Word
 // abre igual ao que aparece na tela.
-function htmlOrcamento({linhas,cliente,vendedor,cfg,numero,validade}){
-  const t=totaisOrcamento(linhas);
+function htmlOrcamento({linhas,cliente,vendedor,cfg,numero,validade,frete}){
+  const t=totaisOrcamento(linhas,frete);
+  // Frete grátis só faz sentido quando existe coisa para entregar.
+  const temEquipamento=linhas.some(l=>l.tipo==='equipamento'&&numVal(l.valor)>0);
+  const freteGratis=temEquipamento&&!(numVal(frete)>0);
+  // O percentual da faixa tem que bater com o selo do item. Calculado sobre o
+  // total geral daria outro número — o item sem desconto dilui a conta, e o
+  // cliente que confere na calculadora acha erro onde não tem.
+  const brutoComDesconto=linhas.reduce((a,l)=>
+    numVal(l.desconto)>0?a+numVal(l.valor)*(parseInt(l.qtd,10)||1):a,0);
   const emp=cfg.empresa||{};
   const img=cfg.imagens||{};
 
@@ -19256,12 +19714,16 @@ function htmlOrcamento({linhas,cliente,vendedor,cfg,numero,validade}){
     const q=parseInt(l.qtd,10)||1;
     const tot=numVal(l.valor)*q;
     const d=numVal(l.desconto);
+    // Quando houve desconto, o preço cheio aparece riscado em cima do valor
+    // negociado. É o "de/por" — sem isso o cliente não vê que ganhou nada.
+    const pct=d>0&&tot>0?((d/tot)*100):0;
+    const selo=pct>0?`<span class="off">${String(pct.toFixed(1)).replace('.',',')}% OFF</span>`:'';
     return `<tr>
-      <td class="item">${esc(l.nome)}${l.descricao?`<div class="sub">${esc(l.descricao)}</div>`:''}</td>
-      <td class="num">${reaisDoc(numVal(l.valor))}</td>
+      <td class="item">${esc(l.nome)}${l.descricao?`<div class="sub">${esc(l.descricao)}</div>`:''}${selo}</td>
+      <td class="num">${d>0?`<span class="risco">${reaisDoc(numVal(l.valor))}</span>`:reaisDoc(numVal(l.valor))}</td>
       <td class="cen">${q}</td>
       <td class="num">${reaisDoc(tot)}</td>
-      <td class="num">${reaisDoc(d)}</td>
+      <td class="num">${d>0?`<span class="ganho">- ${reaisDoc(d)}</span>`:reaisDoc(d)}</td>
       <td class="num forte">${reaisDoc(tot-d)}</td>
     </tr>`;
   }).join('\n');
@@ -19304,6 +19766,16 @@ function htmlOrcamento({linhas,cliente,vendedor,cfg,numero,validade}){
   .totais tr.final td { border-top: 2px solid #f5a623; font-size: 12.5pt; font-weight: bold;
                         color:#111; padding-top: 7pt; }
   .cond p { margin: 0 0 5pt; font-size: 10.5pt; }
+  .off { display:inline-block; background:#1baf7a; color:#fff; font-size:8pt; font-weight:bold;
+         padding:1pt 6pt; border-radius:9pt; margin-left:6pt; }
+  .risco { color:#999; text-decoration: line-through; }
+  .ganho { color:#1baf7a; font-weight:bold; }
+  .faixa { margin-top:10pt; background:#f0fdf7; border:1px solid #a7e8cd; border-radius:6pt;
+           padding:9pt 12pt; text-align:center; font-size:12pt; color:#0f7a55; }
+  .faixa b { font-size:15pt; color:#1baf7a; }
+  .fretegratis { margin-top:8pt; background:#fff8e8; border:1px solid #f2d08a; border-radius:6pt;
+                 padding:8pt 12pt; text-align:center; font-size:11.5pt; color:#8a6212; }
+  .fretegratis b { color:#b8860b; letter-spacing:.5pt; }
   .rodape { margin-top: 20pt; padding-top: 7pt; border-top:1px solid #ddd;
             font-size: 8pt; color:#888; text-align:center; }
 </style></head>
@@ -19337,8 +19809,12 @@ ${linhasHtml}
 <table class="totais">
   <tr><td>Valor</td><td class="r">${reaisDoc(t.bruto)}</td></tr>
   <tr><td>Valor do desconto</td><td class="r">- ${reaisDoc(t.desconto)}</td></tr>
+${temEquipamento?`  <tr><td>Frete</td><td class="r">${freteGratis?'<b style="color:#1baf7a">GRÁTIS</b>':reaisDoc(t.frete)}</td></tr>`:''}
   <tr class="final"><td>Valor total</td><td class="r">${reaisDoc(t.total)}</td></tr>
 </table>
+
+${t.desconto>0?`<div class="faixa">Nesta proposta você economiza <b>${reaisDoc(t.desconto)}</b>${brutoComDesconto>0?` — ${String(((t.desconto/brutoComDesconto)*100).toFixed(1)).replace('.',',')}% de desconto sobre o preço de tabela`:''}.</div>`:''}
+${freteGratis?`<div class="fretegratis">🚚 <b>FRETE GRÁTIS</b> — a entrega do equipamento está por nossa conta.</div>`:''}
 
 <h2>Detalhes e forma de pagamento</h2>
 <div class="cond">
@@ -19359,11 +19835,24 @@ ${linhasHtml}
 // ─── MODAL: PRÉVIA, DESCONTO E DOWNLOAD ──────────────────────────────────────
 function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
   const cfg=useOrcModelo();
-  const [linhas,setLinhas]=useState(()=>(itens||lead.itens||[]).map(i=>({
-    uid:i.uid||('l_'+Math.random().toString(36).slice(2)),
-    tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',descricao:'',
-    valor:numVal(i.valor),qtd:parseInt(i.qtd,10)||1,desconto:0,
-  })));
+  // O documento mostra o PREÇO DE TABELA na coluna de valor e joga a diferença
+  // na coluna de desconto. Se saísse só o valor negociado, o cliente leria
+  // R$ 1.150 e nunca saberia que o preço cheio era R$ 1.450 — desconto que
+  // ninguém vê não vende nada.
+  const [linhas,setLinhas]=useState(()=>(itens||lead.itens||[]).map(i=>{
+    const q=parseInt(i.qtd,10)||1;
+    const vendido=numVal(i.valor);
+    const tabela=numVal(i.tabela);
+    const temDesconto=tabela>0&&vendido>0&&vendido<tabela;
+    return{
+      uid:i.uid||('l_'+Math.random().toString(36).slice(2)),
+      tipo:i.tipo,refId:i.refId||'',nome:i.nome||'',descricao:'',
+      valor:temDesconto?tabela:vendido,
+      qtd:q,
+      desconto:temDesconto?(tabela-vendido)*q:0,
+    };
+  }));
+  const [frete,setFrete]=useState('');
   const [salvando,setSalvando]=useState(false);
   const [gerado,setGerado]=useState(null);   // {id, formato}
   const [erro,setErro]=useState('');
@@ -19373,7 +19862,7 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
   const [enviandoMail,setEnviandoMail]=useState(false);
   const [avisoEnvio,setAvisoEnvio]=useState('');
 
-  const t=totaisOrcamento(linhas);
+  const t=totaisOrcamento(linhas,frete);
   const numero=useMemo(()=>'ORC-'+new Date().getFullYear()+'-'+String(lead.id||'').slice(-6).toUpperCase(),[lead.id]);
   const validade=useMemo(()=>{
     const d=new Date();
@@ -19391,8 +19880,8 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
     nome:lead.nome||'',email:lead.email||'',tel:lead.telefone||'',
   };
 
-  const html=useMemo(()=>htmlOrcamento({linhas,cliente,vendedor:vend,cfg,numero,validade}),
-    [linhas,cliente.nome,cliente.email,cliente.tel,vend,cfg,numero,validade]);
+  const html=useMemo(()=>htmlOrcamento({linhas,cliente,vendedor:vend,cfg,numero,validade,frete}),
+    [linhas,cliente.nome,cliente.email,cliente.tel,vend,cfg,numero,validade,frete]);
 
   const arquivo=`Proposta_${String(lead.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
   const upLinha=(uid,k,v)=>setLinhas(ls=>ls.map(l=>l.uid===uid?{...l,[k]:v}:l));
@@ -19594,9 +20083,25 @@ function ModalOrcamentoLead({lead,itens,usuarios,etapasLead,onFechar}){
             </tbody>
           </table>
 
+          {linhas.some(l=>l.tipo==='equipamento')&&(
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:12,
+              background:numVal(frete)>0?'#f8f9fa':'#fff8e8',border:`1px solid ${numVal(frete)>0?'#e8eaed':'#f2d08a'}`,
+              borderRadius:8,padding:'9px 12px'}}>
+              <span style={{fontSize:11,color:'#7f8c8d',fontWeight:700,textTransform:'uppercase',letterSpacing:.4}}>Frete R$</span>
+              <input style={{...fi,textAlign:'right',width:110}} type="number" step="0.01" min="0" value={frete}
+                placeholder="0,00" onChange={e=>setFrete(e.target.value)}/>
+              {numVal(frete)>0
+                ?<span style={{fontSize:11,color:'#7f8c8d'}}>Entra no total da proposta.</span>
+                :<span style={{fontSize:11.5,color:'#8a6212',fontWeight:700}}>
+                   🚚 Deixando vazio, a proposta sai com <strong style={{color:'#b8860b'}}>FRETE GRÁTIS</strong> em destaque.
+                 </span>}
+            </div>
+          )}
+
           <div style={{display:'flex',justifyContent:'flex-end',gap:22,fontSize:12,color:'#7f8c8d',marginBottom:14,flexWrap:'wrap'}}>
             <span>Valor: <strong style={{color:'#2c3e50'}}>{moeda(t.bruto)}</strong></span>
             <span>Desconto: <strong style={{color:'#e74c3c'}}>- {moeda(t.desconto)}</strong></span>
+            {numVal(frete)>0&&<span>Frete: <strong style={{color:'#2c3e50'}}>{moeda(numVal(frete))}</strong></span>}
             <span style={{fontSize:14}}>Total: <strong style={{color:'#27ae60'}}>{moeda(t.total)}</strong></span>
           </div>
 
@@ -20987,6 +21492,30 @@ export default function App(){
     await deleteDoc(doc(db,'clientes',cliente.id));
   }
 
+  // Exclusão de cliente — duplicado, criado por engano, teste que ficou.
+  //
+  // Nada é apagado de verdade. O cliente inteiro, com a implantação, vai para
+  // clientes_removidos antes de sumir das telas: é o que permite trazer de
+  // volta depois, e é o que salva quando alguém exclui a linha errada.
+  async function excluirCliente(cliente,motivo){
+    if(!cliente?.id)throw new Error('Cliente sem identificador.');
+    if(String(cliente.id).startsWith('base_'))
+      throw new Error('Este registro vem da base histórica e não pode ser excluído por aqui.');
+    const texto=String(motivo||'').trim();
+    if(!texto)throw new Error('O motivo é obrigatório.');
+
+    await setDoc(doc(db,'clientes_removidos',cliente.id),{
+      cliente,
+      implantacao:implantacoes[cliente.id]||null,
+      removidoEm:new Date().toISOString(),
+      removidoPor:auth.currentUser?.email||'—',
+      motivo:texto,
+    });
+    await deleteDoc(doc(db,'implantacoes',cliente.id)).catch(()=>{});
+    await deleteDoc(doc(db,'clientes',cliente.id));
+    setClienteSel(null);
+  }
+
   async function salvarCliente(dados){
     const ref=doc(collection(db,'clientes'));
     await setDoc(ref,{...dados,id:ref.id});
@@ -21078,6 +21607,7 @@ export default function App(){
   const totImpl=cl.reduce((s,c)=>s+c.vI,0);
   const totEquip=cl.reduce((s,c)=>s+c.vE,0);
   const totSist=cl.reduce((s,c)=>s+c.vS,0);
+  const [escuro,alternarEscuro]=useModoEscuro();
   const anosDisp=[...new Set(todos.map(c=>c.ano).filter(Boolean))].sort();
   const vendedoresDin=['Todos',...new Set(todos.map(c=>c.vendedor).filter(v=>v&&v!=='—'))].sort();
   const porMes=MESES.map((_,m)=>{const anoRef=filtroAno==='Todos'?null:+filtroAno;const cs=todos.filter(c=>c.mes===m&&(anoRef===null||c.ano===anoRef));return{m,fat:cs.filter(c=>c.status==='Faturado').reduce((s,c)=>s+c.total,0),qtd:cs.length};});
@@ -21198,6 +21728,7 @@ export default function App(){
                 <div style={{fontSize:12,fontWeight:600,color:'#4a4a4a',lineHeight:1.2}}>{userProfile?.nome||userProfile?.email}</div>
                 <div style={{fontSize:10,color:'#7f8c8d'}}>{PERFIS[userProfile?.perfil||'admin']?.label}</div>
               </div>
+              <BotaoModoEscuro escuro={escuro} alternar={alternarEscuro}/>
               <button onClick={()=>signOut(auth)} title="Sair" style={{background:'none',border:'none',cursor:'pointer',color:'#aaa',fontSize:18,display:'flex',alignItems:'center',marginLeft:4}}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
               </button>
@@ -21297,10 +21828,12 @@ export default function App(){
             perfil={perfil}
             dadosImportados={dadosImportados}
             currentUser={userProfile}
+            clientesExistentes={todos}
+            onAbrirExistente={c=>{setPage('clientes');setClienteSel(c);}}
           />}
 
           {/* DETALHE */}
-          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} orcServicos={orcServicos} perfil={perfil} usuarios={usuarios}/>}
+          {clienteSel&&page!=='novo'&&<DetalheCliente c={clienteSel} onVoltar={()=>setClienteSel(null)} onUpdate={async u=>{await atualizarCliente(u.id,u);setClienteSel(prev=>({...prev,...u}));}} vendedoresCad={vendedoresCad} equipamentosCad={equipamentosCad} orcServicos={orcServicos} perfil={perfil} usuarios={usuarios} implantacao={implantacoes[clienteSel.id]} onExcluir={excluirCliente}/>}
 
           {/* IMPLANTAÇÃO */}
           {!clienteSel&&page==='implantacao'&&<KanbanView todos={todos} implantacoes={implantacoes} onSalvarImpl={salvarImpl} onDesfazerImpl={desfazerImplantacao} currentUser={userProfile} usuarios={usuarios} onAbrirCliente={c=>setClienteSel(c)} horarioFuncionamento={horarioFuncionamento} buscaGlobal={busca} etapasConfig={etapasKanban.length>0?etapasKanban:ETAPAS_DEFAULT}/>}
