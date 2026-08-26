@@ -657,6 +657,14 @@ const OBJETO_PADRAO={
 1.3. A LICENCIANTE concede à LICENCIADA uma licença de uso não exclusiva e intransferível do software.`,
 };
 
+// Características de cada plano — o que entra no ANEXO I do contrato.
+//
+// Nasce VAZIO de propósito. Escrever aqui o que o Basic ou o Pro entregam
+// seria inventar promessa contratual: o anexo é parte do contrato assinado, e
+// recurso que a gente prometeu no papel e o sistema não tem vira problema
+// depois. Quem preenche é a Guion, em Configurações › Contrato.
+const CARACTERISTICAS_PADRAO={Basic:'',Pro:'',Ultimate:''};
+
 const MODELO_CONTRATO_PADRAO=`CONTRATO DE LICENÇA DE USO DE SOFTWARE E PRESTAÇÃO DE SERVIÇOS
 
 Pelo presente instrumento particular, as partes abaixo identificadas:
@@ -786,7 +794,8 @@ function dataExtenso(d){
 
 function useContratoConfig(){
   const [cfg,setCfg]=useState({
-    licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO,servicos:[],
+    licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO,
+    caracteristicasPlano:CARACTERISTICAS_PADRAO,servicos:[],
   });
   useEffect(()=>{
     const u1=onSnapshot(doc(db,'config','contrato'),d=>{
@@ -796,6 +805,7 @@ function useContratoConfig(){
         ...c,
         licenciante:{...LICENCIANTE_PADRAO,...(x.licenciante||{})},
         objetoPlano:{...OBJETO_PADRAO,...(x.objetoPlano||{})},
+        caracteristicasPlano:{...CARACTERISTICAS_PADRAO,...(x.caracteristicasPlano||{})},
         modelo:x.modelo||MODELO_CONTRATO_PADRAO,
       }));
     });
@@ -894,7 +904,35 @@ function montarContrato(cliente,cfg){
     'Valor mensal':vS,
   }).filter(([,v])=>!v).map(([k])=>k);
 
-  return {texto,vars,faltando,plano,semDescricao};
+  const caracteristicas=String(((cfg.caracteristicasPlano||CARACTERISTICAS_PADRAO)[plano])||'').trim();
+
+  return {texto,vars,faltando,plano,semDescricao,caracteristicas};
+}
+
+// ─── ANEXO I ─────────────────────────────────────────────────────────────────
+// Página própria no fim do contrato com o que o plano entrega. Página própria
+// de propósito: anexo espremido no rodapé da folha das assinaturas não parece
+// anexo, parece observação.
+//
+// Sem texto cadastrado, devolve vazio e o contrato sai sem anexo nenhum — é
+// melhor não ter do que ter com característica inventada.
+function anexoContratoHtml(plano,texto){
+  const t=String(texto||'').trim();
+  if(!t)return '';
+  const linhas=t.split('\n').map(l=>{
+    const x=l.trim();
+    if(!x)return '<p class="vazio">&nbsp;</p>';
+    if(/^[•\-*]\s*/.test(x))return `<p class="item">• ${x.replace(/^[•\-*]\s*/,'')}</p>`;
+    // Linha inteira em maiúsculas vira subtítulo do anexo
+    if(x.length<=60&&x===x.toUpperCase()&&/[A-ZÁÂÃÀÉÊÍÓÔÕÚÇ]/.test(x))return `<h3>${x}</h3>`;
+    return `<p>${x}</p>`;
+  }).join('\n');
+  return `<div class="anexo">
+  <h1>Anexo I — Características do plano ${String(plano||'').toUpperCase()}</h1>
+  <p class="nota">Este anexo é parte integrante e inseparável do contrato ao qual se vincula, e descreve
+  os recursos compreendidos no plano contratado pela LICENCIADA.</p>
+${linhas}
+</div>`;
 }
 
 // HTML do documento — mesma base para a prévia, a impressão e o Word
@@ -913,7 +951,7 @@ function corpoContratoHtml(texto){
   }).join('\n');
 }
 
-function htmlContrato(texto,cliente,L,id){
+function htmlContrato(texto,cliente,L,id,anexo){
   const linhas=texto.split('\n');
   const corpo=linhas.map(l=>{
     const t=l.trim();
@@ -951,6 +989,11 @@ function htmlContrato(texto,cliente,L,id){
            font-size: 9.5pt; color: #444; }
   .rodape { margin-top: 22pt; padding-top: 6pt; border-top: 1px solid #ccc;
             font-size: 8pt; color: #777; text-align: center; }
+  .anexo { page-break-before: always; margin-top: 30pt; }
+  .anexo h1 { margin-bottom: 10pt; }
+  .anexo h3 { font-size: 11pt; text-transform: uppercase; letter-spacing: .3px;
+              margin: 14pt 0 5pt; page-break-after: avoid; }
+  .anexo .nota { font-size: 10pt; color: #444; font-style: italic; margin-bottom: 12pt; }
   @media print { .folha { padding: 0; } }
 </style></head>
 <body><div class="folha">
@@ -969,6 +1012,8 @@ ${corpo}
   </div>
 </div>
 
+${anexo||''}
+
 <div class="rodape">Documento ${id} · gerado em ${new Date().toLocaleString('pt-BR')}</div>
 </div></body></html>`;
 }
@@ -979,9 +1024,23 @@ ${corpo}
 // completo e CPF. Assinatura eletrônica simples: o que sustenta não é o clique,
 // é a prova em volta — quando abriu, de qual IP, e o hash do texto aprovado.
 
-function htmlAprovacaoContrato({id,texto,clienteNome,documento,plano,licenciante},fnUrl){
+function htmlAprovacaoContrato({id,texto,clienteNome,documento,plano,licenciante,caracteristicas},fnUrl){
   const L=licenciante||{};
-  const corpo=corpoContratoHtml(texto);
+  // O anexo entra DENTRO do rolo, não depois: a aprovação só libera quando o
+  // cliente chega ao fim do documento, e o anexo é parte do que ele aprova.
+  const carac=String(caracteristicas||'').trim();
+  const anexoWeb=carac
+    ? '<h2>Anexo I — Características do plano '+String(plano||'').toUpperCase()+'</h2>'
+      +'<p><i>Este anexo é parte integrante e inseparável deste contrato.</i></p>'
+      +carac.split('\n').map(function(l){
+          var x=l.trim();
+          if(!x)return '<p class="vazio">&nbsp;</p>';
+          if(/^[•\-*]\s*/.test(x))return '<p class="item">• '+x.replace(/^[•\-*]\s*/,'')+'</p>';
+          if(x.length<=60&&x===x.toUpperCase()&&/[A-ZÁÂÃÀÉÊÍÓÔÕÚÇ]/.test(x))return '<h2>'+x+'</h2>';
+          return '<p>'+x+'</p>';
+        }).join('\n')
+    : '';
+  const corpo=corpoContratoHtml(texto)+anexoWeb;
   const esc=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
   return '<!doctype html>\n'+
@@ -1120,9 +1179,10 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
   const [aprov,setAprov]=useState(null);   // documento de aprovação deste cliente
   const [erroLink,setErroLink]=useState('');
 
-  const {texto,faltando,plano,semDescricao}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
+  const {texto,faltando,plano,semDescricao,caracteristicas}=useMemo(()=>montarContrato(cliente,cfg),[cliente,cfg]);
+  const anexo=useMemo(()=>anexoContratoHtml(plano,caracteristicas),[plano,caracteristicas]);
   const idDoc=useMemo(()=>'CT-'+new Date().getFullYear()+'-'+String(cliente.id||'').slice(-6).toUpperCase(),[cliente.id]);
-  const html=useMemo(()=>htmlContrato(texto,cliente,cfg.licenciante,idDoc),[texto,cliente,cfg,idDoc]);
+  const html=useMemo(()=>htmlContrato(texto,cliente,cfg.licenciante,idDoc,anexo),[texto,cliente,cfg,idDoc,anexo]);
   const arquivo=`Contrato_${String(cliente.nome||'cliente').replace(/[^\w]+/g,'_').slice(0,40)}`;
 
   // Acompanha ao vivo: assim o vendedor vê a aprovação chegar sem recarregar
@@ -1148,7 +1208,7 @@ function ModalContrato({cliente,onFechar,onRegistrado}){
       },{merge:true});
 
       const pagina=htmlAprovacaoContrato(
-        {id,texto,clienteNome:cliente.nome||'',documento:idDoc,plano,licenciante:cfg.licenciante},
+        {id,texto,clienteNome:cliente.nome||'',documento:idDoc,plano,licenciante:cfg.licenciante,caracteristicas},
         FUNCTIONS_URL);
       const ref=storageRef(storage,`config/contratos/${id}.html`);
       await uploadBytes(ref,new Blob([pagina],{type:'text/html;charset=utf-8'}),
@@ -1859,7 +1919,8 @@ function ConfigMailchimp(){
 }
 
 function ConfigContrato(){
-  const [c,setC]=useState({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
+  const [c,setC]=useState({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,
+    caracteristicasPlano:CARACTERISTICAS_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
   const [carregando,setCarregando]=useState(true);
   const [salvando,setSalvando]=useState(false);
   const [salvo,setSalvo]=useState(false);
@@ -1876,6 +1937,7 @@ function ConfigContrato(){
         setC({
           licenciante:{...LICENCIANTE_PADRAO,...(x.licenciante||{})},
           objetoPlano:{...OBJETO_PADRAO,...(x.objetoPlano||{})},
+        caracteristicasPlano:{...CARACTERISTICAS_PADRAO,...(x.caracteristicasPlano||{})},
           modelo:x.modelo||MODELO_CONTRATO_PADRAO,
         });
       }
@@ -1894,7 +1956,8 @@ function ConfigContrato(){
   }
   function restaurar(){
     if(!window.confirm('Voltar ao texto padrão? O que você editou será perdido.'))return;
-    setC({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
+    setC({licenciante:LICENCIANTE_PADRAO,objetoPlano:OBJETO_PADRAO,
+      caracteristicasPlano:CARACTERISTICAS_PADRAO,modelo:MODELO_CONTRATO_PADRAO});
   }
 
   if(carregando)return <div style={{fontSize:12,color:'#7f8c8d',padding:12}}>Carregando...</div>;
@@ -1923,7 +1986,8 @@ function ConfigContrato(){
       </div>
 
       <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
-        {[{id:'modelo',l:'Corpo do contrato'},{id:'objeto',l:'Cláusula 1 por plano'},{id:'empresa',l:'Dados da Guion'}].map(a=>(
+        {[{id:'modelo',l:'Corpo do contrato'},{id:'objeto',l:'Cláusula 1 por plano'},
+          {id:'caracteristicas',l:'Anexo I — características'},{id:'empresa',l:'Dados da Guion'}].map(a=>(
           <button key={a.id} onClick={()=>setAba(a.id)}
             style={{padding:'7px 15px',borderRadius:7,border:'none',background:aba===a.id?'#8e44ad':'#ecf0f1',color:aba===a.id?'#fff':'#7f8c8d',cursor:'pointer',fontSize:12,fontWeight:aba===a.id?700:400}}>
             {a.l}
@@ -1965,6 +2029,46 @@ function ConfigContrato(){
           <textarea value={c.objetoPlano[planoSel]||''}
             onChange={e=>{const v=e.target.value;setC(x=>({...x,objetoPlano:{...x.objetoPlano,[planoSel]:v}}));setSalvo(false);}}
             style={{...fi,minHeight:220,resize:'vertical',fontFamily:'ui-monospace,Menlo,Consolas,monospace',fontSize:11,lineHeight:1.7}}/>
+        </div>
+      )}
+
+      {aba==='caracteristicas'&&(
+        <div>
+          <div style={{fontSize:11,color:'#7f8c8d',lineHeight:1.7,marginBottom:10,maxWidth:640}}>
+            O que você escrever aqui vira o <strong>ANEXO I</strong> do contrato, numa página só dele, no fim
+            do documento. Sai apenas o do plano que o cliente fechou — assim o cliente enxerga, na hora da
+            assinatura, exatamente o que está levando.
+          </div>
+
+          <div style={{display:'flex',gap:6,marginBottom:8,flexWrap:'wrap'}}>
+            {Object.keys(c.caracteristicasPlano||CARACTERISTICAS_PADRAO).map(pl=>{
+              const vazio=!String((c.caracteristicasPlano||{})[pl]||'').trim();
+              return(
+                <button key={pl} onClick={()=>setPlanoSel(pl)}
+                  style={{padding:'5px 14px',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:700,
+                    border:`1px solid ${planoSel===pl?'#8e44ad':vazio?'#fbd38d':'#dde1e7'}`,
+                    background:planoSel===pl?'#faf5ff':'#fff',color:planoSel===pl?'#6b21a8':vazio?'#b45309':'#7f8c8d'}}>
+                  {pl}{vazio?' ⚠':' ✓'}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{fontSize:10,color:'#95a5a6',marginBottom:6,lineHeight:1.6}}>
+            Uma característica por linha. Linha começando com <code>•</code> ou <code>-</code> vira item de
+            lista; linha em MAIÚSCULAS vira subtítulo dentro do anexo.
+          </div>
+          <textarea value={(c.caracteristicasPlano||{})[planoSel]||''}
+            onChange={e=>{const v=e.target.value;setC(x=>({...x,caracteristicasPlano:{...(x.caracteristicasPlano||{}),[planoSel]:v}}));setSalvo(false);}}
+            placeholder={'CONTROLE DE PONTO\n• Registro por biometria, facial e senha\n• Espelho de ponto individual e por setor\n\nRELATÓRIOS\n• Banco de horas\n• Exportação para a folha de pagamento'}
+            style={{...fi,minHeight:260,resize:'vertical',fontFamily:'ui-monospace,Menlo,Consolas,monospace',fontSize:11.5,lineHeight:1.75}}/>
+
+          {!String((c.caracteristicasPlano||{})[planoSel]||'').trim()&&(
+            <div style={{background:'#fffaf0',border:'1px solid #fbd38d',borderRadius:7,padding:'9px 12px',marginTop:9,fontSize:11,color:'#b45309',lineHeight:1.6}}>
+              Enquanto este plano estiver vazio, o contrato dele sai <strong>sem o Anexo I</strong> — não inventamos
+              característica em documento assinado.
+            </div>
+          )}
         </div>
       )}
 
