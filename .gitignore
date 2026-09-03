@@ -15,3 +15,5 @@ l.json
 functions/.env
 src/env
 l.json
+src/*.old*.txt
+limpar-dados.js
