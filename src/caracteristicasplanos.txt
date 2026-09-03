@@ -1,0 +1,352 @@
+═══════════════════════════════════════════════════════════════════════════
+CARACTERÍSTICAS DOS PLANOS — texto pronto para colar
+Configurações › Contrato › Anexo I — características
+═══════════════════════════════════════════════════════════════════════════
+
+COMO USAR
+Abra a aba, clique no plano, apague o que estiver lá e cole o bloco
+correspondente — só o que está ENTRE as linhas tracejadas, sem o cabeçalho.
+
+DUAS DECISÕES QUE EU TOMEI, E O PORQUÊ
+
+1. Cada plano é COMPLETO, não incremental.
+   A tabela da Secullum descreve o Pro como "além do Basic". Num material de
+   venda isso funciona; num anexo de contrato, não: o cliente que fecha o Pro
+   receberia um anexo que não menciona nada do que ele mais usa. Então o Pro
+   repete o Basic e o Ultimate repete os dois. O cliente lê o que ele tem.
+
+2. Cada plano diz o que NÃO está incluído.
+   Anexo de contrato serve para os dois lados. Sem a lista de exclusões, um
+   cliente pode sustentar que Controle de Férias vinha junto — e a discussão
+   acontece depois da assinatura, que é o pior momento possível.
+
+Os asteriscos e o "(+)" da tabela viram frase escrita, porque legenda em
+contrato ninguém lê e não protege ninguém.
+
+═══════════════════════════════════════════════════════════════════════════
+BASIC
+───────────────────────────────────────────────────────────────────────────
+Plano destinado a microempresas que necessitam de controle de jornada confiável, com conformidade legal e redução de risco trabalhista.
+
+ARMAZENAMENTO
+• Banco de dados de 2 GB
+• 10 GB destinados aos demais armazenamentos
+O espaço utilizado acima do limite contratado implica custo adicional.
+
+SISTEMA E INFRAESTRUTURA
+• Sistema 100% web, sem instalação local
+• Backup automático em nuvem
+• Decomposição de cálculos em tela, permitindo conferência antes do fechamento
+
+CADASTROS
+• Empresas, cidades e departamentos
+• Feriados e ponto facultativo, com feriados facultativos pré-configurados
+• Motivos de demissão e escolaridade
+• Dados adicionais do funcionário e contrato
+• Permissões do aplicativo
+• Sugestão de PIS/PASEP
+• Cadastro de equipamentos
+
+RESUMO DIÁRIO
+• Funcionários trabalhando, faltantes, em folga, em férias e afastados
+• Solicitações e assinaturas pendentes
+• Marcações fora do perímetro
+• Ausências justificadas
+
+HORÁRIOS E JORNADA
+• Horas extras normais e noturnas
+• Faixas de horas e descanso semanal remunerado
+• Ponto por exceção
+• Interjornada e intrajornada
+• Cálculos em modo compensado, almoço livre e neutro
+• Tolerâncias conforme os artigos 58 e 71 da CLT
+• Batidas pré-assinaladas
+• Escalas cíclicas e mensais
+• Adicional noturno e noturno reduzido
+• Ponto de dez batidas
+
+BANCO DE HORAS
+• Piso e teto para o saldo
+• Painel de controle de horas extras, faltas e atrasos
+
+CARTÃO PONTO
+• Visualização e alteração de batidas
+• Justificativas e ajustes parciais
+• Movimentação de batida para o dia anterior ou posterior
+
+COMUNICAÇÃO COM O REP
+• Importação de arquivo AFD e de arquivo texto
+• Envio de data, hora e funcionários ao equipamento
+• Recebimento de registros e comunicação online
+• Coleta remota de AFD
+
+APLICATIVO CENTRAL DO FUNCIONÁRIO
+• Aplicativo de ponto e gestão para colaboradores e gestores
+• Indicadores gerenciais e cartão ponto
+• Registro de ponto manual com geolocalização
+• Ajuste de ponto e justificativa de ausência
+• Lembrete de registro
+• Ponto por QR Code, disponível exclusivamente no Secullum Ponto Virtual
+
+RELATÓRIOS
+• Relatório de geolocalização
+• Arquivos fiscais AFDT e AFCEF
+• Listagens e quadro de horários
+• Extrato de totais e espelho de ponto, conforme a Portaria 671
+• Exportação em PDF, Word, Excel e HTML
+• Comprovante de registro de ponto enviado por e-mail
+
+NÃO INCLUÍDOS NESTE PLANO
+Os recursos abaixo não integram o plano contratado e podem ser adquiridos separadamente, mediante contratação específica:
+• Gestão de Arquivos
+• Controle de Férias
+• Multibenefícios
+• Assinatura eletrônica de holerites
+• Assinatura eletrônica do cartão ponto
+• Múltiplos contratos por funcionário
+• Ponto sem internet e registro por perímetro
+• Reconhecimento facial para uso coletivo
+• Pesquisas de qualidade de vida no trabalho
+• Registro e controle de atividades diárias
+• Centro de custos
+• Integração com sistemas de terceiros
+
+═══════════════════════════════════════════════════════════════════════════
+PRO
+───────────────────────────────────────────────────────────────────────────
+Plano destinado a empresas em crescimento, que necessitam de maior controle, segurança e gestão de equipes de médio porte.
+
+ARMAZENAMENTO
+• Banco de dados de 6 GB
+• 30 GB destinados aos demais armazenamentos
+O espaço utilizado acima do limite contratado implica custo adicional.
+
+SISTEMA E INFRAESTRUTURA
+• Sistema 100% web, sem instalação local
+• Backup automático em nuvem
+• Decomposição de cálculos em tela, permitindo conferência antes do fechamento
+• Integração com os demais sistemas Secullum e com sistemas de terceiros
+
+CADASTROS
+• Empresas, cidades e departamentos
+• Feriados e ponto facultativo, com feriados facultativos pré-configurados
+• Feriados por cidade
+• Motivos de demissão e escolaridade
+• Dados adicionais do funcionário e contrato
+• Múltiplos contratos por funcionário, permitindo o mesmo CPF em ocupações distintas
+• Permissões do aplicativo e hierarquia de estruturas
+• Sugestão de PIS/PASEP
+• Cadastro de equipamentos
+• Cadastro e lançamento de eventos, como vales e auxílios
+• Geração de senhas em massa
+
+RESUMO DIÁRIO E INDICADORES
+• Funcionários trabalhando, faltantes, em folga, em férias e afastados
+• Solicitações e assinaturas pendentes
+• Marcações fora do perímetro e ausências justificadas
+• Painel de perfil e rotatividade, com presenças, ausências e respectivos motivos
+
+HORÁRIOS E JORNADA
+• Horas extras normais e noturnas
+• Faixas de horas e descanso semanal remunerado
+• Ponto por exceção
+• Interjornada e intrajornada
+• Cálculos em modo compensado, almoço livre e neutro
+• Compensação semanal e mensal
+• Tolerâncias conforme os artigos 58 e 71 da CLT
+• Batidas pré-assinaladas
+• Escalas cíclicas e mensais
+• Até quatro horários por funcionário
+• Adicional noturno e noturno reduzido
+• Ponto de dez batidas
+• Cálculo de faltas somente para dias inteiros
+• Opção de não descontar faltas das horas normais
+• Utilização de atrasos e faltas para desconto do descanso semanal remunerado
+
+BANCO DE HORAS
+• Piso e teto para o saldo
+• Multiplicador de faixas
+• Separação de horas extras noturnas, intervalos e normais
+• Painel de controle de horas extras, faltas e atrasos
+
+CARTÃO PONTO E ASSINATURA
+• Visualização e alteração de batidas
+• Justificativas e ajustes parciais
+• Movimentação de batida para o dia anterior ou posterior
+• Inclusão de ponto manual em massa
+• Assinatura eletrônica do cartão ponto pelo aplicativo, com comprovante
+• Aprovação por biometria na assinatura
+
+COMUNICAÇÃO COM O REP
+• Importação de arquivo AFD e de arquivo texto
+• Envio de data, hora e funcionários ao equipamento
+• Recebimento de registros e comunicação online
+• Coleta remota de AFD
+
+APLICATIVO CENTRAL DO FUNCIONÁRIO
+• Aplicativo de ponto e gestão para colaboradores e gestores
+• Indicadores gerenciais e cartão ponto
+• Registro de ponto manual com geolocalização
+• Registro de ponto sem internet e por perímetro
+• Solicitação de fotografia do colaborador no momento da inclusão do ponto
+• Notificação de esquecimento de registro
+• Envio de atestado médico por fotografia
+• Ajuste de ponto e justificativa de ausência
+• Ponto por QR Code, disponível exclusivamente no Secullum Ponto Virtual
+
+SEGURANÇA E CONTROLE DE ACESSO
+• Autorização de dispositivos para marcação
+• Delimitação de perímetro para registro
+• Segurança das marcações realizadas sem conexão
+• Classificação de usuários por hierarquia
+• Restrição de menus por perfil
+• Replicação de restrições de acesso entre usuários
+
+RELATÓRIOS
+• Relatório de geolocalização
+• Arquivos fiscais AFDT e AFCEF
+• Listagens e quadro de horários
+• Extrato de totais e espelho de ponto, conforme a Portaria 671
+• Relatório de absenteísmo
+• Relatório de inconsistências
+• Exportação em PDF, Word, Excel e HTML
+• Comprovante de registro de ponto enviado por e-mail
+
+NÃO INCLUÍDOS NESTE PLANO
+Os recursos abaixo não integram o plano contratado e podem ser adquiridos separadamente, mediante contratação específica:
+• Gestão de Arquivos
+• Controle de Férias
+• Multibenefícios
+• Assinatura eletrônica de holerites
+• Reconhecimento facial para uso coletivo
+• Pesquisas de qualidade de vida no trabalho
+• Painel de horas extras e absenteísmo
+• Registro e controle de atividades diárias
+• Centro de custos
+• Horas in itinere e horas de sobreaviso
+
+═══════════════════════════════════════════════════════════════════════════
+ULTIMATE
+───────────────────────────────────────────────────────────────────────────
+Plano destinado a empresas que demandam gestão avançada de pessoas e indicadores, com o conjunto completo de recursos.
+
+ARMAZENAMENTO
+• Banco de dados de 10 GB
+• 50 GB destinados aos demais armazenamentos
+O espaço utilizado acima do limite contratado implica custo adicional.
+
+SISTEMA E INFRAESTRUTURA
+• Sistema 100% web, sem instalação local
+• Backup automático em nuvem
+• Decomposição de cálculos em tela, permitindo conferência antes do fechamento
+• Integração com os demais sistemas Secullum e com sistemas de terceiros
+
+CADASTROS
+• Empresas, cidades e departamentos
+• Feriados e ponto facultativo, com feriados facultativos pré-configurados
+• Feriados por cidade e por departamento
+• Motivos de demissão e escolaridade
+• Dados adicionais do funcionário e contrato
+• Múltiplos contratos por funcionário, permitindo o mesmo CPF em ocupações distintas
+• Permissões do aplicativo e hierarquia de estruturas
+• Sugestão de PIS/PASEP
+• Cadastro de equipamentos
+• Cadastro e lançamento de eventos, como vales e auxílios
+• Centro de custos
+• Cadastro de atividades
+• Geração de senhas em massa
+
+RESUMO DIÁRIO E INDICADORES
+• Funcionários trabalhando, faltantes, em folga, em férias e afastados
+• Solicitações e assinaturas pendentes
+• Marcações fora do perímetro e ausências justificadas
+• Painel de perfil e rotatividade, com presenças, ausências e respectivos motivos
+• Painel de horas extras e absenteísmo, com filtro por período personalizado
+• Pesquisas de qualidade de vida no trabalho
+
+HORÁRIOS E JORNADA
+• Horas extras normais e noturnas
+• Faixas de horas e descanso semanal remunerado
+• Ponto por exceção
+• Interjornada e intrajornada
+• Cálculos em modo compensado, almoço livre e neutro
+• Compensação semanal e mensal
+• Tolerâncias conforme os artigos 58 e 71 da CLT
+• Tolerâncias individuais de entrada e de saída
+• Batidas pré-assinaladas
+• Escalas cíclicas e mensais
+• Até quatro horários por funcionário
+• Adicional noturno e noturno reduzido
+• Divisão de jornadas noturnas
+• Ponto de dez batidas
+• Horas in itinere e horas de sobreaviso
+• Definição de "n" folgas na semana e folgas semanais na tela de cálculos
+• Importação de batidas alocadas em 24 horas
+• Cálculo de faltas somente para dias inteiros
+• Opção de não descontar faltas das horas normais
+• Utilização de atrasos e faltas para desconto do descanso semanal remunerado
+
+BANCO DE HORAS
+• Piso e teto para o saldo
+• Multiplicador de faixas
+• Separação de horas extras noturnas, intervalos e normais
+• Painel de controle de horas extras, faltas e atrasos
+
+CARTÃO PONTO E ASSINATURA
+• Visualização e alteração de batidas
+• Justificativas e ajustes parciais
+• Movimentação de batida para o dia anterior ou posterior
+• Inclusão de ponto manual em massa
+• Assinatura eletrônica do cartão ponto pelo aplicativo, com comprovante
+• Aprovação por biometria na assinatura
+• Comprovante de assinatura eletrônica de arquivos
+
+CONTROLE DE ATIVIDADES
+• Registro de atividades diárias
+• Controle de atividades para funcionários externos
+
+COMUNICAÇÃO COM O REP E BIOMETRIA
+• Importação de arquivo AFD e de arquivo texto
+• Envio de data, hora e funcionários ao equipamento
+• Recebimento de registros e comunicação online
+• Coleta remota de AFD
+• Reconhecimento facial para uso coletivo, disponível exclusivamente no Secullum Ponto Virtual em modo offline, mediante contratação por tablet
+• BioWeb, com prova de vida
+
+APLICATIVO CENTRAL DO FUNCIONÁRIO
+• Aplicativo de ponto e gestão para colaboradores e gestores
+• Indicadores gerenciais e cartão ponto
+• Registro de ponto manual com geolocalização
+• Registro de ponto sem internet e por perímetro
+• Solicitação de fotografia do colaborador no momento da inclusão do ponto
+• Notificação de esquecimento de registro
+• Envio de atestado médico por fotografia
+• Ajuste de ponto e justificativa de ausência
+• Ponto por QR Code, disponível exclusivamente no Secullum Ponto Virtual
+
+SEGURANÇA E CONTROLE DE ACESSO
+• Autorização de dispositivos para marcação
+• Delimitação de perímetro para registro
+• Segurança das marcações realizadas sem conexão
+• Classificação de usuários por hierarquia
+• Restrição de menus por perfil, por empresa e por departamento
+• Replicação de restrições de acesso entre usuários
+
+RELATÓRIOS
+• Relatório de geolocalização
+• Arquivos fiscais AFDT e AFCEF
+• Listagens e quadro de horários
+• Extrato de totais e espelho de ponto, conforme a Portaria 671
+• Relatório de absenteísmo
+• Relatório de inconsistências
+• Listagem de funcionários por centro de custo
+• Relatórios com atividades
+• Exportação em PDF, Word, Excel e HTML
+• Comprovante de registro de ponto enviado por e-mail
+
+NÃO INCLUÍDOS NESTE PLANO
+Os recursos abaixo não integram o plano contratado e podem ser adquiridos separadamente, mediante contratação específica:
+• Gestão de Arquivos
+• Controle de Férias
+• Multibenefícios
+• Assinatura eletrônica de holerites
