@@ -3397,7 +3397,7 @@ function RelatoriosView({todos,implantacoes}){
         <div style={{background:C.card,borderRadius:8,padding:'16px',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}>
           <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:12,textTransform:'uppercase'}}>💾 Exportar relatórios</div>
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
-            <button onClick={()=>exportarExcel(pendentes,nomeArq()+'_pendentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:'#fff8ee',color:'#b45309',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #f5a623'}}>
+            <button onClick={()=>exportarExcel(pendentes,nomeArq()+'_pendentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,background:'#fff8ee',color:'#b45309',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #f5a623'}}>
               <i className="ti ti-file-spreadsheet"/> Exportar pendências ({pendentes.length})
             </button>
             <button onClick={()=>exportarExcel(dadosFiltrados,nomeArq()+'_clientes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:C.green,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
@@ -3406,7 +3406,7 @@ function RelatoriosView({todos,implantacoes}){
             <button onClick={()=>{const rows=porEtapa.flatMap(e=>e.clientes.map(c=>({...c})));exportarExcel(rows,nomeArq()+'_implantacao');}} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:C.purple,color:'#fff',fontWeight:700,cursor:'pointer',fontSize:12}}>
               <i className="ti ti-file-spreadsheet"/> Exportar implantações
             </button>
-            <button onClick={()=>exportarExcel(inadimplentes,nomeArq()+'_inadimplentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,border:'none',background:'#fff5f5',color:'#c0392b',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #e74c3c'}}>
+            <button onClick={()=>exportarExcel(inadimplentes,nomeArq()+'_inadimplentes')} style={{display:'flex',alignItems:'center',gap:6,padding:'9px 14px',borderRadius:6,background:'#fff5f5',color:'#c0392b',fontWeight:700,cursor:'pointer',fontSize:12,border:'1px solid #e74c3c'}}>
               <i className="ti ti-file-spreadsheet"/> Exportar inadimplentes ({inadimplentes.length})
             </button>
           </div>
@@ -7587,7 +7587,6 @@ function NovoForm({onSave,onCancel,vendedoresCad,equipamentosCad,orcServicos,dad
       status:f.status,plano:f.plano,vendedor:f.vendedor||'—',nfe:f.nfe,
       renovacao:f.renovacao,obs:f.obs,
       despachado:f.despachado,equipRastreio:f.equipRastreio.trim(),equipDataEnvio:f.equipDataEnvio,
-      pagamentoI:f.pagamentoI,parcelasI:f.parcelasI,pagamentoE:f.pagamentoE,parcelasE:f.parcelasE,
       cadastradoPor:currentUser?.nome||currentUser?.email||'—',
       cadastradoPorId:currentUser?.id||currentUser?.uid||'',
       criadoEm:new Date().toISOString(),
@@ -8129,10 +8128,6 @@ function DetalheCliente({c,onVoltar,onUpdate,vendedoresCad,equipamentosCad,orcSe
     parcelasI:c.parcelasI||1,
     parcelasE:c.parcelasE||1,
     dtBoleto:c.dtBoleto||'',
-    pagamentoI:c.pagamentoI||'Boleto',
-    parcelasI:c.parcelasI||1,
-    pagamentoE:c.pagamentoE||'Boleto',
-    parcelasE:c.parcelasE||1,
     plano:c.plano==='—'?'Basic':c.plano||'Basic',
     vendedor:c.vendedor==='—'?'':c.vendedor||'',
     status:c.status||'Faturado',
@@ -12580,7 +12575,6 @@ Responda como co-piloto de vendas: analise a situação, dê sugestões prática
         style={{
           background:'#fff',borderRadius:8,padding:'10px',marginBottom:8,
           cursor:'pointer',boxShadow:'0 1px 4px rgba(0,0,0,.08)',
-          borderLeft:`3px solid ${corFup}`,
           opacity:dragId===orc.id?.5:1,
           border:dragId===orc.id?'2px dashed #3498db':'none',
           borderLeft:`3px solid ${corFup}`,
